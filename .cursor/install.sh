@@ -31,7 +31,7 @@ if ! sudo docker info >/dev/null 2>&1; then
 fi
 if sudo docker info >/dev/null 2>&1; then
   sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
-  docker compose pull postgres minio dragonfly mailpit minio-init
+  docker compose pull postgres minio mailpit minio-init
   docker compose build postgres
   sudo kill "$(pidof dockerd)" 2>/dev/null || true
   for i in $(seq 1 30); do
