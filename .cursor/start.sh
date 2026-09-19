@@ -31,14 +31,18 @@ if [ ! -f .env ]; then
   cp .env.example .env
   echo "[start] Created .env from .env.example"
 fi
-if grep -q '^SECRET_KEY=$' .env 2>/dev/null; then
+if ! grep -q '^SECRET_KEY=.' .env 2>/dev/null; then
   SECRET="$(openssl rand -hex 32)"
-  sed -i "s/^SECRET_KEY=$/SECRET_KEY=$SECRET/" .env
+  if grep -q '^SECRET_KEY=' .env 2>/dev/null; then
+    sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$SECRET/" .env
+  else
+    printf '\nSECRET_KEY=%s\n' "$SECRET" >> .env
+  fi
   echo "[start] Generated SECRET_KEY"
 fi
 
-echo "[start] Starting datastores (postgres, minio, dragonfly, mailpit)..."
-docker compose up -d --wait postgres minio minio-init dragonfly mailpit
+echo "[start] Starting datastores (postgres, minio, mailpit)..."
+docker compose up -d --wait postgres minio minio-init mailpit
 
 # Create the dev and test databases if they do not exist yet. The test DB is
 # used by the DB-integration parts of `bun run test`.
