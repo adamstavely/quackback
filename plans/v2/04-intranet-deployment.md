@@ -36,10 +36,29 @@
   and `/v1/embeddings` (with `dimensions: 1536`). No Responses/Assistants/audio/image/moderation APIs. **The proxy
   must support:** strict `json_schema` structured output, tool calling, streaming, and the `dimensions` parameter
   (or ignore it for a native-1536 model).
-- Models: `AI_CHAT_MODEL`, `AI_EMBEDDING_MODEL`, and per-feature overrides (`AI_ASSISTANT_MODEL` for Quinn and Ask AI,
-  `AI_SUMMARY_MODEL`, `AI_CLASSIFICATION_MODEL`, `AI_MERGE_MODEL`, `AI_HELP_CENTER_MODEL`, …;
-  `lib/server/domains/ai/models.ts:54-72`). Leaving a feature's model unset disables that feature. Tune
-  `AI_COMBINED_TOOLS_AND_SCHEMA` / `AI_REASONING_EFFORT` to the proxy's models.
+- **Model resolution (second-pass R2-9, verified `lib/server/domains/ai/models.ts:13,39-67`):** each chat feature
+  resolves `featureOverride ?? AI_CHAT_MODEL`. **An unset override inherits `AI_CHAT_MODEL`; it does not disable the
+  feature.** To disable a feature explicitly, set its override to a disable sentinel: `off`, `none` or `false`
+  (`AI_CHAT_MODEL=off` / `AI_EMBEDDING_MODEL=off` disable everything / embeddings). Feature → variable:
+
+  | Feature | Variable |
+  | --- | --- |
+  | Quinn assistant (inbox copilot / customer assistant) | `AI_ASSISTANT_MODEL` |
+  | Help-center answers (Ask AI / `kb-ask`) | `AI_HELP_CENTER_MODEL` |
+  | Help-center auto-translate | `AI_HELP_CENTER_TRANSLATE_MODEL` |
+  | Summaries (post / conversation / ticket) | `AI_SUMMARY_MODEL` |
+  | Sentiment | `AI_SENTIMENT_MODEL` |
+  | Field/attribute extraction | `AI_EXTRACTION_MODEL` |
+  | Quality gate | `AI_QUALITY_GATE_MODEL` |
+  | Interpretation | `AI_INTERPRETATION_MODEL` |
+  | Merge assessment | `AI_MERGE_MODEL` |
+  | Inbox translation | `AI_INBOX_TRANSLATION_MODEL` |
+  | Classification / autotag / spam filter | `AI_CLASSIFICATION_MODEL` |
+  | Embeddings (search, similar posts, assistant retrieval) | `AI_EMBEDDING_MODEL` |
+
+  Tune `AI_COMBINED_TOOLS_AND_SCHEMA` / `AI_REASONING_EFFORT` to the proxy's models. **Before claiming offline parity,
+  test the chosen proxy models against every enabled feature** (structured `json_schema` output, tool calling,
+  streaming, 1536-d embeddings); disable any feature whose model fails, with its sentinel.
 - **Embedding dimension is fixed at 1536** (`vector(1536)` in `packages/db/src/schema/assistant.ts:120`,
   `changelog.ts:25`, `conversation-summary.ts:12`; migrations 0015/0170/0171/0203/0235;
   `embedding.service.ts:18`). The proxy must serve a **1536-dimension** embedding model (e.g. Titan Embeddings G1
@@ -50,8 +69,10 @@
 
 - Outbound: SMTP to the SES SMTP VPC endpoint or an internal relay — `EMAIL_SMTP_HOST/_PORT/_USER/_PASS`
   (`packages/email/src/index.ts:187`). Leave `EMAIL_RESEND_API_KEY` unset.
-- Inbound: **IMAP against the internal mail server** — `IMAP_*` (`domains/conversation/conversation.email-imap.ts:56`).
-  The webhook inbound routes (Cloudflare / SES→webhook) are unused. See `20-control-tower.md` for per-app inbound.
+- Inbound: from the **internal mail server over IMAP**. Single-tenant deployments can use upstream `IMAP_*`
+  (`domains/conversation/conversation.email-imap.ts:53`); upstream's IMAP poller refuses pooled tenancy, so the pooled
+  fleet uses the fork **mail router** (`20-control-tower.md`) and leaves `IMAP_*` unset. Internet webhook inbound
+  routes (Cloudflare / SES→webhook) are unused. Ask the mail team to stamp `Authentication-Results` on inbound mail.
 - Set a workspace logo; the default email template logo is `https://quackback.io/logo.png`
   (`packages/email/src/templates/shared-styles.ts:8`), which renders broken offline (optional fork default change).
 
@@ -105,8 +126,8 @@ egress-restricting CSP can be added at the edge proxy.
 | --- | --- |
 | 02 conventions | New rule: fork code makes **no internet calls**; every outbound HTTP call goes through the SSRF guard (with the E-1 allow-list) or is to a configured intranet/AWS-private endpoint. Shared seam F-12. |
 | 10 RBAC | No change beyond SSO-only sign-in (no anonymous principals in practice). |
-| 20 control tower | IdP is intranet (needs E-1). Provisioning applies the §3 sign-in baseline instead of "private portal". Per-app inbound email via IMAP (no SES→Lambda mail edge). S3/SES keys per E-2. No internet anywhere in tower or provisioner. |
-| 30 tiered support | Hub users sign in with SSO (no magic link / email code). Email-only claim happens on SSO sign-in with a verified email. Private-portal-specific pieces become unnecessary. |
+| 20 control tower | IdP is intranet (needs E-1, also at every sign-in: discovery/userinfo go through the SSRF guard). Provisioning applies the §3 sign-in baseline instead of "private portal". Upstream IMAP is process-wide and **refuses pooled tenancy** (`conversation.email-imap-queue.ts:17-24,47-60`), so per-app inbound uses a fork **mail router**: one fleet mailbox read over IMAP, routed to each app by `mail_slug` (replaces the SES→Lambda mail edge). S3/SES keys per E-2. No internet anywhere in tower, provisioner or router. |
+| 30 tiered support | Hub moves inside `_portal`; users sign in with SSO (no magic link / email code). Email-only claim runs on SSO sign-in (seam T-13). Private-portal pieces removed (T-3, T-6, T-12). **Ask the mail team to stamp `Authentication-Results` on internal mail**, or every inbound email is treated as unverified. |
 | 40 account actions | Connected apps are intranet hosts → require E-1 allow-list entries; configuration UI validates hosts against it. |
 | 50 prioritization | No change (optional AI score suggestions use the proxy). |
-| 60 announcements | Fonts already self-hosted. Embeds run on intranet apps; revisit identity/audience in light of D-E3 (portal public inside the intranet). |
+| 60 announcements | Fonts served from the instance. Embeds on internal apps show "Everyone" items without identity; segment items need the optional identity token. The edge SSO proxy must let six embed paths through without cookies (or use a shared cookie domain). |

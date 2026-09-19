@@ -37,6 +37,8 @@
 | D-C10 | **One shared S3 bucket** with per-app prefix isolation (Q6).                                                                                                                                                                                                                   | ✅     |
 | D-C11 | **Per-app inbound email is required**, built in the fork (Q7): per-app inbound signing secret derived from the fleet root key, like app secrets.                                                                                                                             | ✅     |
 | D-C12 | **No per-app consent screens** (Q8, Q9): the tower is a trusted first-party client (`skip_consent`); a "connect all apps" flow obtains each app's token via silent SSO sign-in. Attribution unaffected (the human still authenticates).                                      | ✅     |
+| D-C15 | **The tower owns the entire app role set of every tower-managed person** (owner, round 4; resolves second-pass R2-3). At each sync the tower sets their complete role set in every app; roles granted locally by an app admin are removed. There are no locally adopted roles for managed principals. Unmanaged people (not in the tower) are untouched. Supersedes the O-C8 question. | ✅     |
+| D-C16 | **The IdP supports SCIM or a directory API** (owner, round 4; R2-4). Revocation is driven by directory sync, not by login-time claims. Disabling a person produces a tenant-level denial on every auth path (sessions, OAuth/MCP tokens, API keys they created), independent of grant bookkeeping. The revocation bound must be stated as target vs hard maximum with polling/queue/retry budget. | ✅     |
 
 ## RBAC / personas (`10-rbac-persona-extensions.md`)
 
@@ -165,8 +167,8 @@
 | O-R6  | 10 | Should an API key created by a team-restricted agent act only on its creator's teams' tickets and conversations (needs extra upstream seams), or stay workspace-wide with no ticket/conversation access at all? | Workspace-wide, no ticket/conversation access |
 | O-R7  | 10 | Upstream lets any teammate with `conversation.view` open any conversation by ID, while ticket reads by ID become team-limited. Keep upstream's conversation behaviour for Tier agents? | Keep upstream behaviour |
 | O-C3  | 20 | Accept one shared edge-to-app HMAC secret for inbound mail delivery, while reply-address keys stay per app? | Accept |
-| O-C8  | 20 | When an app admin edits a tower-managed role grant locally, should the tower revert it at the next sync, or should local edits win? | Tower wins |
-| O-C9  | 20 | Maximum delay for an IdP group removal to take effect in every app? | 15 minutes (SCIM push or 15-min reconcile) |
+| O-C8  | 20 | ~~Local edits vs tower~~ — **answered by D-C15** (tower owns the whole role set). | — |
+| O-C9  | 20 | Maximum delay for an IdP disable/group removal to take effect in every app — a target or a hard maximum? (Mechanism is now D-C16.) | 15-minute target |
 | O-C10 | 20 | Tier bundles need an explicit per-app team mapping maintained in the tower, and grant nothing in apps without one. Acceptable? | Yes |
 | O-T16 | 30 | Are tiers an operational routing convention (any agent with ticket access can still act), or a strict read/write restriction per tier? | Routing convention; escalators become read-only after handoff |
 | O-T17 | 30 | Does escalating a ticket count as its first response for SLA purposes? | No |
@@ -178,11 +180,30 @@
 | O-P11 | 50 | After a framework switch, decide "needs re-scoring" once, from each post's status at the switch, or re-check it from the current status every time? | Once, at the switch |
 | O-P12 | 50 | Should posts keeping an old-framework score show it frozen as it was at the switch, or keep recalculating it from new votes with the old formula? | Frozen |
 | O-N10 | 60 | Is it acceptable for a new, changed or resolved **status incident** to take up to 5 minutes to reach an already-open banner (announcements themselves are instant)? | Yes |
-| O-N11 | 60 | On customers' sites, should the embedded banner use only the app's theme colours and font, not its custom CSS (custom CSS applies in portal and hub)? | Yes |
+| O-N11 | 60 | On internal apps, should the embedded banner use only the app's theme colours and font, not its custom CSS (custom CSS applies in portal and hub)? | Yes |
 | O-N12 | 60 | Do you also want a banner strip inside the support widget panel? | No (reserved, deferred) |
 
-D-N7 default is refined by the staff review: the embed shows an identified user exactly what the portal shows
-(including segment-targeted items) and shows **nothing** to identities Quackback doesn't know yet (no user is created).
+D-N7 default (after D-E3): on internal apps every employee sees "Everyone" announcements without being identified;
+segment-targeted items appear only when the host app identifies the user, and then match the portal.
 D-T8 default: higher-tier agents outside the owning team, and Managers, may de-escalate.
+
+
+## Raised by the intranet revisions (owner input needed; plans use the stated default meanwhile)
+
+| ID    | Plan | Question | Default in plan |
+| ----- | ---- | -------- | --------------- |
+| O-C11 | 20 | Incoming support email: one catch-all fleet mailbox on the internal mail server, read by a fork mail router that routes each message to its app (upstream IMAP can't run per app under pooled tenancy), or one mailbox per app? | One fleet mailbox + router |
+| O-C12 | 20 | SSO-only sign-in: is it acceptable that domain SSO **enforcement** switches on after each app's first real SSO sign-in (upstream requires a successful SSO login first), and that fleet ops hold each app's break-glass recovery codes in Secrets Manager? | Yes |
+| O-C13 | 20 | May the tower, provisioner and mail router reach apps through a private DNS zone that bypasses the edge SSO proxy (same hostnames; they authenticate with their own tokens)? | Yes |
+| O-C14 | 20 | Which internal domain and private certificate authority should the fleet use for app hostnames? | ⏳ needs your values |
+| O-T19 | 30 | If the company IdP doesn't send `email_verified`, may Quackback trust an email on the verified company domain that the IdP owns? (Otherwise earlier email requests can't be claimed at sign-in.) | Yes |
+| O-T20 | 30 | Is a plain nav link "Help hub" (not translated) enough, avoiding an upstream edit? | Yes |
+| O-A12 | 40 | Connected internal apps must use HTTPS with a certificate from the company CA (trusted via `NODE_EXTRA_CA_CERTS`), with no option to skip certificate checks. OK? | Yes |
+| O-A13 | 40 | Apps resolve the customer's account in this order: SSO subject → employee ID (if you map it from an IdP claim) → external user ID → verified email. OK? | Yes |
+| O-N14 | 60 | Embedded banners on internal apps: "Everyone" announcements show to anyone reaching the app without identifying them; segment-targeted ones only when the host app identifies the user. OK? | Yes |
+| O-N15 | 60 | The edge SSO proxy must let six banner embed paths through without Quackback's login cookie (script, "everyone" feed, live-update stream, fonts, and two optional identity endpoints) — or use a shared cookie domain across internal apps. Which? | Proxy exemption for those paths |
+
+**Ask of the mail team:** have the internal mail server stamp an `Authentication-Results` header on inbound mail; without
+it Quackback treats every internal email as unverified.
 
 Verification tasks recorded in the plans (not decisions): RDS Proxy pinning (20 V-1); MCP token lifetimes and `skip_consent` behaviour (20 V-4, V-8); AWS S3 through the registry's storage record, which today only accepts `provider: 'r2'` and static keys (20 V-7); whether `/api/widget/kb-ask` respects private-portal/help-center audience rules (30); banner stream limiter sizing (60 N-11).
