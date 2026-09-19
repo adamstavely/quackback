@@ -532,8 +532,9 @@ recomputes one.
    starts. A cancelled, expired, rejected or executing request **never starts** an escalation.
 2. **Takeover check.** If the previous state was `claimed` (a lease takeover after a crash), look up 30's operation by
    `(subject, routing_key)`. If one exists, go to step 4 with the same key, which resumes it through 30's replay contract.
-3. **Decide.** Load the ticket; `C = currentTeam(ticket)`, `s` = 30's transition sequence for the ticket. If `C ≠
-   routed_from_team_id` (it moved between request and claim), write `routed_from_team_id = C`, `routed_from_seq = s`, bump
+3. **Decide.** Read `{ sourceTeamId: C, assignmentSeq: s } = getTierAssignmentVersion({ ticketId })` (30 §4.2; `s = 0`
+   when the pair has no state row yet). If `C ≠ routed_from_team_id` **or `s ≠ routed_from_seq`** (it moved, even T1→T2→T1,
+   between request and claim), write `routed_from_team_id = C`, `routed_from_seq = s`, bump
    `routing_attempt` and `routing_key` in one tx guarded by the lease. If `tier(C) ≥ min_tier` → finalize `not_needed`
    (step 5), `approver_team_id = C`.
 4. **Escalate.** First re-verify the lease cheaply: the row still has `routing_lease_owner = :worker`,

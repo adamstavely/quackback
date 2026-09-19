@@ -1,6 +1,6 @@
 # Fleet Control Tower (separate app) + Provisioner — Design Plan v2
 
-> **Status:** v2 (round-2 + staff-review + intranet + second-pass revision) — supersedes `plans/v1/multi-tenant-control-tower-plan.md`. Planning only.
+> **Status:** v2 (round-2 + staff-review + intranet + second-pass + third-review revision) — supersedes `plans/v1/multi-tenant-control-tower-plan.md`. Planning only.
 > **Depends on:** Foundations (F-1 fork migration lineage, F-3 fork MCP registration, F-7 catalogue fence,
 > `fork_settings`, **F-12 SSRF allow-list — hard prerequisite for any app SSO against the intranet IdP**);
 > `04-intranet-deployment.md` (baseline §3, blockers E-1…E-3); `10-rbac-persona-extensions.md` Phase 1a (D3: custom roles enforced on MCP, argument-aware
@@ -72,7 +72,7 @@ rewritten to match it.
 | R2-1 | **Image = upstream target.** Every runner path in this image (`fleet-migrator`, pool acquisition via `ensureWorkspaceSchemaCurrent`, `pool-cache.ts:303-308`, `fork-migrate`) migrates a workspace to *all* migrations bundled in the image, not to a recorded target (`migrate-runtime.ts:202,257`; enrol sets the target to `latestBundledVersion()`, `fleet/migrator.ts:931-936`). Rule: `fork-migrate` runs the full `runMigrations` only when the workspace's upstream ledger already contains **every** migration bundled in the running image (`missingBundledMigrations(readAppliedLedger(sql))` is empty, `ensure-schema-current.ts:32-34`). Otherwise it takes the **fork-only path** (fork lineage + fork catalogue reconcile, never upstream migrate or upstream seed) if the ledger meets the fork's declared upstream requirement, else skips with `upstream_pending`. **Serving-time cohort holds are not supported**: one serving image per fleet, and the web/worker roll is gated on every *active* workspace being at that image's bundle. A tenant that must stay on an older upstream version must be **suspended** (the registry refuses suspended tenants to requests and workers, `registry.ts:371`), because any active tenant a new-image web or worker task touches is caught up on pool acquisition whatever its target. | §4.4.2, §4.4.5, §9 |
 | R2-2 | **Maintenance scope** (`fork/fleet/maintenance-scope.ts`, new files, no seam): opens a direct connection to a `suspended` (or `provisioning`) tenant, runs the same identity checks as `verifyWorkspaceDatabase` (`pool-cache.ts:266-300`: secrets, fingerprint, physical identity, canary) but **not** `ensureWorkspaceSchemaCurrent` or `assertSchemaFloor`, and builds an unpooled, unroutable `WorkspaceScope` (`createWorkspaceScope`/`runWithWorkspaceScope`, `workspace-context.ts:146,302`). `resume` and `create` run everything while the registry says `suspended`: identity → upstream catch-up (`migrateDirect`, `fleet/migrator.ts:496`) → fork lineage + seed → template reconcile → `sync-members` → baseline → **catalogue marker written in its own transaction after the reconcile commits** → both floors evaluated in-process → hostnames restored (still suspended) → state flips to `active` as the last write, then HTTP probes. A crash before the flip leaves the tenant suspended; a crash after it is caught by the `probing` reaper. `fleet-migrator run --workspace` is no longer used by `resume` (it refuses suspended tenants, `requireWorkspace`, `fleet/migrator.ts:978-987`). | §4.3, §4.4.4, §4.4.6, §9 |
 | R2-3 | **Tower owns the whole role set (D-C15).** `adopted_local` and "other local roles untouched" removed. One writer: plan 10's `applyManagedRoleSet(principalId, { legacyRole, workspaceRoles, teamScopedRoles }, { kind: 'tower', syncRunId, grantorPrincipalId }, { executor })`, which sets the legacy role via upstream `setPrincipalRole` and replaces **all** workspace-wide and team-scoped rows of the managed principal (including preset Owner/Manager rows and locally granted rows) atomically under upstream's advisory lock 7061636 + principal-row `FOR UPDATE`. Provenance lives only in plan 10's `fork_role_assignment_sources` (`bundle_keys text[]`); this plan's `fork_tower_assignments` table is **dropped**. `fork_tower_principals` is plan 10's managed-principal registry (new columns `last_applied_legacy_role`, `last_applied_at`, `last_sync_run_id`, `entitlement_expires_at`), inserted in the same transaction as the first apply. Local or upstream edits (a role granted in the app, a legacy role changed by an app admin) are reverted at the next sync (`drift_reverted`). Empty desired set for an active person → legacy **`user` with zero rows** (no sentinel; the `no_access` sentinel is only for a `member` with team roles but no workspace-wide template); disabled person → plan 10's `denyPrincipal` (R2-4). | §4.3.2, §5.3, §9, §10 |
-| R2-4 | **Disable is separate from grants (D-C16).** Directory sync (SCIM push preferred, directory-API polling fallback) marks a person disabled and queues a **deny** per app, which calls plan 10's `denyPrincipal` (`fork_principal_denials` row; sessions deleted; OAuth access + refresh tokens revoked; legacy `user` with zero rows; API keys the person created revoked via `revokeApiKey`). Check sites owned here: **new seam TW-1** — MCP OAuth path, in R-4's fenced block after `mcp/handler.ts:244` (the handler verifies the JWT and re-reads only `principal.role`, `:88-113`); **new seam TW-2** — `databaseHooks.session.create.before` (`auth/index.ts:631-638`), which every sign-in method passes, refuses a new session for a denied user. API keys: plan 10's R-1. Plan 10's F-8 sweep (every 5 min) re-applies denials. 15 minutes is a **target** with a budget table; no hard maximum unless the optional entitlement lease (plan 10 O-R8, default off) is on. Sync failure alarms. | §2 R13, §4.3.2, §4.5.4, §5, §7, §9 |
+| R2-4 | **Disable is separate from grants (D-C16).** Directory sync (SCIM push preferred, directory-API polling fallback) marks a person disabled and queues a **deny** per app, which calls plan 10's `denyPrincipal` (`fork_principal_denials` row; sessions deleted; OAuth access + refresh tokens revoked; legacy `user` with zero rows; API keys the person created revoked via `revokeApiKey`). Check sites owned here: **new seam TW-1** — MCP OAuth path, in R-4's fenced block after `mcp/handler.ts:244` (the handler verifies the JWT and re-reads only `principal.role`, `:88-113`); **new seam TW-2** — `databaseHooks.session.create.before` (`auth/index.ts:631-638`), which every sign-in method passes, refuses a new session for a denied user. API keys: plan 10's R-1. Plan 10's F-8 sweep (every 5 min) re-applies denials. 15 minutes is a **target** with a budget table; no hard maximum unless the optional entitlement lease (plan 10 O-R8, default off) is on. Sync failure alarms. *Superseded in part by the third-review section: denial is also enforced at existing-session resolution (plan 10 R-13…R-15), the sweep is cleanup only, and the lease renews only from directory observations.* | §2 R13, §4.3.2, §4.5.4, §5, §7, §9 |
 | R2-7 | **Raw-message router.** `pollOnce` is **not** used: it parses before calling back (`conversation.email-imap.ts:78-96`) and loses the raw MIME and delivery headers. The router runs its own loop over `createImapClient(config)` → `ImapClient.fetchUnseen()` (raw RFC822 + UID) / `markSeen` / `close` (`:34-45,241`), forwards the raw bytes and only the trusted envelope header. The internal mail server must **delete any inbound copy** of the routing header before stamping its own (V-9); no `To`/`Cc` fallback. Tenant-side deduplication is upstream's: all three ingest paths refuse a repeat `Message-ID` (reply `conversation.email-inbound.service.ts:501-508`, cold `:645-652`, ticket reply `:825-832`), backed by the unique index `conversation_messages_email_message_id_idx` (`packages/db/src/schema/conversation.ts:365-367`); the router also sends `x-qb-transport-message-id` (`email-cloudflare-handler.ts:132,602-605`) so id-less messages dedup too. No fork dedup table. Door status handling: 2xx delivered; 400/413/415/422 permanent → dead-letter, no retry; 401/404/408/429/5xx/timeout → retry with backoff, re-signed with a fresh timestamp. | §4.11, §5.1, §7, §9 |
 
 **Acceptance tests added** (all in §9, mandatory):
@@ -105,6 +105,19 @@ rewritten to match it.
   but before `cp_mail_deliveries` records it, then let it retry. Verify: no delivery to a tenant the envelope did
   not name, no duplicate visible message, raw MIME bytes byte-identical (as decoded by `SocketImapClient`) through
   the exact adapter, 413 dead-lettered without retry, 5xx/timeout retried.
+
+## Third-review changes
+
+Driven by `REVIEW-2026-09-19-MAIN-FOLLOWUP.md` findings **R3-1** and **R3-2**. Plan 10 owns the denial design
+(§0c and §4.9 there). This plan uses the same seams and states the same bound. Where this section and an earlier
+changes table disagree, this section wins, and the body (§2 R13, §4.3.2, §4.5.4, §5, §7, §9, §10, §11) is
+rewritten to match. The correct fixes need more integration than the second pass estimated. The dependencies
+are recorded in §7 and in plan 10 §7, and they must be tested semantically on every upstream upgrade.
+
+| Finding | Change | Acceptance test | Where |
+| --- | --- | --- | --- |
+| R3-1 (P1): deletion + sign-in check is not immediate denial | The deny operation no longer relies on session deletion. Plan 10's `denyPrincipal` Tx 1 commits the denial row. From then on, plan 10's **existing-session checks** refuse the principal on every request: **R-13** (`auth/index.ts` `auth.api` proxy `getSession` + `auth.handler`), **R-14** (`getWidgetSession`) and **R-15** (chat-stream token + open-stream heartbeat). This plan's **TW-2** (`databaseHooks.session.create.before`, `auth/index.ts:631-641`, the **same file** as R-13) blocks new sessions, and **TW-1** covers MCP JWTs. Session deletion, token revocation, demotion and the F-8 sweep are cleanup. The "OIDC after-hook" wording is removed. There is one seam location per check, the same in both plans. Last admin: if demotion fails (`LAST_ADMIN`), the denial still applies, `denial_demote_blocked` alerts ops, and the provisioner restores the break-glass admin (§4.3 step 6, legacy `admin`, not tower-managed), after which the sweep completes the demotion. | Plan 10 §0c R3-1 test, run end to end from a directory disable: hold an SSO sign-in after TW-2's check, let the revocation worker commit the deny, release the insert, then immediately make a portal write, a dashboard request, a widget-Bearer call, a widget upload and a stream handshake with the sweep stopped. All are refused. Repeat with the managed user as the last admin (break-glass removed): still refused, alert raised. | §4.3.2, §4.5.4, §7, §9 |
+| R3-2 (P1): tenant sync success is not directory freshness | **Lease renewal comes only from a recorded directory observation.** The tower records, per user, `directory_observed_at` and `directory_observation_ref` (§5.2). A successful directory-API poll that covered the user writes them (full read, or a delta whose cursor advanced from the last successful cursor; value = the read's start time, ref = poll run id + cursor/version). So does a SCIM request carrying the user's full resource with `active = true` (value = receipt time, ref = request id). A failed or partial poll writes nothing. `sync-members` passes that observation to plan 10's `recordEntitlementObservation`, which sets `entitlement_expires_at = GREATEST(current, LEAST(observedAt, now()) + lease)` and ignores observations that are not newer. A successful tenant apply **never** renews the lease. **One bound, identical to plan 10 §4.9:** with the lease on, access ends at the last directory observation of the person as active + lease duration (at most the lease after disablement), checked on every authenticated request by `isPrincipalDenied`/`isUserDenied`, whatever sync, provisioner or sweep do. With it off, the 15-min target applies and there is no hard maximum. | Lease on (60 min). Stop the directory poll and SCIM while scheduled `sync-members` keeps succeeding, and stop the tenant sweep worker. `entitlement_expires_at` never advances. At `last observation + 60 min` the user is refused on web, portal, widget, stream, MCP and API keys, and a new SSO sign-in creates no session. After the poll resumes, the next sync renews the lease and lifts only `lease_expired`. | §4.3.2, §4.5.4, §5.2, §5.3, §9, §10 O-9 |
 
 ## 1. Changes from v1
 
@@ -159,7 +172,8 @@ rewritten to match it.
 - **R13** Removing a user from an IdP group replaces their app role set, and disabling them in the directory
   denies them in every app on every auth path (sessions, OAuth/MCP tokens, API keys they created, new sign-ins),
   within a **15-minute target** (not a hard maximum; budget and failure behaviour in §4.5.4; optional hard lease)
-  (D-C16, O-9).
+  (D-C16, O-9). The bound is plan 10 §4.9's single statement: once the tenant denial commits, every path refuses
+  on its next request; with the lease on, access also ends at the last directory observation + lease.
 - **Later (not delivered by Phases 0–5):** R10 announcements across apps (Phase 6, D-N8); R11 read-only
   portfolio / prioritization views (Phase 7). Until those phases ship the tower offers neither surface.
 
@@ -425,8 +439,11 @@ active app, the maintenance scope (§4.4.6) during `create`/`resume`. For each t
    through plan 30's service with the same `executor`. It refuses a principal missing from the registry
    (`NOT_MANAGED`) and turns any desired set into `{ user, [], [] }` while a denial is active, so a stale sync
    can never re-grant a disabled person. This plan does not delete or insert assignment rows itself and keeps no
-   second provenance table. With the entitlement lease on (plan 10 O-R8), a successful apply also extends
-   `fork_tower_principals.entitlement_expires_at`. Commit, then bust the returned `cacheKeysToBust`; report
+   second provenance table. With the entitlement lease on (plan 10 O-R8), `sync-members` also calls plan 10's
+   `recordEntitlementObservation(principalId, { observedAt, observationRef }, { executor })` in the same
+   transaction, **only** when the tower's `tower_users.directory_observed_at` for this person is newer than the
+   tenant's `entitlement_observed_at` (§4.5.4). A successful apply on its own never extends the lease (R3-2).
+   Commit, then bust the returned `cacheKeysToBust`; report
    `driftReverted` items to the tower as `drift_reverted`. A failure rolls back that principal only; it keeps
    its previous set, is reported, and is retried next run.
 
@@ -453,10 +470,19 @@ worker, §4.5.4, and by every sync while the person stays disabled). It calls pl
 user and sets `revoked` on every `oauth_access_token` / `oauth_refresh_token` row (all clients); in Tx 2 applies
 `{ user, [], [] }` through `applyManagedRoleSet`; then revokes every API key the person created through upstream
 `revokeApiKey`. The denial is effective at Tx 1 commit. After the call the tower marks its grants for the person
-`revoked`. Paths that do not read those rows are covered by check sites: an unexpired MCP JWT by seam **TW-1**, a
-new sign-in by any method by seam **TW-2**, API keys by plan 10's R-1 (checks key principal **and** creator)
-(§7). Plan 10's `fork-principal-denial-sweep` (shared F-8, every 5 min) re-applies active denials, which catches a
-session minted by a sign-in that raced the denial, and enforces the optional lease.
+`revoked`. The denial does not depend on those deletions. From the Tx 1 commit it is enforced where credentials
+are resolved:
+
+- existing cookie, Bearer and widget sessions and realtime streams, by plan 10's **R-13 / R-14 / R-15**
+  (plan 10 §4.9);
+- an unexpired MCP JWT, by **TW-1**;
+- a new sign-in by any method, by **TW-2**;
+- API keys, by plan 10's R-1, which checks the key principal **and** its creator.
+
+So a session that a sign-in racing the denial inserts is refused on first use. Demotion is cleanup: when it is
+refused with `LAST_ADMIN`, the denial still holds and `denial_demote_blocked` alerts ops to restore the
+break-glass admin. Plan 10's `fork-principal-denial-sweep` (shared F-8, every 5 min) is cleanup only. It deletes
+leftover rows, retries demotion and records `lease_expired` denials. No bound depends on it.
 
 Upstream IdP claim mapping only assigns **legacy** roles (`oidc-claim-mapping.ts:98-110`, `KNOWN_ROLES`), so
 custom-role assignment has to be explicit — hence `sync-members` rather than app-side claim mapping.
@@ -783,6 +809,18 @@ in a tenant-level deny, not a grant change.
   (fallback, and a safety net even when push is configured): every `TOWER_DIRECTORY_POLL_MS` (default 5 min) a
   full or delta read of users and groups, same effect. `tower_directory_sync_state` records the last successful
   push and poll.
+- **Directory observations (R3-2).** The lease (below) renews only from these observations, which are written
+  in the same control-DB transaction as the change they come from:
+  - **Poll.** A poll that completes successfully sets, for every user it covered:
+    - `tower_users.directory_observed_at` = the read's **start** time;
+    - `directory_observation_ref` = poll run id + the directory's cursor/version (delta token or `ETag`).
+
+    A full read covers every user it returns. A delta read counts only when it advanced from the last
+    successful cursor, and then covers every user in scope.
+  - **SCIM.** A request carrying a user's **full** resource with `active = true` (POST or PUT) sets
+    `directory_observed_at` = the receipt time, with ref = the request id, for that user. A PATCH does not.
+  - **Failures.** An errored, partial or cursor-reset poll writes no observation.
+  - **Tenant writes** never create one.
 - **Queue.** Every change writes a durable `tower_revocation_jobs` row per (user, app) in the same control-DB
   transaction: `kind` ∈ {`deny`, `resync`, `undeny`}. A long-running **revocation worker** (the provisioner image
   run as an ECS service, `fork-provision worker`, same task role — no `RunTask` cold start) claims jobs
@@ -802,20 +840,44 @@ in a tenant-level deny, not a grant change.
 | Retry allowance for transient app/DB failures | ≤ 8 min | ≤ 8 min |
 | **End-to-end target** | **≤ 10 min** | **≤ 15 min** |
 
-Effect once `denyPrincipal` Tx 1 commits (§4.3.2): next web request 401 (session rows gone), next MCP call 401
-(TW-1 even for a valid JWT), refresh refused, API keys refused (plan 10 R-1), new sign-in by any method refused
-(TW-2). Plan 10's F-8 sweep re-applies the denial every 5 min.
+Effect once `denyPrincipal` Tx 1 commits (§4.3.2):
+
+- the next web, portal, widget or upload request gets 401, because plan 10's R-13/R-14 check the denial when
+  the session is resolved, even for a session row that survived or raced the deletion;
+- a stream handshake is refused and an open stream closes within one heartbeat (R-15);
+- the next MCP call gets 401 (TW-1, even for a valid JWT);
+- refresh is refused, API keys are refused (plan 10 R-1), and a new sign-in by any method is refused (TW-2).
+
+Plan 10's F-8 sweep then cleans up every 5 min. It is not part of the bound.
 
 **Failure behaviour.** Directory unavailable (push errors and no successful poll for 2× the poll interval) →
 `directory_sync_stale` alarm; deny jobs already queued keep running; no one is revoked who was not reported.
-Per-app deny failing past the budget → `revocation_lag` alarm naming the app and user. **Optional hard bound —
-entitlement lease** (off by default; plan 10 O-R8, `fork_settings['rbac.entitlement_lease']`):
-`fork_tower_principals.entitlement_expires_at` is extended to `now() + lease` (e.g. 60 min) by every successful
-`applyManagedRoleSet` from `sync-members`; plan 10's `isPrincipalDenied` (used by TW-1, TW-2 and R-1) treats an
-expired lease as a denial, and its F-8 sweep calls `denyPrincipal(p, 'lease_expired')`; the next successful sync
-lifts only `lease_expired`. With the lease on, the **hard maximum** is the lease length even if directory sync is down, at the
-cost that a directory or provisioner outage longer than the lease locks out every tower-managed person (break-glass
-admins are not tower-managed and are unaffected). `verify` reports push/poll health and lease mode per deployment.
+Per-app deny failing past the budget → `revocation_lag` alarm naming the app and user.
+
+**Optional hard bound: the entitlement lease** (off by default; plan 10 O-R8,
+`fork_settings['rbac.entitlement_lease']`).
+
+- **Renewal (R3-2).** `sync-members` hands the person's latest **directory observation** (above) to plan 10's
+  `recordEntitlementObservation`, which sets
+  `fork_tower_principals.entitlement_expires_at = GREATEST(current, LEAST(observedAt, now()) + lease)`
+  (e.g. 60 min). It ignores an observation that is not newer than the recorded one.
+- **What does not renew it.** A successful `applyManagedRoleSet` or a whole successful `sync-members` run
+  without a newer observation leaves the expiry unchanged. Reapplying cached tower state therefore never
+  extends access.
+- **Enforcement.** Plan 10's `isPrincipalDenied`/`isUserDenied` treat an expired lease as a denial on
+  **every authenticated request**: R-13/R-14/R-15, TW-1, TW-2 and R-1. The F-8 sweep only records
+  `lease_expired` and cleans up.
+- **Lifting.** A renewal that moves the expiry past `now()` lifts only `lease_expired`.
+- **The bound, identical to plan 10 §4.9.** With the lease on, access ends at the last directory observation
+  of the person as active + lease duration. That is at most the lease duration after disablement, even when
+  the directory, the tower, the provisioner, `sync-members` or the sweep is down. With the lease off, there is
+  no hard maximum, only the target above.
+- **Cost.** A directory outage longer than the lease locks out every tower-managed person. Break-glass admins
+  are not tower-managed and are unaffected.
+- **Prerequisites.** The lease requires the directory poll (plan 10 O-R10): SCIM push alone cannot renew
+  people whose state did not change. `verify` refuses to enable the lease unless the poll is healthy and every
+  registry row has an observation. `verify` also reports push/poll health, the oldest observation per app and
+  the lease mode per deployment.
 
 ### 4.6 MCP coverage for tower surfaces
 
@@ -1097,7 +1159,7 @@ hostnames/activity, RW `tower_*`.
 
 | Table                       | Columns                                                                                                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `tower_users`               | `id uuid pk`, `idp_subject text unique`, `email citext unique`, `name`, `status text check in (active,disabled)`, `last_login_at`, timestamps (replaces v2-r1 `tower_admins`); `idp_subject` is a denormalised copy of the `tower` row in `tower_user_idp_links` |
+| `tower_users`               | `id uuid pk`, `idp_subject text unique`, `email citext unique`, `name`, `status text check in (active,disabled)`, `last_login_at`, `directory_observed_at timestamptz null` and `directory_observation_ref text null` (R3-2: the last successful directory read that covered this user, §4.5.4; the only lease renewal source), timestamps (replaces v2-r1 `tower_admins`); `idp_subject` is a denormalised copy of the `tower` row in `tower_user_idp_links` |
 | `tower_roles`               | `id uuid pk`, `key text unique`, `name`, `description`, `capabilities text[]` (⊆ code catalogue §6, checked on write), `tenant_template_key text null` (workspace-wide `fork_role_templates.template_key` from 10; null ⇒ none, e.g. Fleet Owner = legacy Admin), `tenant_team_template_key text null` (team-scoped template; non-null requires `tenant_template_key` non-null or legacy `admin`, CHECK), `tenant_legacy_role text check in (admin,member) default 'member'`, `is_seed bool`, `retired_at timestamptz null` (soft delete, §4.3.2), timestamps |
 | `tower_role_app_teams`      | `role_id fk`, `workspace_key fk`, `tenant_team_id text` (verified to exist at every sync; missing ⇒ `unmapped_team`), `set_by uuid`, timestamps; pk (`role_id`,`workspace_key`) |
 | `tower_user_idp_links`      | `user_id fk`, `provider_key text check in (tower,app)`, `issuer text`, `subject text`, `linked_at`; pk (`user_id`,`provider_key`); unique (`issuer`,`subject`) |
@@ -1108,7 +1170,7 @@ hostnames/activity, RW `tower_*`.
 | `tower_tenant_grants`       | `id uuid pk`, `user_id fk`, `workspace_key fk`, `tenant_principal_id text` (must equal `tower_user_app_identities`), `scopes text[]`, `refresh_token_ct bytea`, `access_token_ct bytea`, `access_expires_at`, `wrapped_dek bytea`, `kms_key_id`, `status text (active,needs_reconnect,revoked)`, `last_used_at`; unique (`user_id`,`workspace_key`) |
 | `tower_connect_runs`        | `id uuid pk`, `user_id fk`, `queue jsonb` (ordered `[{key, status: pending|connected|failed|skipped, reason}]`), `created_at`, `completed_at`                                     |
 | `tower_audit`               | `id uuid pk`, `user_id fk`, `user_email`, `workspace_key`, `tool text`, `args_digest`, `args_summary jsonb` (redacted), `target_ref`, `status (pending,ok,denied,error,uncertain)`, `tenant_result jsonb`, `request_id`, `created_at`; indexes (`workspace_key`,`created_at`), (`user_id`,`created_at`); append-only except status transition via function. Role/membership/mapping edits are audited here too (`tool = 'tower.roles.*'`). |
-| `tower_directory_sync_state` | `source text pk check in (scim_push,directory_poll)`, `last_success_at`, `last_error_at`, `last_error text`, `cursor text null` (delta token) — drives `directory_sync_stale` (§4.5.4) |
+| `tower_directory_sync_state` | `source text pk check in (scim_push,directory_poll)`, `last_success_at`, `last_success_started_at` (poll read start; the observation time), `last_error_at`, `last_error text`, `cursor text null` (delta token), `version text null` (directory ETag/version of the last successful read) — drives `directory_sync_stale` (§4.5.4) and the observation refs |
 | `tower_revocation_jobs` | `id uuid pk`, `user_id fk`, `workspace_key fk`, `kind text check in (deny,resync,undeny)`, `cause text` (e.g. `scim:active=false`), `status text check in (queued,running,done,retrying)`, `attempts int`, `next_attempt_at`, `enqueued_at`, `done_at`, `last_error`; index (`status`,`next_attempt_at`); claimed with `FOR UPDATE SKIP LOCKED` by the revocation worker |
 | `tower_auth_*`              | Better Auth user/session/account/verification/sso_provider (generated shape, own lineage)                                                                                       |
 
@@ -1119,7 +1181,7 @@ PKCE verifiers for in-flight hops live in `tower_auth_verification` (Better Auth
 
 | Table | Columns |
 | ----- | ------- |
-| `fork_tower_principals` | Plan 10 §4.8's **managed-principal registry**: `principal_id pk → principal.id ON DELETE CASCADE`, `tower_user_id uuid unique`, `app_idp_issuer`, `app_idp_subject`, `managed_since`, `last_applied_legacy_role text`, `last_applied_at timestamptz`, `last_sync_run_id text` (written by `applyManagedRoleSet`), `last_sync_status text`, `entitlement_expires_at timestamptz null` (lease, plan 10 O-R8). Inserted in the same transaction as the first `applyManagedRoleSet`; deleted only after the final state or a denial is applied (D-C15). |
+| `fork_tower_principals` | Plan 10 §4.8's **managed-principal registry**: `principal_id pk → principal.id ON DELETE CASCADE`, `tower_user_id uuid unique`, `app_idp_issuer`, `app_idp_subject`, `managed_since`, `last_applied_legacy_role text`, `last_applied_at timestamptz`, `last_sync_run_id text` (written by `applyManagedRoleSet`), `last_sync_status text`, `entitlement_expires_at timestamptz null`, `entitlement_observed_at timestamptz null`, `entitlement_observation_ref text null` (lease, plan 10 O-R8; written only by plan 10's `recordEntitlementObservation` from a directory observation, R3-2). Inserted in the same transaction as the first `applyManagedRoleSet`; deleted only after the final state or a denial is applied (D-C15). |
 
 `fork_principal_denials` and `fork_role_assignment_sources` are plan 10's tables (§5 there); this plan writes them
 only through `denyPrincipal` / `applyManagedRoleSet`.
@@ -1204,13 +1266,19 @@ suggestion and widget tools, tier escalation and account actions.
 | shared | `apps/web/src/lib/server/fleet/schema-floor.ts` (`assertSchemaFloor`, `:144`) | first statement `await forkAssertSchemaFloor(workspaceKey, sql)` (`FORK-SEAM(fork-floor)`) | **F-11** (shared, `SEAMS.md`; previously listed here as C-2). The fork function (`fork/fleet/fork-schema-floor.ts`) is owned by this plan; not counted here. | — |
 | shared (prerequisite) | `apps/web/src/lib/server/content/ssrf-guard.ts` (+ webhook write check) | env allow-list for intranet CIDRs/hosts | **F-12** (Foundations, E-1). Without it app SSO against the intranet IdP cannot be saved, tested, enforced or used (§4.5.1). Not counted here. | — |
 | TW-1 (R2-4) | `apps/web/src/lib/server/mcp/handler.ts` (`handleMcpRequest`, after `:244` `if (auth instanceof Response) return auth`, inside plan 10's R-4 fenced block — one edit site) | `if (auth.authMethod === 'oauth' && await isPrincipalDenied([auth.principalId])) return <upstream 401 + WWW-Authenticate>` (`FORK-SEAM(principal-deny)`), before scope step-up | `resolveOAuthContext` verifies the JWT statelessly and re-reads only `principal.role` (`:88-113`); it never consults `oauth_access_token.revoked`, so a revoked but unexpired JWT still authenticates. `isPrincipalDenied` is plan 10's (§4.9; also covers the lease). API-key MCP calls are covered by plan 10's R-1. | Re-add immediately after `resolveAuthContext` returns a context, before any scope/plan gate, in the same fenced block as R-4. |
-| TW-2 (R2-4) | `apps/web/src/lib/server/auth/index.ts` (`databaseHooks.session.create.before`, `:631-638`) | first statement: `if (await isUserDenied(sessionData.userId)) return false` (`FORK-SEAM(principal-deny)`) — refuses the session row before it exists | Every sign-in method (SSO, magic link, email OTP, password, recovery code) and the OAuth authorize flow create a session through this hook; the OIDC after-hook (`auth/hooks.ts`) runs only for OIDC and after the row exists. A directory-disabled person is normally refused by the IdP, but a stale IdP session, a re-enabled IdP account, or an expired lease must not mint a session. `isUserDenied` is plan 10's `isPrincipalDenied` resolved by user id. | Re-add as the first statement of whatever Better Auth hook runs before a session row is inserted. |
+| TW-2 (R2-4, R3-1) | `apps/web/src/lib/server/auth/index.ts` (`databaseHooks.session.create.before`, `:631-641`) | first statement: `if (await isUserDenied(sessionData.userId)) return false` (`FORK-SEAM(principal-deny)`) — refuses the session row before it exists | Every Better Auth sign-in method (SSO, magic link, email OTP, password, recovery code, one-time token) creates its session through this hook, so it is the one place to stop a new session. It is **not** what makes denial immediate: a row inserted by a sign-in that raced the denial, or written without the hook (`routes/api/widget/identify.ts:138`), is refused on use by plan 10's **R-13** (same file: the `auth.api` proxy `:899-911` and `auth.handler` `:912-925`), **R-14** (`getWidgetSession`) and **R-15** (chat stream). A directory-disabled person is normally refused by the IdP, but a stale IdP session, a re-enabled IdP account, or an expired lease must not mint a session. `isUserDenied` is plan 10's (§4.9). | Re-add as the first statement of whatever Better Auth hook runs before a session row is inserted. **Semantic test on every upgrade:** plan 10's R3-1 race test (§9). |
 | C-1 (conditional, V-1) | `apps/web/src/lib/server/workspaces/pool-cache.ts` | `prepare: config.workspacePoolPrepare` at `:179`/`:402` (env `WORKSPACE_POOL_PREPARE`, default true) | Only if RDS Proxy pins on prepared statements. | Replace the two literals again. |
 | shared | `mcp/tools/index.ts` | `registerForkTools` | **F-3**, not counted here. | — |
 | dep | `packages/db/src/migrate-runtime.ts`; MCP actor construction | fork lineage; custom-role enforcement | **F-1** (Foundations) and R-3…R-5 (10-rbac); not counted here. | — |
 
 **Count: 3 seams (IE-1, TW-1, TW-2) (+1 conditional, C-1).** Second pass (R2-4) added TW-1 (same fenced block
-as plan 10's R-4) and TW-2. Added no seam: the maintenance scope (R2-2) composes exported upstream pieces
+as plan 10's R-4) and TW-2.
+
+**Third review (R3-1): no new seam here, but more integration than estimated.** Denial of existing sessions
+needs plan 10's R-13 (`auth/index.ts`, the file TW-2 already edits), R-14 (`functions/widget-auth.ts`) and
+R-15 (`routes/api/chat/stream.ts`), which are counted in plan 10. Revocation in this plan depends on all of
+them. Together with TW-1, TW-2 and R-1 they must be **semantically** tested on every upstream upgrade (plan
+10's R3-1 race test and resolver guard), not only found by grep. Added no seam: the maintenance scope (R2-2) composes exported upstream pieces
 (`SELECT_COLUMNS`, `interpretRow`, `resolveWorkspacePassword`, `resolveWorkspaceSecrets`, the fingerprint
 evaluators, `createWorkspaceScope`/`runWithWorkspaceScope`, `migrateDirect`, `assertSchemaFloor`) and is guarded by
 a parity contract test; the deny operation is plan 10's `denyPrincipal` (fork code; its sweep uses shared
@@ -1232,7 +1300,7 @@ fork migrations for §5.3. Generated: `MATRIX.md` (fork tools), `GRAPH.md`, `bun
 | **0. AWS spikes** (in the no-egress VPC) | Shared Aurora cluster + RDS Proxy + fleet S3 bucket + VPC endpoints (S3, Secrets Manager, KMS, ECS, RDS, Logs, SES SMTP) + internal ALB, internal DNS/private-CA certificate + 1 hand-made app | V-1 pinning measured (C-1 decision recorded); V-2 password auth; V-3 DSN/OID via proxy; V-7 S3 via `provider:'r2'` record through the VPC endpoint with static keys + `S3_PROXY=true`; V-4 token TTLs + `skip_consent` behaviour; V-9 internal mail server delivers one copy per envelope recipient, deletes inbound copies of the routing header and stamps its own (a forged header sent from outside is gone on arrival); V-10 private-DNS bypass of the edge proxy keeps Host/audience; no task has an internet route (egress test) |
 | **1. Control DB** | `apps/control-tower/migrations` 0001–0004 + migrate script + grants | Registry parity test green; `apps/web` boots pooled against a hand-seeded row; `fleet-migrator status/enrol` work |
 | **2. Provisioner** | `Dockerfile.fork` + image gate; `fork-provision create/verify/suspend/resume/deprovision/fork-migrate`; maintenance scope (§4.4.6) + parity contract test; full/fork-only `fork-migrate` paths; probing reaper; sign-in baseline (§4.3.1) + break-glass codes; F-11 fork floor; `cp_fork_schema_state` | Two apps provisioned; `verify` passes (secrets, storage prefix + `/api/storage` read-back, `skip_consent`, baseline fields); Quackback-level probes: writes refused without a session and with an anonymous session, every non-SSO sign-in/sign-up door refused; edge probe gets the SSO challenge; forced probe failure unpublishes + suspends; fingerprint refusals on a mis-wired row = 503 with the right code; `workspace-probe` isolation passes; mail slug > 13 chars refused; the F1 rehearsals and the R2-1/R2-2 tests (§9) pass |
-| **3. App SSO + members** (after **F-12** and plan 10 Phase 3 + §4.9) | IdP rows (OIDC direct or via intranet broker), verified domain, enforcement flip, `sync-members` over `applyManagedRoleSet` with bundles + multi-role + adopt-by-subject, deny via `denyPrincipal`, seams TW-1/TW-2, SCIM endpoint + directory poll + `tower_revocation_jobs` + revocation worker, `tower-connect` route | SSO start reaches the intranet IdP (F-12 allow-list; fails without it); user signs into both apps via the IdP (direct OIDC and via broker) and lands on the mapped principal (no duplicate user, no email-linked extra account); a non-tower employee is JIT-created as portal `user`; a tower user who JIT-signed-in first is adopted by subject; `enforced` flips after the first real SSO sign-in; the managed-role-set (R2-3) tests (§9) pass; the R2-4 disable test passes (session, MCP JWT, refresh, API key, new sign-in all refused within the target; `directory_sync_stale` fires with sync down); `tower-connect` rejects a foreign `client_id`/`redirect_uri` |
+| **3. App SSO + members** (after **F-12** and plan 10 Phase 3 + Phase 3t incl. R-13/R-14/R-15 + §4.9) | IdP rows (OIDC direct or via intranet broker), verified domain, enforcement flip, `sync-members` over `applyManagedRoleSet` with bundles + multi-role + adopt-by-subject, deny via `denyPrincipal`, seams TW-1/TW-2, SCIM endpoint + directory poll with per-user directory observations (R3-2) + `tower_revocation_jobs` + revocation worker, `tower-connect` route | SSO start reaches the intranet IdP (F-12 allow-list; fails without it); user signs into both apps via the IdP (direct OIDC and via broker) and lands on the mapped principal (no duplicate user, no email-linked extra account); a non-tower employee is JIT-created as portal `user`; a tower user who JIT-signed-in first is adopted by subject; `enforced` flips after the first real SSO sign-in; the managed-role-set (R2-3) tests (§9) pass; the R2-4 disable test passes (session, MCP JWT, refresh, API key, new sign-in all refused within the target; `directory_sync_stale` fires with sync down); the R3-1 existing-session and R3-2 lease-freshness tests (§9) pass with the sweep stopped; `tower-connect` rejects a foreign `client_id`/`redirect_uri` |
 | **4. Tower shell** | Better Auth + SSO plugin (OIDC and SAML), `tower_roles`/members/claim mappings + roles UI, silent "connect all", grants (KMS), `tower_audit` | Sign-in via an OIDC IdP and via a SAML IdP; claim-mapped roles applied, unknown subject refused; connect-all across 2 apps with **no consent screen and no click**; one app down → skipped, chain continues; identity mismatch → revoked; token refresh + `needs_reconnect`; tower task has no root-key/DSN access (IAM policy test) |
 | **5. Read + act** (after 10-rbac 1a) | `fork-fleet.ts` tools, unified inbox/tickets/feedback/roadmap/changelog/dashboard, actions | One app down → partial result; dormant app skipped; reply in A + status change in B from one screen; `tower_audit` + app activity both name the human; Fleet Observer write via MCP denied by the app; capability hidden in UI and refused server-side |
 | **6. Announcements** (after 60; later — R10 not delivered before it ships) | Tower announcements page over `fork-announcements.ts` | Fleet Owner **and** Fleet Agent publish to 2 apps; per-app `succeeded/failed/uncertain`; a timeout after tenant commit shows `uncertain` then reconciles to `succeeded` with no duplicate row; Fleet Observer lists but cannot publish (token has no write scope); bundle without `announcements.publish` cannot |
@@ -1305,7 +1373,29 @@ fork migrations for §5.3. Generated: `MATRIX.md` (fork tools), `GRAPH.md`, `bun
   table. Directory/SCIM unavailable: `directory_sync_stale` at 2× poll interval, nothing revoked that was not
   reported; after recovery the deny lands within the target; with the lease on, access ends at lease expiry
   (plan 10 sweep). App unreachable → job retried, `revocation_lag` alarm, applied when it returns; suspended
-  app → applied at `resume`. Grep test on `FORK-SEAM(principal-deny)` (two sites).
+  app → applied at `resume`. Grep test on `FORK-SEAM(principal-deny)` over **all** denial sites: TW-1 and TW-2
+  here, plus plan 10's R-1, R-13 (2 sites), R-14 and R-15 (2 sites). The grep is not sufficient on its own; the
+  two tests below are mandatory.
+- **Existing-session denial (R3-1, mandatory, sweep stopped):**
+  1. Disable a managed user in the directory while an SSO sign-in for them is held after TW-2's check.
+  2. The revocation worker commits the deny, then the insert is released.
+  3. Before any sweep, each of these is refused: a portal write, a dashboard request, `/api/auth/get-session`,
+     a widget-Bearer call, a widget upload, a portal upload, and a chat-stream handshake (cookie and
+     pre-minted token). An open stream closes within one heartbeat.
+  4. **Last-admin case:** with the break-glass admin removed, the demotion reports
+     `demote_blocked_last_admin` and `denial_demote_blocked` alerts ops, while every request above is still
+     refused. After the provisioner restores the break-glass admin, the sweep completes the demotion.
+- **Lease freshness (R3-2, mandatory, lease on, sweep stopped):**
+  1. Stop the directory poll and SCIM, and keep scheduled `sync-members` succeeding.
+  2. `tower_users.directory_observed_at` and the tenant `entitlement_expires_at` never advance.
+  3. At `last observation + lease` every path (web, portal, widget, stream, MCP JWT, API key, new SSO sign-in)
+     is refused, with no worker running.
+  4. When the poll resumes, the next sync renews the lease and lifts only `lease_expired`.
+
+  Also check:
+  - a failed or partial poll and a SCIM PATCH record no observation;
+  - `verify` refuses to enable the lease while the poll is unhealthy or any registry row lacks an
+    observation.
 - **Identity (C3):** OIDC direct and SAML-via-broker users map to the recorded `tenant_user_id`/principal; an
   email change at the IdP does not relink; an email-auto-linked extra account is removed by sync; connect chain
   rejects a token whose `sub`/`principalId` differ from the mapping; IdP group removal → role set replaced
@@ -1353,9 +1443,11 @@ fork migrations for §5.3. Generated: `MATRIX.md` (fork tools), `GRAPH.md`, `bun
   removed at the next sync (§4.3.2).
 - **O-9 (🟡, = O-C9)** Default: **15 minutes is a target** (p99; ≤ 10 min on SCIM push), budgeted in §4.5.4, with
   alarms when it is missed; **no hard maximum** unless the tenant-side entitlement lease (plan 10 O-R8, default
-  off) is enabled, which caps access at the lease length even with sync down but locks out every managed person
-  during a sync outage longer than the lease. Question: is a target acceptable, or is a hard maximum (the lease)
-  required — and if so, what lease length?
+  off) is enabled. With the lease on, access ends at the last **directory observation** + lease, which is at
+  most the lease after disablement. It is enforced per request even with sync, provisioner and sweep down (R3-2;
+  a successful tenant sync alone never renews it). The cost is that it locks out every managed person during a
+  directory outage longer than the lease, and it requires the directory poll (plan 10 O-R10). Question: is a
+  target acceptable, or is a hard maximum (the lease) required, and if so, what lease length?
 - **O-10 (🟡)** Default: Tier bundles need an explicit per-app team mapping (`tower_role_app_teams`) and
   grant nothing in apps without one. Question: is per-app team mapping for Tier bundles, maintained in the
   tower by `roles.manage`, acceptable?
@@ -1399,7 +1491,9 @@ Contracts this plan **consumes** (stated here, owned elsewhere):
   (plan 10 §4.8, R2-3), and the denial primitive `denyPrincipal` / `liftPrincipalDenial` / `isPrincipalDenied` +
   `fork_principal_denials` + the F-8 denial sweep + R-1 creator check + lease setting O-R8 (plan 10 §4.9, R2-4).
   Plan 20 owns the registry table `fork_tower_principals` those read, and seams TW-1/TW-2 that call
-  `isPrincipalDenied`. The template permission sets must satisfy §6.1; `verify --contract` reports any gap per app.
+  `isPrincipalDenied`. Plan 10 owns the existing-session denial checks R-13/R-14/R-15 (R3-1),
+  `recordEntitlementObservation`, and the single revocation bound (plan 10 §4.9) that §4.5.4 restates. This
+  plan supplies the directory observations that are the lease's only renewal source (R3-2). The template permission sets must satisfy §6.1; `verify --contract` reports any gap per app.
 - **30-tiered:** tier teams and the tier-membership service used for Tier bundle team grants (called with
   `applyManagedRoleSet`'s executor; its local writer refuses managed principals). Tier escalation
   and account actions are not exposed in the tower in v2.

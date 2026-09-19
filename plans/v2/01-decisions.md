@@ -224,4 +224,14 @@ it Quackback treats every internal email as unverified.
 | O-A17 | 40 | Is a signed conformance-kit attestation (plus live probes) required and sufficient to enable a connected app? | Yes, required and audited |
 | O-N16 | 60 | Is a 5-minute recovery bound acceptable when a live banner update is lost (normal updates arrive in under 2 s)? | Yes |
 
+
+## Raised by the third review (owner input needed; plans use the stated default meanwhile)
+
+| ID    | Plan | Question | Default in plan |
+| ----- | ---- | -------- | --------------- |
+| O-R10 | 10/20 | If the entitlement lease is turned on (O-R8), must the directory **poll** also run (SCIM push alone can't renew people whose status didn't change)? | Yes — the tower refuses to enable the lease without a healthy poll |
+| O-T24 | 30 | When a conversation is converted to a ticket during escalation, where does the ticket's resolution clock start? | The conversation's original SLA start and schedule |
+| O-T25 | 30 | At intake, may the Tier 1 default SLA replace the workspace-default SLA that upstream stamps before workflows run? | Yes, at the intake transition only |
+| O-T26 | 30 | Should admin-written `apply_sla` steps in other workflows be guarded while tiers are on? | No — upstream behaviour; the Tiers page warns about them |
+
 Verification tasks recorded in the plans (not decisions): RDS Proxy pinning (20 V-1); MCP token lifetimes and `skip_consent` behaviour (20 V-4, V-8); AWS S3 through the registry's storage record, which today only accepts `provider: 'r2'` and static keys (20 V-7); whether `/api/widget/kb-ask` respects private-portal/help-center audience rules (30); banner stream limiter sizing (60 N-11).
