@@ -1,6 +1,7 @@
 # RBAC Persona Extensions — v2 Plan
 
-> **Status:** v2 (round-2 revision + staff-review revision + second-pass revision, 2026-09-19) — supersedes
+> **Status:** v2 (round-2 revision + staff-review revision + second-pass revision + third-review revision,
+> 2026-09-19) — supersedes
 > `plans/v1/rbac-persona-extensions-plan.md`. Nothing here is implemented.
 > **Depends on:** Foundations (fork migration lineage `packages/db/drizzle-fork` + `drizzle.__fork_migrations`,
 > `fork_settings`, shared seams F-1…F-11, `plans/v2/SEAMS.md`) — see `02-fork-conventions.md`, in particular
@@ -56,7 +57,7 @@ rewritten to match it. Plan 20 consumes the contract in §4.8 and §4.9.
 | Finding | Change | Where |
 | --- | --- | --- |
 | R2-3 (RBAC side) | **One writer for managed principals: `applyManagedRoleSet(principalId, desired, source)`.** It replaces **all** workspace-wide **and** team-scoped assignment rows of a tower-managed principal, including preset Owner/Manager rows, rows written by upstream role changes or role-delete reassignment, and fork-UI rows. It also sets the legacy role. Everything happens in one transaction under the locks upstream's role writer takes, in the same order: `pg_advisory_xact_lock(7061636)` then principal row `FOR UPDATE` (`principal.factory.ts:277,320`). It accepts the caller's executor, so plan 20/30 can put tier membership in the same transaction. The old `applyAssignmentSet` and its `authoritative` flag are **removed**; there are no `adopted_local` or "local roles survive" cases. Provenance lives only in `fork_role_assignment_sources`. Every row a managed principal holds must have `source = 'tower'`. The **managed-principal registry** is plan 20's `fork_tower_principals` (one row per managed principal). The writer refuses any principal that is not in it, and all fork-UI writers (Phase 2/3) refuse any principal that is. **Legacy role rule:** `admin` ⇒ the Owner preset row only. `member` ⇒ the desired templates, plus the `no_access` sentinel only when no workspace-wide template is desired. Empty desired set for an **active** principal ⇒ legacy **`user`** and zero rows (no sentinel). **Disabled** ⇒ `denyPrincipal` (R2-4). An upstream legacy-role change to a managed principal is reverted at the next sync and reported `drift_reverted`. `assertTowerPrincipalsFailClosed` now tests exactly this policy. | §2 R8, §4.4, §4.5, §4.7, §4.8, §5, §8, §9 |
-| R2-4 (tenant denial) | **Tenant-level denial primitive, separate from grants.** New table `fork_principal_denials`, plus the functions `denyPrincipal(principalId, reason, opts)`, `liftPrincipalDenial` and `isPrincipalDenied(ids[])`. Once the denial row commits, every auth path refuses the principal. Session rows are deleted (`session` table, the same SQL as upstream `forceSignOutUserFn`, `functions/admin.ts:289-300`). OAuth access and refresh token rows are revoked (`oauth_access_token`/`oauth_refresh_token.revoked`, `schema/auth.ts:1046-1120`). The principal is demoted to `user` with zero assignments. Then every API key the principal created is revoked through upstream `revokeApiKey` (`api-key.service.ts:264-281`), which also demotes the key's service principal. **Check sites:** **R-1** (extended, this plan) refuses any API key whose service principal **or creator** is denied, on REST and MCP-key paths. **TW-1** (plan 20) is in the MCP handler, in the same fenced block as R-4: the OAuth path verifies the JWT and re-reads only `principal.role` (`mcp/handler.ts:90-113`). **TW-2** (plan 20) blocks new sessions and must sit at `databaseHooks.session.create.before` (`auth/index.ts:631-638`), which every sign-in method passes through. A new fork job via shared **F-8**, `fork-principal-denial-sweep` (every 5 min), re-applies all active denials. It closes the sign-in-concurrent-with-deny race, and it enforces the optional entitlement lease (off by default, 🟡 O-R8). | §2 R9, §4.9, §5, §7, §8, §9, §10 |
+| R2-4 (tenant denial) | **Tenant-level denial primitive, separate from grants.** New table `fork_principal_denials`, plus the functions `denyPrincipal(principalId, reason, opts)`, `liftPrincipalDenial` and `isPrincipalDenied(ids[])`. Once the denial row commits, every auth path refuses the principal. Session rows are deleted (`session` table, the same SQL as upstream `forceSignOutUserFn`, `functions/admin.ts:289-300`). OAuth access and refresh token rows are revoked (`oauth_access_token`/`oauth_refresh_token.revoked`, `schema/auth.ts:1046-1120`). The principal is demoted to `user` with zero assignments. Then every API key the principal created is revoked through upstream `revokeApiKey` (`api-key.service.ts:264-281`), which also demotes the key's service principal. **Check sites:** **R-1** (extended, this plan) refuses any API key whose service principal **or creator** is denied, on REST and MCP-key paths. **TW-1** (plan 20) is in the MCP handler, in the same fenced block as R-4: the OAuth path verifies the JWT and re-reads only `principal.role` (`mcp/handler.ts:90-113`). **TW-2** (plan 20) blocks new sessions and must sit at `databaseHooks.session.create.before` (`auth/index.ts:631-638`), which every sign-in method passes through. A new fork job via shared **F-8**, `fork-principal-denial-sweep` (every 5 min), re-applies all active denials. It closes the sign-in-concurrent-with-deny race, and it enforces the optional entitlement lease (off by default, 🟡 O-R8). *Superseded in part by §0c: the race and the lease are now enforced at existing-session resolution (R-13…R-15) on every request; the sweep is cleanup only.* | §2 R9, §4.9, §5, §7, §8, §9, §10 |
 
 **Acceptance tests** (all mandatory, real Postgres, in §9):
 
@@ -87,13 +88,28 @@ rewritten to match it. Plan 20 consumes the contract in §4.8 and §4.9.
     token refresh fails. The API key is refused on REST and on MCP. A fresh sign-in by SSO, magic link, OTP and
     recovery code is refused, with no session row created. Q is `user` with zero assignment rows and every
     key is `revoked_at`-stamped.
-  - Race: a sign-in whose session-create check ran before the denial committed leaves at most one session. The
-    next sweep deletes it, and until then it carries no team authority (Q is `user`).
+  - Race: *rewritten by §0c R3-1.* A session row inserted after the denial committed (its create-check ran
+    first) is refused on its **first use** by the session-resolution checks (R-13…R-15). The sweep only deletes
+    the row; it is not what closes the race.
   - Sync unavailable, lease **off**: the tenant keeps the last applied state. Access ends only when a sync
     delivers `denyPrincipal`, and plan 20's `directory_sync_stale` alarm fires.
-  - Sync unavailable, lease **on**: the sweep denies Q with `lease_expired` within lease + 5 min. A later
-    successful sync lifts only `lease_expired` denials and re-applies roles. A `tower_disabled` denial is never
-    lifted by lease renewal.
+  - Sync unavailable, lease **on**: *rewritten by §0c R3-2.* Access ends on every path at
+    `entitlement_expires_at` = last directory observation + lease, checked per request with the sweep stopped.
+    A later directory observation lifts only `lease_expired` denials and re-applies roles. A `tower_disabled`
+    denial is never lifted by lease renewal.
+
+## 0c. Third-review changes
+
+Driven by `REVIEW-2026-09-19-MAIN-FOLLOWUP.md` findings **R3-1** and **R3-2**. This plan owns the denial design;
+plan 20 references the same seams and the same bound (its "Third-review changes" section). Where this section and
+§0b disagree, this section wins, and the body (§2 R9, §4.8, §4.9, §5, §7–§11) is rewritten to match. The reviewer
+is right that a correct fix needs more integration than the original "no auth-helper seam" estimate. The new
+seams below are recorded as such, and every upstream upgrade must test them **semantically**, not only by grep.
+
+| Finding | Change | Acceptance test | Where |
+| --- | --- | --- | --- |
+| R3-1 (P1): deletion + sign-in check is not immediate denial | **Denial is enforced when an existing session is resolved, not only when one is created.** There is no single upstream function every session consumer passes through, so the check sits at the **three resolvers** that exist (verified at this tree): (1) **R-13**, `auth/index.ts`, two fenced sites in one file: the `auth.api` proxy (`:899-911`) returns `null` from `getSession` when `isUserDenied(result.user.id)`, which covers every in-process `auth.api.getSession` caller (dashboard/portal `requireAuth`/`getOptionalAuth` via `auth-helpers.ts:61`, `auth/session.ts:43`, `bootstrap.ts:93`, `portal-access.ts:73,270`, `origin-transfer.ts:73`, `integrations/oauth-handlers.ts:172`, uploads `routes/api/upload/image.ts:20`, `portal/upload.ts:9`, `widget/upload.ts:12` (Bearer via the `bearer()` plugin, `:833`), and the chat stream's session branch `chat/stream.ts:79`); and `auth.handler` (`:912-925`), through which every Better Auth HTTP endpoint runs (`routes/api/auth/$.ts:82,144`, `origin-transfer.ts:55`), refuses with 401 a request whose cookie/Bearer session belongs to a denied user (except `/sign-out`). That covers `/get-session`, account/email/link endpoints and MCP OAuth authorize. (2) **R-14**, `functions/widget-auth.ts:59-64`: `getWidgetSession` reads the `session` table directly (not through Better Auth), so it returns `null` for a denied user. That covers `requireWidgetAuth`, `getOptionalWidgetAuth`, `uploads.ts:164`, `widget-viewer.ts:18`, `widget/session.ts:16`, `widget/device.ts:22`. (3) **R-15**, `routes/api/chat/stream.ts`: the signed stream-token branch (`:63-76`, a 2-min HMAC token that never touches a session) checks `isPrincipalDenied`, and the heartbeat's `onAlive` (`:415-423`, every 20 s) re-checks it and tears down an open stream. Row deletion in `denyPrincipal` Tx 1, the TW-2 `session.create.before` check (plan 20) and the sweep all **stay**, as cleanup and defence in depth. **Demotion is cleanup only.** Denial no longer depends on demotion succeeding. If the denied principal is the **last admin** (`LAST_ADMIN`, `principal.factory.ts:297`), the denial still applies on every path, the report records `demote_blocked_last_admin`, and an ops alert `denial_demote_blocked` fires. Plan 20's break-glass admin (legacy `admin`, not managed) normally prevents this; ops restore it. Sites that write sessions without the create hook (`routes/api/widget/identify.ts:138` direct insert) need no seam, because the row is refused on use. | Pause a sign-in after TW-2's check, commit `denyPrincipal`, then resume the insert. **Before any sweep** (sweep disabled): a portal write (`createCommentFn`), a dashboard request (`requireAuth`), a widget-Bearer call (`requireWidgetAuth`), a widget upload, a portal upload, `/api/auth/get-session`, a new chat-stream handshake by session and by pre-minted stream token all return 401/null. An already-open SSE stream closes within one heartbeat. Repeat with Q as the **last admin** (break-glass removed): demotion fails with `demote_blocked_last_admin`, the alert fires, and every path above is still refused. | §2 R9, §4.9, §7 (R-13/R-14/R-15), §8, §9 |
+| R3-2 (P1): tenant sync success is not directory freshness | **The lease renews only from a recorded directory observation.** The tower passes, per principal, the `observedAt` and `observationRef` of the latest successful **directory** read that showed the person active: a directory-API poll (full, or delta whose cursor advanced from a previously successful cursor; `observedAt` = poll read start) or a SCIM request carrying the full user resource with `active=true`. Tenant writes never renew it. New fork function `recordEntitlementObservation(principalId, { observedAt, observationRef }, { executor })` sets `entitlement_expires_at = GREATEST(existing, LEAST(observedAt, now()) + lease)`. It is a no-op when `observedAt` is not newer than the recorded `entitlement_observed_at`. A `sync-members` run without a newer observation re-applies roles but leaves expiry unchanged. **One bound (10 and 20):** with the lease on, a managed person's access on every auth path ends at `entitlement_expires_at` = the last directory observation of them as active + lease duration. That is **at most the lease duration after they are disabled**, whatever the sync, provisioner or sweep does. The check runs on **every authenticated request** in `isPrincipalDenied`/`isUserDenied` (R-13…R-15, TW-1, TW-2, R-1). Open SSE streams close at the next heartbeat (≤ 20 s later). With the lease off (default, 🟡 O-R8) there is **no hard maximum**, only plan 20's 15-min target. | Lease on (e.g. 60 min). Stop the directory poll and SCIM while `sync-members` keeps succeeding every 15 min, **and** stop the sweep worker. Access (dashboard, portal, widget, MCP JWT, API key, new sign-in) is refused at `last observedAt + 60 min` ± 1 request, not later. `entitlement_expires_at` never moves during the outage. A poll that resumes renews it and lifts only `lease_expired`. | §4.8, §4.9, §5, §9, §10 O-R8, O-R10 |
 
 ## 1. Changes from v1
 
@@ -111,7 +127,7 @@ rewritten to match it. Plan 20 consumes the contract in §4.8 and §4.9.
 | 10 | `post.view` read key. | **Dropped** — admin feedback inbox already gates on `post.view_private` (`functions/admin.ts:151`). |
 | 11 | `roadmap.view` / board-scoped teammates. | **Out of scope** (D-R5). Teammates keep the `isTeamActor` bypass (`policy/boards.ts:54`, `policy/roadmaps.ts:13`). |
 | 12 | `domains/*/portal-invites`. | Irrelevant now: all personas are dashboard teammates (D-R3). |
-| 13 | Upgrade-safety "localized". | Own seams (§7): **20 upstream files** (11 seam IDs), all small fenced edits; catalogue + nav via shared F-7/F-4. |
+| 13 | Upgrade-safety "localized". | Own seams (§7): **23 upstream files** (14 seam IDs), all small fenced edits; catalogue + nav via shared F-7/F-4. The denial seams R-13…R-15 (R3-1) need semantic tests on every upgrade. |
 | 14 | Cross-plan keys missing. | §6 is the single registry of all fork keys; §4.2 defines all eight templates (+ the `no_access` sentinel). |
 | 15 | Fleet `viewer` vs tenant terminology. | No tenant `viewer`; fleet `observer` → **"Fleet Observer"** (D-C5), generalised by configurable tower bundles (D-C9, §4.7). |
 | 16 | API keys ignored. | Every key mints a service principal whose legacy role = creator's (`domains/api-keys/api-key.service.ts:106-137`); §4.3 defines key authority for custom-role creators (D-R8) and its row scope (O-R6). |
@@ -133,7 +149,9 @@ rewritten to match it. Plan 20 consumes the contract in §4.8 and §4.9.
   tower owns their **entire** role set (D-C15). Local grants and legacy-role edits do not survive the next sync.
 - **R9** A disabled tower-managed person is denied at the tenant on every auth path, independent of grant
   bookkeeping (D-C16). The auth paths are cookie sessions (dashboard, portal, widget, uploads), MCP OAuth JWTs,
-  OAuth refresh, API keys they created (REST and MCP) and new sign-ins.
+  OAuth refresh, API keys they created (REST and MCP), realtime streams and new sign-ins. Denial is checked
+  whenever an **existing** session or credential is resolved (§4.9), so it does not depend on row deletion,
+  demotion or the sweep (R3-1).
 
 ## 3. How it works today (verified)
 
@@ -423,8 +441,8 @@ R-8…R-12 are carried permanently and re-applied at every sync. Appendix A is t
 **Ownership (D-C15).** A principal is **tower-managed** iff it has a row in the managed-principal registry,
 plan 20's `fork_tower_principals` (§5.3 there: `principal_id` PK → `principal.id` ON DELETE CASCADE,
 `tower_user_id`, `managed_since`, …). This plan reads `principal_id` and writes the columns plan 20 adds
-for it (§5): `last_applied_legacy_role`, `last_applied_at` and `last_sync_run_id`, plus `entitlement_expires_at`
-for the lease (§4.9). The rules:
+for it (§5): `last_applied_legacy_role`, `last_applied_at` and `last_sync_run_id`, plus `entitlement_expires_at`,
+`entitlement_observed_at` and `entitlement_observation_ref` for the lease (§4.9). The rules:
 
 - The tower owns the entire role set of a managed principal: its legacy role, every workspace-wide row and every
   team-scoped row. Nothing granted locally survives the next sync.
@@ -531,63 +549,114 @@ and reports `drift_reverted` to the tower.
   first `applyManagedRoleSet`. With `autoProvisionRole = 'user'` that principal is `user` (no preset), so the
   window grants nothing. Plan 20 pre-provisions managed principals before their first sign-in.
 
-### 4.9 Tenant-level denial (D-C16, R2-4; contract consumed by 20)
+### 4.9 Tenant-level denial (D-C16, R2-4, R3-1, R3-2; contract consumed by 20)
 
 Disablement is independent of grants: grants can be re-applied, but a denial blocks every path until it is
 lifted explicitly. Module `apps/web/src/lib/server/fork/rbac/denials.ts`.
 
-- **`isPrincipalDenied(principalIds: PrincipalId[]): Promise<boolean>`**: one indexed query. It is true when
-  any id has a `fork_principal_denials` row with `lifted_at IS NULL`, or (only when
-  `fork_settings['rbac.entitlement_lease'].enabled`) has a registry row with `entitlement_expires_at < now()`.
-  There is **no** Redis cache, because a cache would add revocation latency. Per-request memoisation only.
+**The rule (R3-1).** A denial is effective when its row commits, because every place that turns a credential into
+a principal checks it: sign-in (TW-2), **existing-session resolution** (R-13, R-14, R-15), MCP OAuth (TW-1) and
+API keys (R-1). Deleting sessions, revoking tokens and keys, and demoting the principal are **cleanup**. They
+shrink what a bug in a check could expose, but no guarantee depends on them finishing or succeeding.
+
+- **`isPrincipalDenied(principalIds: PrincipalId[]): Promise<boolean>`** and **`isUserDenied(userId)`** (the
+  same check resolved through `principal.user_id`) run one indexed SQL statement. It is true when any id has a
+  `fork_principal_denials` row with `lifted_at IS NULL` (partial index), or, only when
+  `fork_settings['rbac.entitlement_lease'].enabled` (read in the same statement), has a registry row with
+  `entitlement_expires_at IS NULL OR entitlement_expires_at <= now()` (the database clock). There is **no**
+  Redis or cross-request cache, because a cache would add revocation latency. Results are memoised per request
+  only, via upstream's `memoizePerRequest` (`functions/auth-request-cache.ts:52`), which lives for exactly one
+  request. The cost is one extra indexed query per authenticated request. On a database error the check
+  **fails closed**: the session is treated as absent (401), and the error is logged.
 - **`denyPrincipal(principalId, reason, { syncRunId?, actor })`** runs in three stages. `reason` is one of
   `tower_disabled`, `idp_removed`, `tower_deprovisioned`, `lease_expired`. The call is idempotent and returns a
   report.
-  1. **Tx 1 (effective at commit):**
-     - Upsert the denial row: `denied_at`, `reason`, `lifted_at = NULL`.
-     - `DELETE FROM session WHERE user_id = <principal.user_id>`. This is the same statement as upstream
-       `forceSignOutUserFn` (`functions/admin.ts:289-300`). Better Auth stores sessions in the database with no
-       cookie cache (`auth/index.ts:544-551`), so every cookie and widget-bearer session is gone.
-     - `UPDATE oauth_access_token / oauth_refresh_token SET revoked = now() WHERE user_id = … AND revoked IS
-       NULL` (`schema/auth.ts:1046-1120`).
+  1. **Tx 1 (the denial; effective at commit):**
+     - Upsert the denial row: `denied_at`, `reason`, `lifted_at = NULL`. From this commit, every check above
+       refuses the principal.
+     - Cleanup in the same transaction: `DELETE FROM session WHERE user_id = <principal.user_id>` (the same
+       statement as upstream `forceSignOutUserFn`, `functions/admin.ts:289-300`), and `UPDATE
+       oauth_access_token / oauth_refresh_token SET revoked = now() WHERE user_id = … AND revoked IS NULL`
+       (`schema/auth.ts:1046-1120`).
      - Write the audit row `session.revoked.individual` with `reason: 'principal_denied'`.
 
-     Tx 1 takes no upstream role locks, so the denial commits even when stage 2 is refused.
-  2. **Tx 2:** `applyManagedRoleSet(principalId, { user, [], [] })` for a registry principal, or
-     `setPrincipalRole(user)` plus deletion of team rows for an unmanaged one. If this returns `LAST_ADMIN`, it is
-     reported as `demote_blocked_last_admin`. The denial still holds, and plan 20's break-glass admin (not
-     managed) keeps that from happening in practice.
-  3. **Keys:** for each `api_keys` row with `created_by_id = principalId` and `revoked_at IS NULL`, call upstream
-     `revokeApiKey(id)` (`api-key.service.ts:264-281`). It stamps `revoked_at` and demotes the key's service
-     principal to `user`, and `API_KEY_NOT_FOUND` is treated as done. The keys are already refused at the Tx 1
-     commit, because R-1 checks the creator (below).
+     Tx 1 takes no upstream role locks, so it commits even when stage 2 is refused.
+  2. **Tx 2 (cleanup):** `applyManagedRoleSet(principalId, { user, [], [] })` for a registry principal, or
+     `setPrincipalRole(user)` plus deletion of team rows for an unmanaged one.
+     - **Last admin.** If this returns `LAST_ADMIN` (`principal.factory.ts:297`: no other `user`-type
+       `admin`), the report records `demote_blocked_last_admin`, the ops alert `denial_demote_blocked` fires,
+       and `assertTowerPrincipalsFailClosed` (e) keeps reporting it.
+     - The denial **still applies on every path**: the principal stays legacy `admin` in the database but
+       cannot authenticate anywhere.
+     - Plan 20's break-glass admin (legacy `admin`, not tower-managed, created at provisioning) keeps this from
+       happening. If ops removed it, they restore it through the provisioner. The sweep retries the demotion,
+       and it succeeds once another admin exists.
+  3. **Keys (cleanup):** for each `api_keys` row with `created_by_id = principalId` and `revoked_at IS NULL`,
+     call upstream `revokeApiKey(id)` (`api-key.service.ts:264-281`). It stamps `revoked_at` and demotes the
+     key's service principal to `user`, and `API_KEY_NOT_FOUND` is treated as done. The keys are already refused
+     at the Tx 1 commit, because R-1 checks the creator.
 - **`liftPrincipalDenial(principalId, { onlyReason? })`** sets `lifted_at`. It restores nothing: roles come back
-  only through the next `applyManagedRoleSet`, and sessions come back only through a new sign-in. Lease renewal
-  lifts only `lease_expired`.
-- **Sweep job** `fork-principal-denial-sweep` (shared F-8, every 5 min, per tenant):
-  - Re-runs stages 1–3 for every active denial, catching a session minted by a sign-in whose create-check ran
-    just before the denial committed.
-  - When the lease is on, calls `denyPrincipal(p, 'lease_expired')` for every registry principal past
-    `entitlement_expires_at`.
-  - Emits `fork_denial_sweep` metrics.
+  only through the next `applyManagedRoleSet`, and sessions come back only through a new sign-in.
+- **Entitlement lease (R3-2; optional, 🟡 O-R8, default off).**
+  - **What renews it.** Only a recorded **directory observation** renews the lease, never a tenant write.
+  - **`recordEntitlementObservation(principalId, { observedAt, observationRef }, { executor })`** is called
+    by plan 20's `sync-members` in the same transaction as `applyManagedRoleSet`. It is called only when the
+    tower holds a directory observation newer than the tenant's `entitlement_observed_at`.
+  - **What counts as an observation.** A successful directory-API poll that covered the person, or a SCIM
+    request carrying their full resource, with `active = true` (plan 20 §4.5.4). `observationRef` names the
+    poll run and cursor/version, or the SCIM request id.
+  - **The update.** `entitlement_observed_at = observedAt`, `entitlement_observation_ref = observationRef` and
+    `entitlement_expires_at = GREATEST(entitlement_expires_at, LEAST(observedAt, now()) + lease)`. Clamping to
+    `now()` prevents a skewed tower clock from extending the lease.
+  - **What does not renew it.** A `sync-members` run that re-applies cached tower state, succeeds or not,
+    changes nothing here. `applyManagedRoleSet` never touches the lease.
+  - **Lifting.** When the renewal moves `entitlement_expires_at` past `now()`, it also lifts a `lease_expired`
+    denial, and only that reason.
+  - **First sync.** A new registry row starts with `entitlement_expires_at = NULL`. With the lease on, that
+    counts as expired until the first observation is recorded, which the same first sync supplies.
+- **Sweep job** `fork-principal-denial-sweep` (shared F-8, every 5 min, per tenant). It is **cleanup only**:
+  no bound depends on it.
+  - It re-runs stages 1–3 for every active denial. This deletes a session row that a sign-in racing the denial
+    inserted (that row was already unusable) and retries a blocked demotion.
+  - When the lease is on, it writes `denyPrincipal(p, 'lease_expired')` for every registry principal past
+    `entitlement_expires_at`, so its sessions, tokens and roles are cleaned up and the lapse is audited.
+  - It emits `fork_denial_sweep` metrics, including `demote_blocked_last_admin` counts.
 
-**Where each check lives** (every path that authenticates a principal):
+**Where each check lives** (every path that turns a credential into a principal):
 
 | Auth path | Enforcement | Site / seam |
 | --- | --- | --- |
-| Cookie sessions: dashboard `requireAuth`, portal, uploads, chat stream, integrations and every other `auth.api.getSession` caller; widget bearer sessions (`widget-auth.ts:59`) | Session rows deleted in Tx 1 (no row means no session). Demotion to `user` removes team authority from any row that survives the race. | `denyPrincipal` (fork code, no seam) + sweep |
-| New sign-in: SSO, magic link, email OTP, password, recovery code, OAuth authorize (needs a session) | `if (await isUserDenied(sessionData.userId)) return false` before the session row exists | **TW-2** (plan 20), **required at** `databaseHooks.session.create.before` (`auth/index.ts:631-638`). The OIDC after-hook (`auth/hooks.ts:687`) runs only on OIDC callbacks and after the row exists, so it misses the other methods. |
-| MCP OAuth JWT | The JWT is verified statelessly and the handler re-reads only `principal.role` (`mcp/handler.ts:90-113`), so revoking the token row alone does nothing until expiry. Denied ⇒ 401 before scope step-up. | **TW-1** (plan 20), `mcp/handler.ts` after `:244`, in the same fenced block as R-4 (one edit site) |
-| OAuth refresh | Refresh token `revoked` in Tx 1. Any JWT minted anyway is still refused by TW-1. | `denyPrincipal` |
+| Every in-process `auth.api.getSession` caller: dashboard/portal `requireAuth`/`getOptionalAuth` (`auth-helpers.ts:61`), `auth/session.ts:43` `getSession` (settings, invitations, onboarding, user, admin, devices, widget-sso, …), `bootstrap.ts:93`, `portal-access.ts:73,270`, `origin-transfer.ts:73`, `integrations/oauth-handlers.ts:172`, uploads (`api/upload/image.ts:20`, `api/portal/upload.ts:9`, `api/widget/upload.ts:12` by Bearer through the `bearer()` plugin), chat stream by session (`api/chat/stream.ts:79`) | The `auth.api` proxy returns `null` from `getSession` when `isUserDenied(result.user.id)`; callers already treat `null` as unauthenticated | **R-13a**, `auth/index.ts` `auth.api` proxy (`:899-911`), `prop === 'getSession'` branch |
+| Better Auth HTTP endpoints (`routes/api/auth/$.ts:82,144`, `origin-transfer.ts:55`): `/get-session`, account, email-change, link-social, MCP OAuth `authorize`, and so on | Before delegating, a request carrying a session cookie or `Bearer` resolves its session through the unwrapped instance; a denied user gets 401 (`/sign-out` is let through) | **R-13b**, `auth/index.ts` `auth.handler` (`:912-925`) |
+| Widget Bearer (`getWidgetSession`, a direct `session` table read, `functions/widget-auth.ts:59-64`): `requireWidgetAuth`, `getOptionalWidgetAuth`, `functions/uploads.ts:164`, `widget/widget-viewer.ts:18`, `api/widget/session.ts:16`, `api/widget/device.ts:22` | Returns `null` when `isUserDenied(sessionRecord.userId)` | **R-14** |
+| Realtime chat stream by signed stream token (`api/chat/stream.ts:63-76`; 2-min HMAC token, no session), and **already-open** streams | Token branch returns `null` when `isPrincipalDenied([row.id])`. The heartbeat's `onAlive` (`:415-423`, every 20 s, `SSE_HEARTBEAT_INTERVAL_MS`) re-checks and tears the stream down | **R-15** |
+| New sign-in: SSO, magic link, email OTP, password, recovery code, one-time token | `if (await isUserDenied(sessionData.userId)) return false` before the session row exists | **TW-2** (plan 20), `databaseHooks.session.create.before` (`auth/index.ts:631-641`). Defence in depth: a row inserted by a sign-in that raced the denial, or by a writer that bypasses the hook (`api/widget/identify.ts:138`), is refused on use by R-13/R-14 |
+| MCP OAuth JWT | The JWT is verified statelessly and the handler re-reads only `principal.role` (`mcp/handler.ts:90-113`). Denied ⇒ 401 before scope step-up | **TW-1** (plan 20), `mcp/handler.ts` after `:244`, in the same fenced block as R-4 |
+| OAuth refresh | Refresh token `revoked` in Tx 1 (cleanup). A JWT minted anyway is refused by TW-1 | `denyPrincipal` + TW-1 |
 | API key, REST and MCP-key (`withApiKeyAuth` → `requireApiKey`, used by `mcp/handler.ts:153`) | `requireApiKey` returns `null` (401) when `isPrincipalDenied([apiKey.principalId, apiKey.createdById])` | **R-1** (this plan, extended; `domains/api/auth.ts:72-86`) |
 
-No check is added to `requireAuth` or to the other `getSession` callers. Deleting the session row covers them
-all, so no auth-helper seam is needed.
+Not session consumers, so they need no check: the anonymous-merge lookup (`auth/identify-merge.ts:38`, anonymous
+principals only, which are never managed), and session listing, counting and last-seen reads
+(`principal.service.ts:104`, `user.detail.ts:312`, `user.public-profile.ts:337`, `utils/anon-rate-limit.ts:21`,
+`functions/settings.ts:130`). In-process calls that use `getAuth()` directly (`functions/contact-email.ts:96,135,
+203`, `auth/email-signin.ts:41`, `auth/magic-link-mint.ts:52`) bypass the proxy, but each is preceded by
+`requireAuth` or is a sign-in path (TW-2).
 
-**Revocation bound (plan 20 owns the budget).** Once the denial commits, every path above refuses on its next
-request. The only exception is the documented sign-in race, which is closed within ≤ 5 min (one sweep). End to
-end, the bound is plan 20's directory-to-tenant sync **target**. It becomes a **hard maximum** only with the
-lease on: lease duration + 5 min, 🟡 O-R8.
+**Upgrade dependency (recorded honestly).** R-13…R-15 are correct only while upstream keeps three resolvers: the
+`auth.api` proxy / `auth.handler` pair, `getWidgetSession`'s direct read, and the stream-token branch. A fourth
+resolver added upstream would bypass denial silently. §9 therefore adds a **resolver guard**, which fails on any
+new `auth.api.getSession` bypass, direct `session`-table read by token, `getAuth()` user outside the allowlist,
+or new signed principal token. It also adds the **semantic race test** below, run on every upstream sync.
+
+**Revocation bound (one statement, shared with plan 20).**
+
+- **Once the denial commits**, every path above refuses the principal on its next request, and an open SSE
+  stream closes within one heartbeat (≤ 20 s). This does not depend on session deletion, demotion or the sweep.
+- **Lease off** (default): from disablement in the directory to the denial commit is plan 20's **target**
+  (≤ 15 min p99), with no hard maximum.
+- **Lease on** (🟡 O-R8): access also ends at `entitlement_expires_at` = the last directory observation of the
+  person as active + lease duration. That is at most the lease duration after disablement, even when the
+  directory, the tower, the provisioner, `sync-members` or the sweep is down.
 
 ## 5. Data model (fork lineage)
 
@@ -627,9 +696,11 @@ lease on: lease duration + 5 min, 🟡 O-R8.
 | `last_report` | jsonb null | stage 1–3 counts (sessions, tokens, keys, demotion outcome) |
 
 - The managed-principal **registry** is plan 20's `fork_tower_principals` (not duplicated here). This plan
-  requires its `principal_id` PK and, for the lease, `entitlement_expires_at timestamptz null`,
-  `last_applied_legacy_role text null`, `last_applied_at` and `last_sync_run_id`. Plan 20 adds those columns
-  to its DDL.
+  requires its `principal_id` PK, `last_applied_legacy_role text null`, `last_applied_at` and
+  `last_sync_run_id`, and, for the lease (R3-2), `entitlement_expires_at timestamptz null`,
+  `entitlement_observed_at timestamptz null` (tower-side time of the directory observation) and
+  `entitlement_observation_ref text null` (poll run + cursor/version, or SCIM request id). Only
+  `recordEntitlementObservation` writes the three lease columns. Plan 20 adds these columns to its DDL.
 - Principal references in `fork_role_assignment_sources` are indirect (via the assignment row), so it needs no
   re-point registry entry: upstream principal merge moves or deletes the assignment, and the cascade follows.
   `fork_principal_denials` references staff principals only, so it gets a re-point registry **exemption**
@@ -637,7 +708,9 @@ lease on: lease duration + 5 min, 🟡 O-R8.
 - No other DDL: team-scoped and multi-role rows use existing `principal_role_assignments` columns.
 - `fork_settings` keys: `rbac.key_backfill`, `rbac.teammate_comment_gate`, `rbac.comment_create_backfill`,
   `rbac.team_scoped_enabled`, `rbac.multi_role_enabled`, and `rbac.entitlement_lease` (`{ enabled, durationMinutes }`,
-  default off, O-R8). Phase 1a is never gated, because it is a fix.
+  default off, O-R8). The lease is switched on only by the provisioner, and only after every registry row has an
+  `entitlement_observed_at`. Otherwise the NULL rows would read as expired and lock those people out. Phase 1a
+  is never gated, because it is a fix.
 
 ## 6. Permissions
 
@@ -660,7 +733,8 @@ every key by construction (`rbac-catalogue.ts:645-646`).
   it (Manager ✓). `FORK_CONTRIBUTOR_PERMISSIONS` = `comment.create`, `announcement.view`.
 - Fork server functions gate `requireAuth({ permission })`: `role.manage` (templates, reconcile, comment-gate
   enable), `member.manage` (team, multi-role and tier assignment through the local writer), `api_key.manage`
-  (key backfill). `applyManagedRoleSet`, `denyPrincipal` and `liftPrincipalDenial` are **not** server functions.
+  (key backfill). `applyManagedRoleSet`, `denyPrincipal`, `liftPrincipalDenial` and
+  `recordEntitlementObservation` are **not** server functions.
   They are called only by the provisioner's `sync-members` (plan 20, root key, scoped DB) and by the sweep job.
   Regenerate `MATRIX.md`.
 
@@ -679,11 +753,24 @@ every key by construction (`rbac-catalogue.ts:645-646`).
 | R-10 | 10 route files (Appendix A.3) | `permissions: auth.permissions` on each inline service actor | Each builds its own actor; services `can()` on it | Re-add property per literal; REST actor guard lists misses |
 | R-11 | `apps/web/src/lib/server/mcp/server.ts` | In `scopeGated` (:33): `forkMcpResourceGate(auth, uri)` after the scope check | Resources are registered outside `registerTool` | Re-insert one call; run resource coverage test |
 | R-12 | `apps/web/src/lib/server/functions/tickets.ts` | `assertTicketVisible(ticketId, actor)` before `getTicket` at :128, :368, :772 | By-ID dashboard reads skip `ticketFilter` | Re-insert 3 marked lines; team-scope negative test |
+| R-13 (R3-1) | `apps/web/src/lib/server/auth/index.ts` | Two fenced sites (`FORK-SEAM(principal-deny)`). **(a)** In the `auth.api` proxy (`:899-911`), a `getSession` result whose user `isUserDenied` becomes `null`. **(b)** At the top of `auth.handler` (`:912-925`), a request carrying a session cookie or `Bearer` whose session user is denied gets 401 (`/sign-out` excepted). Same file as plan 20's TW-2 (`:631-641`). | Upstream has no session-read hook: `databaseHooks.session` has only create-time hooks here, and there is no `customSession` plugin. The proxy is the one object every in-process `getSession` goes through, and `handler` is the one entry for Better Auth HTTP. | Re-apply both fenced blocks to whatever object upstream exports as `auth`. **Semantic tests on every upgrade** (not only grep): the §9 race test and the resolver guard. |
+| R-14 (R3-1) | `apps/web/src/lib/server/functions/widget-auth.ts` | In `getWidgetSession`, after the session lookup (`:59-64`): `if (await isUserDenied(sessionRecord.userId)) return null` | The widget reads the `session` table directly, outside Better Auth, so R-13 never sees it | Re-insert after the lookup. **Semantic test on every upgrade:** a denied user's widget Bearer gets 401. |
+| R-15 (R3-1) | `apps/web/src/routes/api/chat/stream.ts` | Two fenced sites: **(a)** in `resolveStreamPrincipal`'s token branch (`:63-76`), `null` when `isPrincipalDenied([row.id])`; **(b)** in the heartbeat's `onAlive` (`:415-423`), re-check and tear the stream down (rate-limited to one check per heartbeat, 20 s) | The stream token is an HMAC with no session behind it, and an open SSE stream is never re-authenticated | Re-insert both. **Semantic test on every upgrade:** a pre-minted token is refused after denial, and an open stream closes within one heartbeat. |
 
-**Total: 11 seam IDs over 20 upstream files, all permanent** (R-1…R-5, R-9…R-12 = Phase 1a, D3; R-6/R-8 =
-Phase 1b, D-R6). **R-7 (`seat-usage.ts`) retired** (D-R1). The second pass adds **no new seam ID** here: the
-denial check extends R-1. The MCP OAuth and session-create checks are plan 20's TW-1/TW-2, placed as §4.9
-specifies. The sweep job registers through shared F-8. Not seams: fork route
+**Total: 14 seam IDs over 23 upstream files, all permanent**:
+
+- R-1…R-5 and R-9…R-12 are Phase 1a (D3).
+- R-6 and R-8 are Phase 1b (D-R6).
+- R-13…R-15 are Phase 3t (R3-1).
+- **R-7 (`seat-usage.ts`) is retired** (D-R1).
+
+The second pass extended R-1 with the denial check. The third review (R3-1) adds **R-13, R-14 and R-15**, the
+existing-session resolvers. This is more integration than the second pass estimated ("no auth-helper seam"),
+and it is recorded here as such. These three seams, TW-1, TW-2 and R-1 are the denial's upstream dependencies.
+Each must be **semantically** tested on every upstream upgrade (§9 merge rehearsal), because a grep for
+`FORK-SEAM(principal-deny)` cannot detect a new upstream resolver that bypasses them. The MCP OAuth and
+session-create checks are plan 20's TW-1/TW-2, placed as §4.9 specifies. The sweep job registers through shared
+F-8. Not seams: fork route
 `routes/admin/settings.fork-access.tsx` (via F-4), `mcp/tools/fork-rbac.ts` (via F-3), fork migration,
 `MATRIX.md` / mirror regeneration.
 
@@ -700,7 +787,7 @@ together.
 | **1b** Comment gate | R-6, R-8; `add_comment` spec; enable fn with one-time grant | Portal user can still comment; Stakeholder and Fleet Observer cannot (dashboard, portal, widget, REST, MCP); pre-existing custom roles still can |
 | **2** Team-scoped RBAC | Resolver, `systemRolesForPrincipal`, `canInTeam`, grant/revoke + `assignTierAgentFn` + UI | Team grant on T2 allows `account.execute` only via T2 team; workspace-wide custom-role scopable key is inert; custom-role `member` with no Manager row does **not** get `ticket.escalate` via the system branch; zero-row `member` denied; service principal denied; leaving `team_members` revokes; `permissionsForPrincipal` snapshot unchanged |
 | **3** Multi-role + provenance | add/remove fns (local writer, unmanaged only), `fork_role_assignment_sources` + UI | Dev Team + Tier 2 union; an upstream role change clears the extra hats and their provenance but keeps team rows (asserted); the fns refuse a registry principal (`TOWER_MANAGED`); the last row is never removed |
-| **3t** Managed principals + denial (ships before plan 20's `sync-members`) | `applyManagedRoleSet`, `denyPrincipal` / `liftPrincipalDenial` / `isPrincipalDenied`, `fork_principal_denials`, R-1 denial edit, sweep job (F-8), `assertTowerPrincipalsFailClosed`; plan 20 TW-1/TW-2 at the §4.9 sites | §0b R2-3 and R2-4 acceptance tests pass. A concurrent upstream `setPrincipalRole` and `applyManagedRoleSet` serialise with no deadlock (same lock order) and no zero-row `member` observed. Apply removes an invite-created Manager row. Apply on a denied principal yields `user`/zero rows. `assertTowerPrincipalsFailClosed` is clean after `seedSystemData` on a populated tenant. |
+| **3t** Managed principals + denial (ships before plan 20's `sync-members`) | `applyManagedRoleSet`, `denyPrincipal` / `liftPrincipalDenial` / `isPrincipalDenied` / `isUserDenied`, `recordEntitlementObservation`, `fork_principal_denials`, R-1 denial edit, **R-13, R-14, R-15** (session-resolution checks), sweep job (F-8, cleanup only), `assertTowerPrincipalsFailClosed`, resolver guard; plan 20 TW-1/TW-2 at the §4.9 sites | §0b R2-3 and R2-4 and §0c R3-1 and R3-2 acceptance tests pass (the race and lease tests run with the sweep **stopped**). A concurrent upstream `setPrincipalRole` and `applyManagedRoleSet` serialise with no deadlock (same lock order) and no zero-row `member` observed. Apply removes an invite-created Manager row. Apply on a denied principal yields `user`/zero rows. `assertTowerPrincipalsFailClosed` is clean after `seedSystemData` on a populated tenant. |
 
 ## 9. Testing strategy
 
@@ -737,7 +824,36 @@ together.
     seed/migration/reconciliation between every step → no Manager fallback).
   - *Tenant denial (R2-4):* the §0b R2-4 sequence (locally privileged managed user denied mid-session with a live
     cookie session, widget session, MCP JWT + refresh token and a self-created API key; every sign-in method
-    refused; sign-in/deny race closed by the sweep; sync unavailable with the lease off and on).
+    refused; sync unavailable with the lease off and on).
+  - *Session-resolution denial (R3-1), sweep worker stopped throughout:*
+    1. Hold a sign-in (SSO callback, and separately OTP) between TW-2's check and the session insert, using a
+       test barrier in the hook.
+    2. Commit `denyPrincipal(Q)`, then release the insert, so a session row now exists.
+    3. Immediately send, with that session:
+       - a portal write (`createCommentFn` with the cookie);
+       - a dashboard `requireAuth` server fn;
+       - `GET /api/auth/get-session`;
+       - a portal upload and a dashboard image upload;
+       - a widget Bearer call (`requireWidgetAuth`), the same token on `POST /api/widget/upload` (the `bearer()`
+         path), and a widget session minted by `api/widget/identify` (hook bypass);
+       - a chat-stream handshake by cookie and by a stream token minted before the denial.
+
+       Every one is refused (401 or `null` context), and no side effect is written.
+    4. An SSE stream opened before the denial closes within one heartbeat.
+    5. **Last admin:** remove the break-glass admin so Q (legacy `admin`) is the last admin, then repeat. Tx 2
+       reports `demote_blocked_last_admin`, `denial_demote_blocked` alerts, Q stays `admin` in the database, and
+       every request above is still refused.
+    6. Restore an admin. The next sweep demotes Q.
+  - *Lease freshness (R3-2), sweep worker stopped:*
+    1. Turn the lease on (60 min) and record an observation at T0.
+    2. Stop the directory poll and SCIM, and keep `sync-members` succeeding every 15 min for 90 min.
+    3. `entitlement_expires_at` stays `T0 + 60 min` throughout. At `T0 + 60 min` every path (dashboard, portal,
+       widget, stream, MCP JWT, API key, new sign-in) is refused, with no `lease_expired` row written yet.
+    4. Resume the poll. The next `sync-members` sets `T_poll + 60 min`, and access returns after a new sign-in.
+       Unit checks:
+       - an observation older than `entitlement_observed_at` is a no-op;
+       - a future `observedAt` is clamped to `now()`;
+       - `applyManagedRoleSet` alone never changes the lease columns.
 - **Integration (real Postgres, `QUACKBACK_TENANCY=single` and `pooled`):** REST + MCP (OAuth and key) matrix for
   Owner / Manager / Contributor / Tier 1 / Stakeholder / Fleet Observer; comment create across all five paths;
   key backfill dry-run vs apply; comment-gate one-time grant; role delete cascading team grants; upstream role
@@ -754,6 +870,20 @@ together.
   `seed-system.ts:122,174` (a grep guard fails on a new one); sessions stored in the database with no cookie
   cache; the MCP OAuth path still not consulting token rows; and `databaseHooks.session.create.before`
   still aborting on `false`.
+  **Denial resolver guard and semantic tests (R3-1), run on every upstream sync.**
+  - A static guard fails on any of these:
+    - an `auth.api.getSession` equivalent reached without the R-13 proxy (e.g. `getAuth().api.getSession`
+      outside `auth/index.ts`);
+    - a `getAuth()` caller outside the §4.9 allowlist;
+    - a new `db.query.session` / `.from(session)` read keyed by token or by the request's cookie outside
+      `widget-auth.ts` (R-14) and the allowlisted non-auth reads;
+    - a new signed principal token, i.e. a `createHmac` over a principal id that is verified on a request
+      path, beyond `realtime/stream-token.ts`.
+
+    R-13 filters by user id after the lookup, so it holds even if upstream later adds a session cookie cache.
+    Only the cleanup ("row deleted ⇒ no session") would weaken.
+  - The R3-1 race test above then runs against the merged tree. A grep for `FORK-SEAM(principal-deny)` is
+    necessary but not sufficient.
 
 ## 10. Open items
 
@@ -775,10 +905,19 @@ together.
 - **O-R7 (🟡, new)** Upstream lets any teammate with `conversation.view` open **any** conversation by ID
   (lists are team-filtered); tickets are team-filtered by ID after R-12. Keep upstream's conversation behaviour
   for Tier agents? *Default: keep upstream (no seam in `policy/conversation.ts`).*
-- **O-R8 (🟡, new)** Turn on the tenant-side entitlement lease? With it on, a managed person loses app access
-  when the tower has not renewed their entitlement for the lease duration. This makes lease + 5 min a hard
-  maximum for revocation, but a long tower or IdP outage also locks managed staff out; the unmanaged break-glass
-  admin is unaffected. *Default: off (15-minute target only, alarm on stale sync); if turned on, 4 hours.*
+- **O-R8 (🟡, still open)** Turn on the tenant-side entitlement lease?
+  - With it on, a managed person loses app access when no **directory observation** has shown them active for
+    the lease duration. Tenant syncs of cached state do not count (R3-2).
+  - This makes "last directory observation + lease" a hard maximum, enforced on every request whether or not
+    the sweep runs. That is at most the lease duration after disablement.
+  - The cost: a directory, tower or provisioner outage longer than the lease locks every managed person out.
+    The unmanaged break-glass admin is unaffected.
+
+  *Default: off (15-minute target only, alarm on stale sync); if turned on, 4 hours.*
+- **O-R10 (🟡, new, R3-2)** With the lease on, only a directory-API poll (or a full-resource SCIM request)
+  renews it, so a deployment with SCIM push only and no poll could never renew people whose state did not
+  change. Require the directory poll whenever the lease is on? *Default: yes. Plan 20's `verify` refuses to
+  enable the lease without a healthy poll.*
 - **O-R9 (🟡, new)** Should app admins be **blocked** from changing a tower-managed person's role in the app?
   Blocking needs a new seam in `setPrincipalRole`. Without it, the change is allowed and reverted at the next
   sync. *Default: allow, revert at next sync, report `drift_reverted`.*
@@ -803,9 +942,11 @@ together.
   configurable bundles map to tenant templates via `template_key` (§4.7, D-C9). Plan 20 builds role sync on
   `fork_install_persona_roles` (`exact`), `applyManagedRoleSet` (whole role set, D-C15) and
   `assertTowerPrincipalsFailClosed` (§4.8), and builds disablement on `denyPrincipal` / `liftPrincipalDenial`
-  (§4.9, D-C16). Plan 20 owns the registry `fork_tower_principals` (adding the columns listed in §5), seams
-  TW-1 (MCP handler, same block as R-4) and TW-2 (at `databaseHooks.session.create.before`), the directory sync
-  and the revocation budget. Plan 20 drops `fork_tower_assignments`.
+  (§4.9, D-C16). Plan 20 calls `recordEntitlementObservation` with a directory observation only, never on a bare
+  tenant write (R3-2). Plan 20 owns the registry `fork_tower_principals` (adding the columns listed in §5), seams
+  TW-1 (MCP handler, same block as R-4) and TW-2 (at `databaseHooks.session.create.before`), the directory sync,
+  the directory observations and the revocation budget. This plan owns the existing-session checks R-13…R-15 and
+  the single revocation bound in §4.9, which plan 20 cites unchanged. Plan 20 drops `fork_tower_assignments`.
 
 ## Appendix A — Authorization inventory (Phase 1a; verified at `eb79147`)
 
