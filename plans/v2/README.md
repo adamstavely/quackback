@@ -21,26 +21,23 @@ releases keep merging cleanly.
 | 50  | [`50-prioritization-scoring.md`](50-prioritization-scoring.md)       | RICE (BRICE pending) scoring on posts, with Reach derived from votes.        |
 | 60  | [`60-announcements-banner.md`](60-announcements-banner.md)           | Announcements banner (portal + embed), folding in live status incidents.     |
 
-## Build order
+## Implementation roadmap
 
-```mermaid
-flowchart LR
-  F[Foundations\nfork migration lineage\nfork_settings\nSEAMS.md] --> R[10 RBAC\n1a custom roles on REST/MCP\nkeys · team-scoped RBAC]
-  R --> P[50 Prioritization]
-  R --> T[30 Tiered support]
-  T --> A[40 Account actions]
-  F --> N[60 Announcements\nportal + embed]
-  R --> C[20 Control tower]
-  N --> C
-  A -.fleet-wide audit.-> C
-```
+See [05-implementation-plan.md](05-implementation-plan.md) for the dependency-ordered work packages, PR boundaries,
+release gates, external prerequisites and first implementation slice, based on `fa68658da` (including the third-review fixes).
+The provisioner migration/maintenance core is built with Foundations; fleet membership and the tower UI follow their RBAC and feature dependencies.
 
-1. **Foundations** (`02-fork-conventions.md` §3, §3.3a, §10): the fork migration lineage **and its production rollout** (image contents, `fork-migrate` with catalogue reconciliation, fork schema floor, suspended-tenant catch-up), the `fork_settings` table, the fork drift check, the shared seams F-1…F-11 (plus the fork-owned `Dockerfile.fork`), and `SEAMS.md`. Every later phase depends on this. **Fleet infrastructure and SSO spikes** (RDS Proxy, S3 via the registry, OIDC/SAML broker, no-consent OAuth, mail edge) start early, in parallel.
-2. **10 RBAC.** Phase 1a (custom roles enforced on REST/MCP) is a security fix and a prerequisite for the tower's authorization model. Team-scoped RBAC must ship before tiers (D-T4).
-3. **50 Prioritization.** Independent and lowest risk. A good first feature for proving out the conventions.
-4. **30 Tiered support**, then **40 Account actions**, which needs tiers and team-scoped RBAC.
-5. **60 Announcements**: the portal banner and embed can ship any time after Foundations.
-6. **20 Control tower**: provisioner and pooled tenancy first, then the tower app. Its full product surfaces wait until the permission and tool contracts (10 Phase 1a, the capability → tool → permission table in 20) are proven by tests. Its announcements surface comes last.
+## Delivery order
+
+The owner-selected product phases are:
+
+1. Deploy separate app instances (isolated hostnames/databases on the planned shared runtime).
+2. Add the per-app portal page using existing support surfaces.
+3. Add the portal and embedded announcement banner.
+4. Create the control tower, including access management and fleet announcements.
+5. Layer in tiered support, account actions, automation, email and reporting; retain prioritization and portfolio in this phase.
+
+See [05-implementation-plan.md](05-implementation-plan.md) for the supporting work, acceptance gates and estimates inside each phase. Foundations and production verification start in Phase 1; authorization ships before the capabilities that depend on it. The early portal does not depend on tiered support, and the initial tower does not expose tier-specific functionality until Phase 5.
 
 ## Status
 
