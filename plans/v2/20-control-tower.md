@@ -1,6 +1,6 @@
 # Fleet Control Tower (separate app) + Provisioner — Design Plan v2
 
-> **Status:** v2 (round-2 + staff-review + intranet revision) — supersedes `plans/v1/multi-tenant-control-tower-plan.md`. Planning only.
+> **Status:** v2 (round-2 + staff-review + intranet + second-pass revision) — supersedes `plans/v1/multi-tenant-control-tower-plan.md`. Planning only.
 > **Depends on:** Foundations (F-1 fork migration lineage, F-3 fork MCP registration, F-7 catalogue fence,
 > `fork_settings`, **F-12 SSRF allow-list — hard prerequisite for any app SSO against the intranet IdP**);
 > `04-intranet-deployment.md` (baseline §3, blockers E-1…E-3); `10-rbac-persona-extensions.md` Phase 1a (D3: custom roles enforced on MCP, argument-aware
@@ -15,7 +15,8 @@
 > intranet), **D-C8** (fleet-level backups), **D-C9** (configurable role bundles), **D-C10** (one S3 bucket,
 > per-app prefix), **D-C11** (per-app inbound email), **D-C12** (no consent screens, silent "connect all"),
 > **D-N8** (Fleet Agents publish announcements), **D-E1…D-E6** (intranet only, no internet egress, public +
-> anonymous-off + SSO-only portals, all users employees; D-E3 supersedes D-N5). Build position: last (README
+> anonymous-off + SSO-only portals, all users employees; D-E3 supersedes D-N5), **D-C15** (tower owns the whole app role set of managed people), **D-C16** (SCIM/directory
+> sync; disable = tenant-level denial on every auth path). Build position: last (README
 > build order); Phase 8 (inbound email) may run in parallel once Phase 2 is done.
 
 ## Round-2 changes
@@ -38,11 +39,11 @@
 | Finding ID | Change | Where in plan |
 | --- | --- | --- |
 | F1 (1) | Production artifact defined: fork-owned `apps/web/Dockerfile.fork` layers `/app/drizzle-fork` + bundled `/app/fork-provision.mjs` + `FORK_MIGRATIONS_FOLDER=/app/drizzle-fork` onto the upstream-built image (no Dockerfile seam). Fork journal is statically imported (inlined by bundling) and the folder comes from the env var, mirroring `MIGRATIONS_FOLDER` (`packages/db/src/schema-version.ts:48`). The provisioner refuses to start if the folder's journal ≠ the inlined journal. CI image-content gate. | §4.4.1, §8 Phase 2/9 |
-| F1 (2) | `fork-migrate` no longer applies only fork SQL: per workspace it runs `runMigrations(direct)` (upstream no-op, fork lineage via F-1, `seedSystemData` → fork keys, preset bundles incl. Manager exclusions) + plan 10 §reconcile template reconcile, but only when the upstream ledger is already at the fleet target (never bypasses fleet-migrator cohorts). Records `cp_fork_schema_state`. | §4.4.2 |
+| F1 (2) (precondition superseded by **R2-1**, resume path by **R2-2**) | `fork-migrate` no longer applies only fork SQL: per workspace it runs `runMigrations(direct)` (upstream no-op, fork lineage via F-1, `seedSystemData` → fork keys, preset bundles incl. Manager exclusions) + plan 10 §reconcile template reconcile, but only when the upstream ledger is already at the fleet target (never bypasses fleet-migrator cohorts). Records `cp_fork_schema_state`. | §4.4.2 |
 | F1 (3) | Fork schema **floor**: shared seam **F-11** in `fleet/schema-floor.ts` checks `drizzle.__fork_migrations` against `FORK_MIN_SCHEMA_VERSION` and `fork_settings.fork.catalogue_version` against `FORK_MIN_CATALOGUE_VERSION`; refusal reuses the upstream 503 path. Suspended tenants are caught up by `resume` before hostnames are republished (fail closed). Deploy steps + four mandatory rehearsals. | §4.4.3–4.4.5, §7, §9 |
 | C1 (access profile superseded by D-E3 — see Intranet changes; fail-closed publish-last kept) | Provisioning writes an explicit **private access profile** (portal `visibility:'private'`, `allowAnonymous:false`, portal + team `openSignup:false`, configured domain/widget/segment rules) instead of `DEFAULT_PORTAL_CONFIG` (public, `settings.types.ts:370-381`). The previous "`authConfig` without `openSignup`" was wrong: absent means `true` (`settings.types.ts:172-196`). Hostnames are published **last**, after in-scope checks; HTTP negative probes then run and a failure unpublishes. Resume re-verifies. | §4.3 steps 4–8, §4.3.1 |
-| C2 | Tower-owned grant **provenance** in the tenant DB (`fork_tower_principals`, `fork_tower_assignments`), tower rows written with the app's tower-sync service principal as grantor; removals driven by provenance, not by "template currently named by a tower role". Per-app team mappings (`tower_role_app_teams`). Atomic per-principal reconcile (legacy role, preset rows, workspace-wide + team grants, provenance) via plan 10 §reconcile; zero-role ⇒ legacy `user` (never a `member` with zero workspace-wide rows, which falls back to Manager: `policy/permissions.ts:58-75`, `principal.factory.ts:357-398`). Deletion/retarget/demotion and local-vs-tower ownership defined. | §4.3.2, §5.2, §5.3, §9 |
-| C3 | Explicit identity chain (tower user ↔ IdP/broker subject ↔ tenant `user.id` (= MCP token `sub`, `mcp/handler.ts:98-99,122`) ↔ tenant principal), stored in `tower_user_idp_links` + `tower_user_app_identities`; connect-chain check compares `sub`/`principalId`, not email; stray email-linked accounts removed by sync. Portfolio uses `list_post_prioritization`; Observer uses `list_announcements` (`announcement.view`, `read:feedback`) — `announcements.view` no longer maps to `write:feedback`; broadcast outcomes are `succeeded`/`failed`/`uncertain`, uncertain reconciled by `broadcastId`. Sync authority split (provisioner vs human MCP) and a shared capability → tool/args → permission → scope contract. IdP revocation bound ≤ 15 min (🟡). | §4.5.1, §4.5.3, §4.5.4, §4.6, §4.8, §4.9, §6, §6.1 |
+| C2 (ownership model superseded by **R2-3**/D-C15: whole role set, one writer, `fork_tower_assignments` dropped) | Tower-owned grant **provenance** in the tenant DB (`fork_tower_principals`, `fork_tower_assignments`), tower rows written with the app's tower-sync service principal as grantor; removals driven by provenance, not by "template currently named by a tower role". Per-app team mappings (`tower_role_app_teams`). Atomic per-principal reconcile (legacy role, preset rows, workspace-wide + team grants, provenance) via plan 10 §reconcile; zero-role ⇒ legacy `user` (never a `member` with zero workspace-wide rows, which falls back to Manager: `policy/permissions.ts:58-75`, `principal.factory.ts:357-398`). Deletion/retarget/demotion and local-vs-tower ownership defined. | §4.3.2, §5.2, §5.3, §9 |
+| C3 (revocation superseded by **R2-4**/D-C16) | Explicit identity chain (tower user ↔ IdP/broker subject ↔ tenant `user.id` (= MCP token `sub`, `mcp/handler.ts:98-99,122`) ↔ tenant principal), stored in `tower_user_idp_links` + `tower_user_app_identities`; connect-chain check compares `sub`/`principalId`, not email; stray email-linked accounts removed by sync. Portfolio uses `list_post_prioritization`; Observer uses `list_announcements` (`announcement.view`, `read:feedback`) — `announcements.view` no longer maps to `write:feedback`; broadcast outcomes are `succeeded`/`failed`/`uncertain`, uncertain reconciled by `broadcastId`. Sync authority split (provisioner vs human MCP) and a shared capability → tool/args → permission → scope contract. IdP revocation bound ≤ 15 min (🟡). | §4.5.1, §4.5.3, §4.5.4, §4.6, §4.8, §4.9, §6, §6.1 |
 | X-6 / X-7 | Coordination requests to other plans removed (dependencies stated as consumed contracts). Phases 6–7 labelled as not delivering R10/R11 until they ship. | §2, §8, §11 |
 
 ## Intranet changes (D-E1…D-E6)
@@ -53,11 +54,57 @@
 | **F-12 (SSRF allow-list) is a hard prerequisite** for app SSO: saving the provider, the SSO test, enforcement **and** every runtime sign-in (discovery + userinfo are fetched through `safeFetch`, `auth/index.ts:222-239`, `auth/hooks.ts:815-816,832-833`) reject intranet addresses without it. | D-E1, D-E2 | header, §4.5.1, §7, §8 Phase 0/3 |
 | SSO-only is reached **without faking upstream attestations**: the provisioner mints break-glass recovery codes first (upstream refuses SSO-only without them, `sign-in-method-availability.ts:84-93,203-209`), verifies the domain through the real `_quackback-verify` TXT lookup on internal DNS, and turns `enforced` on only once upstream's own unlock rule holds (`sso-gates.ts:77-87`). Until then the app is already SSO-only because every other method is off. | D-E3 | §4.3 step 6, §4.3.1, O-12 |
 | JIT portal users coexist with tower-managed users: `sync-members` adopts an existing tenant user **by SSO subject** (`account.accountId`), never by email. | D-E4 | §4.3.2 step 1 |
-| **Inbound email redesigned for the internal mail server.** Upstream IMAP is process-wide env and **refuses to schedule under pooled tenancy** (`conversation.email-imap-queue.ts:47-60`), so it cannot serve per-app mail as is. Default: **one fleet mailbox** on the internal mail server receiving `*@<inbound domain>`, polled by a fork **mail router** (ECS service from the fork image, reusing upstream's exported `createImapClient`/`pollOnce`/`workspaceSlugFromInboundAddress`) that routes by `mail_slug` and POSTs raw MIME to the app's existing raw-MIME door. `apps/mail-edge` (SES receipt rule + Lambda + SQS DLQ) **removed**. **IE-1 kept** (D-C11 per-app address key is transport-independent). | D-E2, D-C11 | §3, §4.11, §5.1, §7, §8 Phase 8, §9, O-3, O-11 |
+| **Inbound email redesigned for the internal mail server.** Upstream IMAP is process-wide env and **refuses to schedule under pooled tenancy** (`conversation.email-imap-queue.ts:47-60`), so it cannot serve per-app mail as is. Default: **one fleet mailbox** on the internal mail server receiving `*@<inbound domain>`, polled by a fork **mail router** (ECS service from the fork image, reusing upstream's exported `createImapClient`/`pollOnce`/`workspaceSlugFromInboundAddress`) that routes by `mail_slug` and POSTs raw MIME to the app's existing raw-MIME door (**R2-7:** its own raw loop over `createImapClient`/`fetchUnseen`, not `pollOnce`). `apps/mail-edge` (SES receipt rule + Lambda + SQS DLQ) **removed**. **IE-1 kept** (D-C11 per-app address key is transport-independent). | D-E2, D-C11 | §3, §4.11, §5.1, §7, §8 Phase 8, §9, O-3, O-11 |
 | Outbound email: SMTP to the SES SMTP VPC endpoint or an internal relay (`EMAIL_SMTP_*`); SES/SNS delivery events disabled (E-3). | D-E2 | §4.10, §4.11 |
 | No internet anywhere: tower, provisioner, mail router, IdP/broker, SCIM and all AWS calls (RDS, Secrets Manager, KMS, ECS, S3, SES) go to intranet hosts or VPC endpoints. Cognito dropped as a broker example (its OAuth endpoints are public); the broker must be intranet-hosted. S3 via VPC endpoint with fleet static keys in Secrets Manager (E-2); bytes stream through the app (`S3_PROXY=true`), no CDN; **V-7** updated. | D-E2 | §4.3 step 5, §4.5.1, §4.10, §8 Phase 0 |
 | Internet-facing pieces removed: public DNS / public ACM validation, CDN origin, SES receipt, public custom domains. App and tower hostnames live in internal DNS with an internally trusted wildcard certificate on the internal ALB (ACM-imported private-CA cert or ACM Private CA). In-VPC callers (tower, provisioner, mail router) reach apps via a private DNS zone that resolves the same hostnames to the internal ALB, bypassing the edge SSO proxy (O-13). | D-E1, D-E2, D-C6 | §3, §4.1, O-13, O-14 |
-| Seams table corrected to match `SEAMS.md`: the schema-floor hook is shared **F-11** (was listed as C-2 here); plan-owned count is **1 seam (IE-1) + 1 conditional (C-1)**. | 02 §10 | §7 |
+| Seams table corrected to match `SEAMS.md`: the schema-floor hook is shared **F-11** (was listed as C-2 here); plan-owned count is **1 seam (IE-1) + 1 conditional (C-1)** (3 seams after the second pass: + TW-1, TW-2). | 02 §10 | §7 |
+
+## Second-pass review changes
+
+Driven by `REVIEW-2026-09-19-SECOND-PASS.md` and owner decisions **D-C15** (tower owns the whole app role set of
+every tower-managed person) and **D-C16** (SCIM/directory API available; disable is a tenant-level denial on every
+auth path). Where this section and an earlier changes table disagree, this section wins; the body below is
+rewritten to match it.
+
+| Finding | Change | Where |
+| --- | --- | --- |
+| R2-1 | **Image = upstream target.** Every runner path in this image (`fleet-migrator`, pool acquisition via `ensureWorkspaceSchemaCurrent`, `pool-cache.ts:303-308`, `fork-migrate`) migrates a workspace to *all* migrations bundled in the image, not to a recorded target (`migrate-runtime.ts:202,257`; enrol sets the target to `latestBundledVersion()`, `fleet/migrator.ts:931-936`). Rule: `fork-migrate` runs the full `runMigrations` only when the workspace's upstream ledger already contains **every** migration bundled in the running image (`missingBundledMigrations(readAppliedLedger(sql))` is empty, `ensure-schema-current.ts:32-34`). Otherwise it takes the **fork-only path** (fork lineage + fork catalogue reconcile, never upstream migrate or upstream seed) if the ledger meets the fork's declared upstream requirement, else skips with `upstream_pending`. **Serving-time cohort holds are not supported**: one serving image per fleet, and the web/worker roll is gated on every *active* workspace being at that image's bundle. A tenant that must stay on an older upstream version must be **suspended** (the registry refuses suspended tenants to requests and workers, `registry.ts:371`), because any active tenant a new-image web or worker task touches is caught up on pool acquisition whatever its target. | §4.4.2, §4.4.5, §9 |
+| R2-2 | **Maintenance scope** (`fork/fleet/maintenance-scope.ts`, new files, no seam): opens a direct connection to a `suspended` (or `provisioning`) tenant, runs the same identity checks as `verifyWorkspaceDatabase` (`pool-cache.ts:266-300`: secrets, fingerprint, physical identity, canary) but **not** `ensureWorkspaceSchemaCurrent` or `assertSchemaFloor`, and builds an unpooled, unroutable `WorkspaceScope` (`createWorkspaceScope`/`runWithWorkspaceScope`, `workspace-context.ts:146,302`). `resume` and `create` run everything while the registry says `suspended`: identity → upstream catch-up (`migrateDirect`, `fleet/migrator.ts:496`) → fork lineage + seed → template reconcile → `sync-members` → baseline → **catalogue marker written in its own transaction after the reconcile commits** → both floors evaluated in-process → hostnames restored (still suspended) → state flips to `active` as the last write, then HTTP probes. A crash before the flip leaves the tenant suspended; a crash after it is caught by the `probing` reaper. `fleet-migrator run --workspace` is no longer used by `resume` (it refuses suspended tenants, `requireWorkspace`, `fleet/migrator.ts:978-987`). | §4.3, §4.4.4, §4.4.6, §9 |
+| R2-3 | **Tower owns the whole role set (D-C15).** `adopted_local` and "other local roles untouched" removed. One writer: plan 10's `applyManagedRoleSet(principalId, { legacyRole, workspaceRoles, teamScopedRoles }, { kind: 'tower', syncRunId, grantorPrincipalId }, { executor })`, which sets the legacy role via upstream `setPrincipalRole` and replaces **all** workspace-wide and team-scoped rows of the managed principal (including preset Owner/Manager rows and locally granted rows) atomically under upstream's advisory lock 7061636 + principal-row `FOR UPDATE`. Provenance lives only in plan 10's `fork_role_assignment_sources` (`bundle_keys text[]`); this plan's `fork_tower_assignments` table is **dropped**. `fork_tower_principals` is plan 10's managed-principal registry (new columns `last_applied_legacy_role`, `last_applied_at`, `last_sync_run_id`, `entitlement_expires_at`), inserted in the same transaction as the first apply. Local or upstream edits (a role granted in the app, a legacy role changed by an app admin) are reverted at the next sync (`drift_reverted`). Empty desired set for an active person → legacy **`user` with zero rows** (no sentinel; the `no_access` sentinel is only for a `member` with team roles but no workspace-wide template); disabled person → plan 10's `denyPrincipal` (R2-4). | §4.3.2, §5.3, §9, §10 |
+| R2-4 | **Disable is separate from grants (D-C16).** Directory sync (SCIM push preferred, directory-API polling fallback) marks a person disabled and queues a **deny** per app, which calls plan 10's `denyPrincipal` (`fork_principal_denials` row; sessions deleted; OAuth access + refresh tokens revoked; legacy `user` with zero rows; API keys the person created revoked via `revokeApiKey`). Check sites owned here: **new seam TW-1** — MCP OAuth path, in R-4's fenced block after `mcp/handler.ts:244` (the handler verifies the JWT and re-reads only `principal.role`, `:88-113`); **new seam TW-2** — `databaseHooks.session.create.before` (`auth/index.ts:631-638`), which every sign-in method passes, refuses a new session for a denied user. API keys: plan 10's R-1. Plan 10's F-8 sweep (every 5 min) re-applies denials. 15 minutes is a **target** with a budget table; no hard maximum unless the optional entitlement lease (plan 10 O-R8, default off) is on. Sync failure alarms. | §2 R13, §4.3.2, §4.5.4, §5, §7, §9 |
+| R2-7 | **Raw-message router.** `pollOnce` is **not** used: it parses before calling back (`conversation.email-imap.ts:78-96`) and loses the raw MIME and delivery headers. The router runs its own loop over `createImapClient(config)` → `ImapClient.fetchUnseen()` (raw RFC822 + UID) / `markSeen` / `close` (`:34-45,241`), forwards the raw bytes and only the trusted envelope header. The internal mail server must **delete any inbound copy** of the routing header before stamping its own (V-9); no `To`/`Cc` fallback. Tenant-side deduplication is upstream's: all three ingest paths refuse a repeat `Message-ID` (reply `conversation.email-inbound.service.ts:501-508`, cold `:645-652`, ticket reply `:825-832`), backed by the unique index `conversation_messages_email_message_id_idx` (`packages/db/src/schema/conversation.ts:365-367`); the router also sends `x-qb-transport-message-id` (`email-cloudflare-handler.ts:132,602-605`) so id-less messages dedup too. No fork dedup table. Door status handling: 2xx delivered; 400/413/415/422 permanent → dead-letter, no retry; 401/404/408/429/5xx/timeout → retry with backoff, re-signed with a fresh timestamp. | §4.11, §5.1, §7, §9 |
+
+**Acceptance tests added** (all in §9, mandatory):
+
+- **R2-1:** run a new image against a tenant whose upstream ledger is at an intentionally older target. `fork-migrate`
+  (new image) applies only the fork lineage/catalogue or skips with `upstream_pending`; it never applies the
+  withheld upstream migration. While the tenant is held it is **suspended**, and neither a scoped request nor a
+  worker sweep from the new image applies the withheld migration (registry refusal). The deploy gate refuses to
+  roll web/worker while any **active** tenant is behind the image's bundle.
+- **R2-2:** suspend a tenant before multiple catalogue releases, raise both serving floors, then `resume` with the
+  newest image. Crash (kill the task) after each stage: identity, upstream catch-up, fork lineage, seed, template
+  reconcile, sync, marker, hostname restore, flip, probes. After every crash the tenant is still `suspended` (or,
+  after the flip, re-suspended by the reaper if probes did not finish), no public route serves it early, and the
+  catalogue marker is never newer than the committed reconcile. A re-run completes.
+- **R2-3:** locally grant a role to a managed person, add the same role through the tower, remove it in the tower,
+  change the legacy role in the app, then run seed/migration/`fork-migrate` and sync. Expected at each step: local
+  grant present until the next sync, then removed; tower grant present with `source='tower'` provenance; after
+  tower removal the role is gone (no local survivor) and, with no bundle left, the person is legacy `user` with
+  zero rows (no sentinel); the legacy-role change survives only until the next sync (`drift_reverted`);
+  seed/migrate never adds Manager (a team-roles-only `member` holds the `no_access` sentinel);
+  `assertTowerPrincipalsFailClosed` reports clean after every sync.
+- **R2-4:** disable a locally privileged tower-managed user in the directory while they keep using an already
+  issued app session, an unexpired MCP JWT (and refresh token), and an API key they created, without visiting the
+  tower. Within the target: session requests get 401, MCP returns 401 even though the JWT verifies (TW-1), refresh
+  fails, the API key is refused (R-1), and a fresh sign-in by any method creates no session (TW-2). Repeat with the directory/SCIM unavailable: the
+  `directory_sync_stale` alarm fires at 2× the poll interval; with the lease on, access ends at lease expiry; with
+  it off, access ends within the target after sync recovers.
+- **R2-7:** deliver cold mail and replies to two tenants, including BCC, multiple recipients across tenants, and
+  messages carrying forged `Delivered-To`/routing headers; kill the router after the tenant accepted a delivery
+  but before `cp_mail_deliveries` records it, then let it retry. Verify: no delivery to a tenant the envelope did
+  not name, no duplicate visible message, raw MIME bytes byte-identical (as decoded by `SocketImapClient`) through
+  the exact adapter, 413 dead-lettered without retry, 5xx/timeout retried.
 
 ## 1. Changes from v1
 
@@ -74,7 +121,7 @@
 | **Wrong fact:** `OSS_TIER_LIMITS` location; service names                                                                                        | Moot: seat/plan limits do not apply (D4), and the tower calls MCP tools, not services.                                                                                                                                                                                                                                         |
 | **Wrong fact:** `env://` refs                                                                                                                    | `env://` only accepts `QUACKBACK_TENANT_SECRET_[A-Z0-9_]+` (`vendor/secret-ref.ts:141-142`). v2 uses `sealed+aead://` for DB passwords, so onboarding an app needs no task-definition change (§4.2).                                                                                                                             |
 | **Human attribution:** API keys mint a service principal per key (`api-key.service.ts:132`)                                                       | D-C2: the tower acts only through app MCP with the user's own OAuth token; `principalId` comes from the verified JWT and is re-read from `principal` (`mcp/handler.ts:98-126`). Dual audit (§4.8).                                                                                                                             |
-| X6: `withWorkspaceScopeById` wrong file/signature                                                                                                | It is `workspaces/fleet.ts:147` with `(workspaceKey, origin: WorkspaceScopeOrigin, body)`. Only the provisioner uses it (origin `'script'`).                                                                                                                                                                                  |
+| X6: `withWorkspaceScopeById` wrong file/signature                                                                                                | It is `workspaces/fleet.ts:147` with `(workspaceKey, origin: WorkspaceScopeOrigin, body)`. Only the provisioner uses it (origin `'script'`), for active apps; suspended/provisioning apps use the fork maintenance scope (§4.4.6, R2-2).                                                                                                                                                                                  |
 | §4.2/4.3: fleet `viewer` clashes; fleet admins all seeded as tenant **admin**                                                                    | Configurable tower role bundles (D-C9), each naming a tenant custom-role template from 10 (§6). Enforced over MCP once D3 ships.                                                                                                                                                                                               |
 | v1 §7.1 registry DDL "reverse-engineer later"                                                                                                    | §5.1 concrete DDL reproducing `SELECT_COLUMNS`/`RegistryRow` + **parity test** against the real reader.                                                                                                                                                                                                                      |
 | v1 control DB schema in `packages/`                                                                                                              | Control-DB migrations are their own lineage in `apps/control-tower/migrations/`, never in `packages/db`.                                                                                                                                                                                                                      |
@@ -102,15 +149,17 @@
 - **R7** Provisioning, suspension and member sync are privileged jobs holding the root key; the tower never
   holds `QUACKBACK_FLEET_ROOT_KEY` nor any app DSN credential (D-C4).
 - **R8** Each app receives inbound email on its own address, verified with its own key (D-C11).
-- **R9** Upgrade safety: 1 upstream seam owned by this plan (+1 conditional; F-11/F-12 shared); upstream registry drift caught
+- **R9** Upgrade safety: 3 upstream seams owned by this plan (IE-1, TW-1, TW-2; +1 conditional; F-11/F-12 shared); upstream registry drift caught
   by a test; fork-only releases reach every tenant (active now, suspended on resume) with catalogue reconciled.
 - **R12** Every provisioned app carries the **04 §3 sign-in baseline** from the moment its hostname is published:
   public visibility, anonymous off, sign-up closed except IdP JIT, SSO the only sign-in method, widget HMAC
   required (D-E3; supersedes D-N5). Readers are kept out by the edge SSO + Quackback SSO (D-E1).
 - **R14** No component makes an internet connection (D-E2): tower, provisioner, mail router, IdP/broker and
   every AWS dependency are intranet hosts or VPC endpoints.
-- **R13** Removing a user from an IdP group removes the matching app grants within **≤ 15 min** (🟡 default,
-  §4.5.4).
+- **R13** Removing a user from an IdP group replaces their app role set, and disabling them in the directory
+  denies them in every app on every auth path (sessions, OAuth/MCP tokens, API keys they created, new sign-ins),
+  within a **15-minute target** (not a hard maximum; budget and failure behaviour in §4.5.4; optional hard lease)
+  (D-C16, O-9).
 - **Later (not delivered by Phases 0–5):** R10 announcements across apps (Phase 6, D-N8); R11 read-only
   portfolio / prioritization views (Phase 7). Until those phases ship the tower offers neither surface.
 
@@ -217,9 +266,10 @@ Commands: `create`, `sync-members`, `suspend`, `resume`, `deprovision`, `rotate-
      `settings.metadata.cloudTenant`; leave `cloud_workspace_key` NULL (avoids `stamp_source_conflict`);
    - `cloud_secret_canary = sealSecretKeyCanary(secretKey, key)` (`vendor/fleet-secrets.ts:249`), raw SQL
      (column not in the Drizzle schema).
-5. Read `pg_database.oid` + cluster id; insert `cp_workspace_registry` + `cp_workspace_schema_state`
-   (target = image max) + `cp_fork_schema_state` — **no `cp_workspace_hostnames` row yet**, so the app is not
-   routable (`resolveWorkspaceByHostname` finds nothing) while it is being configured.
+5. Read `pg_database.oid` + cluster id; insert `cp_workspace_registry` with **`state = 'suspended'`,
+   `state_reason = 'provisioning'`** (R2-2: neither requests nor worker sweeps acquire it, `registry.ts:371`,
+   `listActiveWorkspaces` `:322`) + `cp_workspace_schema_state` (target = image max) + `cp_fork_schema_state` —
+   **no `cp_workspace_hostnames` row yet**, so the app is not routable while it is being configured.
    - `storage` (D-C10) = the **fleet-bucket form**: `{ provider: 'r2', bucket: <fleet bucket>, endpoint:
      <S3 VPC endpoint URL — the regional endpoint behind a gateway endpoint, or the interface endpoint's
      DNS name>, region, forcePathStyle: <per V-7>, publicUrl: https://<slug>.<fleet-domain>/api/storage }`
@@ -233,8 +283,9 @@ Commands: `create`, `sync-members`, `suspend`, `resume`, `deprovision`, `rotate-
    - `mail_slug` (D-C11) = `--mail-slug` or the slug; must match the mail-slug grammar, **max 13 characters**
      (`vendor/mail-slug-pattern.ts:31`; the local-part budget in `conversation.email-channel.ts:169-175`), and
      is `UNIQUE` in the registry. The provisioner refuses a longer slug rather than truncating.
-6. Enter the scope with `withWorkspaceScopeById(key, 'script', …)` (`fleet.ts:147`) — runs the real fingerprint
-   + canary checks — and, using domain services:
+6. Enter the **maintenance scope** (§4.4.6; `withWorkspaceScopeById` would refuse the still-suspended row,
+   `fleet.ts:147` → `resolver.ts:151` → `registry.ts:371`) — it runs the real fingerprint, physical-identity and
+   canary checks — and, using domain services:
    - `ensureNewWorkspaceLabs` (as onboarding does);
    - `ensurePersonaRoles` (owned by 10; same service behind its MCP tool `fork_install_persona_roles`) for every
      `template_key` named by any `tower_roles` row; roles are then looked up by `template_key` in 10's
@@ -270,17 +321,21 @@ Commands: `create`, `sync-members`, `suspend`, `resume`, `deprovision`, `rotate-
      availability.ts:84`) true, `isAccountCreationAllowed(<non-domain email>, 'portal')`
      (`auth/signup-policy.ts:191`) false, `hasActiveRecoveryCodes()` (`auth/recovery-codes-status.ts:8`) true —
      all must hold.
-7. **Publish:** insert `cp_workspace_hostnames` (`kind = 'platform'`, `<slug>.<fleet-domain>`), then run the
-   **HTTP probes** of §4.3.1 against that hostname (in-VPC, via the private DNS zone — i.e. at Quackback level,
-   without the edge proxy). Any probe that does not get the expected refusal → delete the hostname row, set
-   `state = 'suspended'`, `state_reason = 'access_probe_failed'`, exit non-zero.
+7. **Publish:** write the catalogue marker (§4.4.2 step 4, its own transaction after the step-6 work committed),
+   evaluate both floors in the maintenance scope, insert `cp_workspace_hostnames` (`kind = 'platform'`,
+   `<slug>.<fleet-domain>`) while still suspended (the hostname answers "suspended"), set
+   `cp_fork_schema_state.resume_status = 'probing'`, flip `state = 'active'` as the last registry write, then
+   run the **HTTP probes** of §4.3.1 against that hostname (in-VPC, via the private DNS zone — i.e. at Quackback
+   level, without the edge proxy). Any probe that does not get the expected refusal → delete the hostname row,
+   set `state = 'suspended'`, `state_reason = 'access_probe_failed'`, exit non-zero. Success clears
+   `resume_status`. A crash between flip and probe result is caught by the `probing` reaper (§4.4.4).
 8. `verify`: `resolveWorkspaceById` ok, `verify-workspace-secrets.ts` passes, the SSO start redirects to the
    intranet IdP (proves F-12 + discovery), tower client has `skip_consent = true`, storage write/read
    round-trip lands under `w/<settings.id>/` and reads back through `/api/storage`, fork floor satisfied
    (§4.4.3), enforcement state reported (§4.3.1).
 
-Any failure in steps 4–7 leaves the app unpublished (no hostname row) or suspended; `create` is re-runnable
-from the failed step.
+Any failure in steps 4–7 leaves the app suspended (`provisioning` or `access_probe_failed`), with or without a
+hostname row; `create` is re-runnable from the failed step.
 
 #### 4.3.1 Sign-in baseline (D-E3, 04 §3; C1 fail-closed rules kept)
 
@@ -329,11 +384,12 @@ unauthenticated request to the hostname through the edge gets the edge SSO chall
 probe list lives next to the sign-in baseline tests (§9) so both change together. `suspend`/`resume` and
 `verify --access` re-assert the baseline and re-run the probes.
 
-#### 4.3.2 `sync-members` (privileged; the only writer of tower-managed grants)
+#### 4.3.2 `sync-members` (privileged; the only writer of tower-managed role sets)
 
 Runs per app from the provisioner (never from a human MCP token): on every change to `tower_role_members`,
-`tower_roles`, `tower_role_app_teams` or `tower_users`, and on a **15-minute schedule** (§4.5.4). Inputs are
-read with the `cp_provisioner` grant. For each active tower user:
+`tower_roles`, `tower_role_app_teams` or `tower_users`, after every directory reconcile (§4.5.4), and on a
+**15-minute schedule**. Inputs are read with the `cp_provisioner` grant. Scope: the ordinary workspace scope for an
+active app, the maintenance scope (§4.4.6) during `create`/`resume`. For each tower user linked to this app:
 
 1. **Identity (C3, §4.5.4):** upsert `user` (email, name, `emailVerified`) and `principal` keyed by the
    recorded `tower_user_app_identities.tenant_user_id` (never re-matched by email). On first sync, if the user
@@ -343,44 +399,64 @@ read with the `cp_provisioner` grant. For each active tower user:
    subject is never merged — it is reported `identity_conflict` and skipped;
    ensure exactly one `account` row for the app's SSO provider with `accountId = ` the user's app-IdP subject
    (`tower_user_idp_links`); delete any other `account` row for that provider on this user (e.g. created by
-   email auto-linking, `auth/index.ts:524-531`) and revoke its sessions. Write `fork_tower_principals` and the
-   tower-side mapping row.
-2. **Desired grants:** from the user's bundles compute legacy role (`admin` if any bundle has
-   `tenant_legacy_role = 'admin'`, else `member`), a workspace-wide template set **W**, and team grants **T** =
-   {(team template, tenant team id)} from `tower_role_app_teams` for this app. A team-scoped bundle with no
-   team mapping for this app contributes nothing in this app and is reported `unmapped_team` (fail closed).
-   A bundle that grants team roles must also name a workspace-wide template (checked on write in the tower),
-   so a Tier-only user never has zero workspace-wide rows.
-3. **Reconcile atomically** — one transaction per principal through plan 10 §reconcile (which accepts the
-   executor; the tier-membership write goes through 30's service with the same executor):
-   - if the legacy role changes: `setPrincipalRole(role, { executor, assignRoleId: <first of W>,
-     assignGrantedBy: sync principal })` (`SetRoleOpts`, `principal.factory.ts:231-245`; for `admin`
-     `assignRoleId` is omitted — the Owner preset rides the legacy role); this is upstream's replace-all
-     reconcile (`:357-398`), so it runs first;
-   - insert missing W/T rows with `grantedByPrincipalId = tower.sync_principal_id` (so the seed heal, which
-     only deletes grantor-NULL preset rows, never touches them; `seed-system.ts` step 5a);
-   - delete tower-owned rows (by `fork_tower_assignments`) no longer desired, whatever their template is now
-     named or whether the `tower_roles` row still exists;
-   - delete **preset rows** (Owner/Manager, workspace-wide, grantor NULL) held by a tower-managed principal
-     unless desired (Owner is desired iff legacy role is `admin`) — this clears the Manager row that
-     `setPrincipalRole('member')` or the seed backfill (5b) inserts;
-   - upsert/delete `fork_tower_assignments` provenance rows;
-   - **invariant:** if the principal is `admin`/`member` and holds zero workspace-wide assignments, set it to
-     legacy `user` in the same transaction (a `member` with no rows would fall back to Manager,
-     `policy/permissions.ts:58-75`). Commit, then bust `cacheKeysToBust`.
-   A failure rolls back that principal only; it keeps its previous grants, is reported, and is retried next run.
+   email auto-linking, `auth/index.ts:524-531`) and revoke its sessions. The `fork_tower_principals` registry row
+   (plan 10 §4.8's managed-principal registry) is inserted **in the same transaction as the first
+   `applyManagedRoleSet`** (step 3), so a principal is never registered without its managed role set; the
+   tower-side mapping row is written after commit.
+2. **Desired role set** — the **complete** set this person holds in this app (D-C15), in plan 10's shape
+   `{ legacyRole, workspaceRoles, teamScopedRoles }` with `bundleKeys` per role: `legacyRole` = `admin` if any
+   bundle has `tenant_legacy_role = 'admin'`, else `member` if any role results, else `user`; `workspaceRoles` =
+   the bundles' workspace-wide templates; `teamScopedRoles` = {(tenant team id, team template)} from
+   `tower_role_app_teams` for this app. A team-scoped bundle with no team mapping for this app contributes
+   nothing here and is reported `unmapped_team` (fail closed). A `member` with team roles but no workspace-wide
+   template gets plan 10's `no_access` sentinel as its workspace row (added by the writer). If the person holds
+   no bundle, the set is **empty** ⇒ `{ user, [], [] }`. If the person is `disabled` (directory-driven,
+   §4.5.4), sync does not compute a set; it runs the **deny** operation below instead.
+3. **Apply atomically** through plan 10's single authoritative writer (plan 10 §4.8):
+   `applyManagedRoleSet(principalId, desired, { kind: 'tower', syncRunId, grantorPrincipalId:
+   tower.sync_principal_id }, { executor })`. In one transaction, under upstream's locks in upstream's order
+   (`pg_advisory_xact_lock(7061636)`, then the principal row `FOR UPDATE`, `principal.factory.ts:277,320`), it
+   sets the legacy role through upstream `setPrincipalRole` and replaces **every** workspace-wide and
+   team-scoped row of the principal with exactly `desired` — including preset Owner/Manager rows, rows granted
+   locally in the app, and tier-team rows — and writes `fork_role_assignment_sources` (`source = 'tower'`,
+   `bundle_keys`, `sync_run_id`) for every surviving row plus the registry's `last_applied_legacy_role`,
+   `last_applied_at`, `last_sync_run_id`. Rows are inserted with `granted_by_principal_id =
+   tower.sync_principal_id` (except the Owner preset, NULL-grantor as upstream writes it). Tier membership goes
+   through plan 30's service with the same `executor`. It refuses a principal missing from the registry
+   (`NOT_MANAGED`) and turns any desired set into `{ user, [], [] }` while a denial is active, so a stale sync
+   can never re-grant a disabled person. This plan does not delete or insert assignment rows itself and keeps no
+   second provenance table. With the entitlement lease on (plan 10 O-R8), a successful apply also extends
+   `fork_tower_principals.entitlement_expires_at`. Commit, then bust the returned `cacheKeysToBust`; report
+   `driftReverted` items to the tower as `drift_reverted`. A failure rolls back that principal only; it keeps
+   its previous set, is reported, and is retried next run.
 
-**Ownership rules.**
+**Ownership rules (D-C15).** The tower owns the whole app role set of every tower-managed principal; unmanaged
+principals (no `fork_tower_principals` row) are never touched, and plan 10's local (fork-UI) writers refuse
+managed principals (`TOWER_MANAGED`).
 
 | Case | Behaviour |
 | ---- | --------- |
-| Desired role already held as a **local** grant (no provenance) | Tower records provenance with `adopted_local = true`; on tower removal the assignment is **kept** and only the provenance row is deleted. |
-| Local admin later grants a role the tower already holds | Upstream insert is a no-op (unique on `(principal_id, role_id) WHERE team_id IS NULL`); the row stays tower-owned and is removed when the tower removes it. Local admins who need a lasting local grant use a different role. Documented in the fleet runbook. |
-| Local admin changes a tower-managed principal's legacy role | Upstream wipes all workspace-wide rows (reset semantics). Provenance rows are keyed by `(principal, role, team)`, not by assignment id, so the next sync (≤ 15 min, or immediately when triggered) detects the drift, restores the tower's desired state, removes the inserted preset, and reports `drift_repaired`. Tower is the authority for tower-managed principals. |
-| Other local roles on a tower-managed principal | Never touched by sync (lost only through upstream reset semantics). |
-| `tower_roles` row deleted or `tenant_template_key` retargeted | Removal is by provenance, so the old template's rows are removed and the new ones added in the same transaction. Deleting a bundle is a soft delete (`retired_at`) until every app reports a clean sync. |
-| Last tower role removed | All tower-owned rows removed; if no local rows remain, legacy `user` (portal-only). |
-| Tower user disabled / IdP-removed | As last role removed, plus all app sessions for the user deleted and the tower client's OAuth tokens for the user revoked (`oauth_access_token` rows); tower grant rows `revoked`. MCP calls fail at once because the handler re-reads the principal every call (`mcp/handler.ts:106-110`) and teamOnly tools refuse `user`. |
+| Role granted locally by an app admin to a managed principal (whether or not the tower also grants it) | Removed at the next sync unless it is in the desired set; if it is, the row is kept and re-attributed (`source = 'tower'`). There is no locally adopted role and no local survivor. Fleet runbook: grant through the tower. |
+| App admin changes a managed principal's legacy role (upstream UI; not blocked, plan 10 O-R9) | Upstream's replace-all runs (`principal.factory.ts:357-398`) and may insert a preset row. The change is live until the next sync (≤ one sync interval, or immediately when triggered), which restores the desired legacy role and set, deletes the preset, and reports `drift_reverted`. `assertTowerPrincipalsFailClosed` (plan 10) flags the state meanwhile. |
+| Tier membership edited locally for a managed principal | Refused by plan 30/10's local writer (`TOWER_MANAGED`); any row written another way is reverted at the next sync. |
+| `tower_roles` row deleted or `tenant_template_key` retargeted | The desired set changes; the writer replaces the set in one transaction. Deleting a bundle is a soft delete (`retired_at`) until every app reports a clean sync. |
+| Desired set empty, person active (last bundle removed) | `{ user, [], [] }`: legacy **`user`, zero rows, no sentinel** (plan 10 §4.8). `user` maps to no preset and the seed backfill selects only `admin`/`member`, so nothing can grant Manager. The person keeps portal access as an employee. |
+| Team roles only, no workspace-wide template (defensive: the §5.2 `tower_roles` CHECK normally prevents it) | `member` + team rows + the `no_access` sentinel workspace row (plan 10), so no zero-row Manager fallback. |
+| Person disabled in the directory | **Deny** (below): not a grant change; applies even if the desired set would be non-empty. |
+| Person re-enabled | `liftPrincipalDenial(principalId, { onlyReason })` (plan 10 §4.9), then the normal set is applied. Revoked credentials stay revoked; the person signs in again. |
+| Person leaves the tower entirely | Apply the final state (`{ user, [], [] }`, or deny) first, then delete the registry row (plan 10 §4.8). |
+
+**Deny operation** (`fork-provision deny --user <tower user> [--workspace <key>]`; run per app by the revocation
+worker, §4.5.4, and by every sync while the person stays disabled). It calls plan 10's
+**`denyPrincipal(principalId, reason, { syncRunId, actor })`** (plan 10 §4.9; `reason` = `idp_removed` or
+`tower_disabled`), which: in Tx 1 upserts the `fork_principal_denials` row, deletes every `session` row of the
+user and sets `revoked` on every `oauth_access_token` / `oauth_refresh_token` row (all clients); in Tx 2 applies
+`{ user, [], [] }` through `applyManagedRoleSet`; then revokes every API key the person created through upstream
+`revokeApiKey`. The denial is effective at Tx 1 commit. After the call the tower marks its grants for the person
+`revoked`. Paths that do not read those rows are covered by check sites: an unexpired MCP JWT by seam **TW-1**, a
+new sign-in by any method by seam **TW-2**, API keys by plan 10's R-1 (checks key principal **and** creator)
+(§7). Plan 10's `fork-principal-denial-sweep` (shared F-8, every 5 min) re-applies active denials, which catches a
+session minted by a sign-in that raced the denial, and enforces the optional lease.
 
 Upstream IdP claim mapping only assigns **legacy** roles (`oidc-claim-mapping.ts:98-110`, `KNOWN_ROLES`), so
 custom-role assignment has to be explicit — hence `sync-members` rather than app-side claim mapping.
@@ -415,20 +491,49 @@ template changes) is never claimed: the claim requires `current_version < target
 Catalogue reconciliation lives only in `seedSystemData` (`packages/db/src/seed-system.ts:47-102`, called from
 `migrate-runtime.ts:271`), so applying fork SQL alone would never land new keys.
 
+**Code version vs cohort target (R2-1).** No runner in an image migrates to a *target*: `runMigrations` applies
+the whole bundled directory (`migrate-runtime.ts:202,257`), `fleet-migrator` enrols at `latestBundledVersion()`
+(`fleet/migrator.ts:931-936`) and treats the target only as a claim trigger, and ordinary pool acquisition runs
+`ensureWorkspaceSchemaCurrent` — catch-up to **every** bundled migration — before any floor check
+(`pool-cache.ts:303-308`, `ensure-schema-current.ts:32-45`). So the running image's bundle **is** the upstream
+target of every tenant that image touches. Rules:
+
+- **Full path** — `runMigrations(directDsn, { seed: true, verify: true })` — only when the workspace's upstream
+  ledger already contains every migration bundled in *this* image (`missingBundledMigrations(readAppliedLedger(sql))`
+  is empty). Then the upstream step is a genuine no-op, F-1 applies the fork lineage and `seedSystemData`
+  reconciles the catalogue and preset bundles.
+- **Fork-only path** (recommended over skipping, so fork releases still land during a staged upstream rollout)
+  — when the ledger is behind the image. It runs **only** the fork-lineage runner that F-1 calls inside
+  `runMigrations` (02, invoked on its own under the same advisory lock) and `reconcileForkCatalogue(sql)`, a
+  fork function that upserts the fenced fork keys (F-7) and recomputes their preset-bundle membership (Manager
+  exclusions). It never calls upstream `migrate` or upstream `seedSystemData`. Every fork migration and
+  `reconcileForkCatalogue` declare the newest upstream migration they depend on; `FORK_UPSTREAM_REQUIREMENT`
+  (fork constant, max of those) must be in the ledger, else skip with `upstream_pending`. CI applies the fork
+  lineage + `reconcileForkCatalogue` + template reconcile to a database migrated to exactly
+  `FORK_UPSTREAM_REQUIREMENT` and fails if any statement touches a later upstream column. Status `fork_only`;
+  `sync-members` is deferred to the next full-path run.
+- **Never an ordinary scope for fork work.** All of `fork-migrate` runs on the maintenance scope (§4.4.6), which
+  performs identity checks without `ensureWorkspaceSchemaCurrent`, so a new-image `fork-migrate` cannot catch a
+  behind-the-image tenant up by acquiring a pool.
+- **Serving images.** Cohort targets only stage the **pre-roll** migration pass (§4.4.5 step 2) while the old
+  image still serves. Holding an active tenant on an older upstream version *after* the roll is **not supported**:
+  new-image web requests and worker sweeps (`listActiveWorkspaces`) would catch it up on pool acquisition whatever
+  its target. A tenant that must stay behind is **suspended** before the roll (the registry refuses it to requests
+  and workers, `registry.ts:371`) and caught up at `resume`. Running several serving images pinned per cohort would
+  need host routing *and* a worker-side cohort filter before pool acquisition (an upstream seam); deferred (O-15).
+
 `fork-provision fork-migrate [--workspace <key>] [--include-suspended]`, per workspace:
 
-1. Read `cp_workspace_schema_state`; if the upstream ledger is below the workspace's target → skip with
-   `upstream_pending` (fleet-migrator owns it and will run the fork lineage + seed through F-1). It never
-   applies upstream migrations beyond the fleet target, so cohort rollouts are not bypassed.
-2. Otherwise `runMigrations(directDsn, { seed: true, verify: true })` under the standard advisory lock: upstream
-   step is a no-op, F-1 applies the fork lineage, `seedSystemData` upserts the catalogue (upstream + fenced
-   fork keys) and reconciles preset bundles.
-3. Enter the scope and run plan 10 §reconcile for fork role templates (template permission sets that changed
-   in this release), then `sync-members` for this app if the catalogue changed a tower-mapped template.
-4. Write `fork_settings.fork.catalogue_version = FORK_CATALOGUE_VERSION` (an integer constant in fork code; a
-   CI snapshot test fails if the fork catalogue/templates change without bumping it) and upsert
-   `cp_fork_schema_state(workspace_key, fork_version, fork_tag, catalogue_version, status, last_error,
-   updated_at)`.
+1. Open the maintenance scope (§4.4.6). Choose the full or fork-only path (or `upstream_pending`) as above.
+2. Run that path under the standard advisory lock.
+3. In the maintenance scope run plan 10 §reconcile for fork role templates (template permission sets that
+   changed in this release), then — full path only — `sync-members` for this app if the catalogue changed a
+   tower-mapped template. Each reconcile commits per template.
+4. **Only after step 3 committed**, in its own transaction: write `fork_settings.fork.catalogue_version =
+   FORK_CATALOGUE_VERSION` (an integer constant in fork code; a CI snapshot test fails if the fork
+   catalogue/templates change without bumping it); then upsert `cp_fork_schema_state(workspace_key,
+   fork_version, fork_tag, catalogue_version, status, resume_status, last_error, updated_at)`. A crash before
+   this step leaves the old marker, so the floor keeps refusing and a re-run redoes steps 2–3 idempotently.
 
 It continues past per-workspace failures, exits non-zero if any active workspace failed, and is idempotent.
 Suspended workspaces are listed as `deferred_until_resume` unless `--include-suspended` is given.
@@ -447,26 +552,73 @@ Upstream's runtime floor (`fleet/schema-floor.ts:144-150`, called on every pool 
 - on failure throws `WorkspaceSchemaFloorRefusal` (same code `schema_below_floor`, so the upstream 503 path and
   alarms apply unchanged). Unset variables ⇒ gate off. It does **not** migrate on the request path.
 
+The maintenance scope never calls it on entry (that is what lets `resume` repair a tenant below the floor); it
+calls `assertSchemaFloor` explicitly as the last check before the registry flips to `active` (§4.4.4).
+
 #### 4.4.4 Suspended tenants and resume (fail closed)
 
-`suspend` sets `state = 'suspended'`. `resume --key` runs, in order: (1) `fleet-migrator run --workspace <key>`
-(upstream to target; F-1 + seed ride along); (2) `fork-migrate --workspace <key> --include-suspended` on the
-direct DSN; (3) parks the hostname rows (moved to `cp_parked_hostnames`), sets `state = 'active'` — unroutable
-while parked; (4) in scope: `sync-members`, sign-in baseline assertion (§4.3.1), fork-floor check; (5)
-re-inserts the hostnames and runs the §4.3.1 HTTP probes. Any failure → hostnames restored, `state =
-'suspended'`, `state_reason = 'resume_failed:<code>'`. `create` follows the same publish-last rule.
+`suspend` sets `state = 'suspended'`. `resume --key` keeps the registry `suspended` until the last step, and does
+all work through the maintenance scope (§4.4.6) — `fleet-migrator run --workspace` is **not** used because it
+refuses suspended tenants (`requireWorkspace`, `fleet/migrator.ts:978-987`):
+
+1. Park the hostname rows (moved to `cp_parked_hostnames`); set `cp_fork_schema_state.resume_status = 'running'`.
+2. Open the maintenance scope (identity checks; a failure stops here).
+3. Upstream catch-up to the image bundle: `migrateDirect(workspaceKey, directDsn)` (`fleet/migrator.ts:496`; the
+   gap-aware planner `ensureWorkspaceSchemaCurrent` also uses), which runs `runMigrations` — F-1 fork lineage and
+   `seedSystemData` ride along. Update `cp_workspace_schema_state`.
+4. `fork-migrate` steps 2–3 for this workspace (full path; the ledger now holds the bundle): template reconcile,
+   then `sync-members` (role sets, and deny for disabled people).
+5. Sign-in baseline assertion in-process (§4.3.1 step-6 checks).
+6. Catalogue marker + `cp_fork_schema_state` (fork-migrate step 4) — its own transaction, after 3–5 committed.
+7. In the maintenance scope call `assertSchemaFloor(workspaceKey, sql)` (upstream + F-11) and require success.
+8. Restore the hostname rows from `cp_parked_hostnames` while still `suspended` (the host answers "suspended").
+9. Set `resume_status = 'probing'`, then flip `state = 'active'` (last registry write).
+10. Run the §4.3.1 HTTP probes; success → `resume_status = NULL`.
+
+Any failure in 2–10 → hostnames parked again, `state = 'suspended'`, `state_reason = 'resume_failed:<code>'`. A
+crash before step 9 leaves the tenant suspended (nothing served; re-run is idempotent: every step checks before
+writing and the marker cannot precede its work). A crash between 9 and 10 is caught by the **probing reaper**: the
+provisioner at start-up and every `sync-members` schedule tick re-suspends any workspace with `resume_status =
+'probing'` older than 10 minutes (`state_reason = 'resume_unverified'`). `create` follows the same order (§4.3).
 
 #### 4.4.5 Deployment order
 
 1. Build upstream image, then `Dockerfile.fork`; CI image gate (§4.4.1).
 2. With the **new** image as one-off tasks, while the **old** web/worker still serve:
-   `fleet-migrator run` → `fork-provision fork-migrate`. Fork and upstream migrations are additive
-   (02 §3.5), so old code on the new schema is supported; this is rehearsed (§9).
-3. Gate: every active workspace `ok` in both ledgers and `cp_fork_schema_state.catalogue_version =
-   FORK_CATALOGUE_VERSION`; failures block step 4 (the failing workspaces are suspended or rolled forward).
+   `fleet-migrator run` (cohort by cohort, if staged) → `fork-provision fork-migrate` (full or fork-only path per
+   workspace, §4.4.2). Fork and upstream migrations are additive (02 §3.5), so old code on the new schema is
+   supported; this is rehearsed (§9).
+3. Gate: every **active** workspace has an upstream ledger containing the whole new bundle, fork status `ok`
+   (not `fork_only` / `upstream_pending`) and `cp_fork_schema_state.catalogue_version = FORK_CATALOGUE_VERSION`;
+   any workspace that must stay behind is suspended first. Failures block step 4.
 4. Roll web/worker to the new image.
 5. Only in a **later** release, raise `FORK_MIN_SCHEMA_VERSION` / `FORK_MIN_CATALOGUE_VERSION` to values every
-   active workspace already reports; suspended workspaces meet them at resume.
+   active workspace already reports; suspended workspaces meet them at resume (which, via the maintenance scope,
+   does not need to pass the floor to start).
+
+#### 4.4.6 Maintenance scope (R2-2)
+
+`fork/fleet/maintenance-scope.ts` → `withForkMaintenanceScope(workspaceKey, body)` (new files, no seam). Used only
+by the provisioner (`create`, `resume`, `fork-migrate`, `deny` on a suspended tenant); never by web/worker, never
+cached, never reachable from a Host header.
+
+1. Read the registry row with upstream's exported `SELECT_COLUMNS` (`registry.ts:224-239`). Accept `state` ∈
+   {`active`, `suspended`}; refuse `deleting` and unknown keys.
+2. Validate the record with upstream's `interpretRow` (`registry.ts:354`) on an **in-memory copy** whose `state`
+   is set to `active` — the same contract validation the serving path applies; nothing is written.
+3. Open a direct, session-mode connection (`db_direct_url`, password from `resolveWorkspacePassword`,
+   `pool-cache.ts:213`), then run the identity sequence of `verifyWorkspaceDatabase` (`pool-cache.ts:266-300`)
+   from exported pieces: `resolveWorkspaceSecrets` (`workspace-secrets.ts:118`), `observeWorkspaceIdentity`
+   (`fingerprint.ts:294`), `evaluateWorkspaceIdentity` (`:538`, fingerprint + physical identity) and
+   `evaluateSecretKeyCanary` (`:446`). Any refusal aborts. It deliberately omits `ensureWorkspaceSchemaCurrent`
+   and `assertSchemaFloor`.
+4. `createWorkspaceScope({ workspace, db, sql, secrets, origin: 'script' })` (`workspace-context.ts:146`) and
+   `runWithWorkspaceScope` (`:302`) around `body`; the connection is closed afterwards.
+
+Drift risk: step 3 is a second composition of upstream's fail-closed check (upstream warns about exactly this,
+`pool-cache.ts:262-264`). A **contract test** runs `openWorkspaceDirectPool` and the maintenance scope against the
+same fixtures (right DB; wrong DB; cloned DB with a different OID/cluster; wrong key; missing stamp; missing canary)
+and asserts identical accept/refuse verdicts and codes; it runs on every upstream merge.
 
 ### 4.5 Identity, role bundles and app grants
 
@@ -614,22 +766,56 @@ token whose `sub`/`principalId` differ from the mapping.
 | create / suspend / resume / deprovision / fork-migrate / rotate | provisioner task | root key + master DB creds |
 | First provisioning of members, identity mapping, account pre-linking | provisioner `sync-members` | root key (scoped DB) |
 | Role / bundle / team-mapping changes, scheduled reconcile | provisioner `sync-members` | root key |
-| IdP-driven revocation (group removal, user disabled) — no human token exists | tower revocation job → provisioner `sync-members --user` for every app | root key |
+| Directory-driven changes (group removal → role-set resync; user disabled → deny) — no human token exists | tower `tower_revocation_jobs` → revocation worker (`fork-provision worker`) running `deny` / `sync-members --user` per app | root key |
 | Tower OAuth client registration, `skip_consent` | provisioner | root key |
 | Read and act surfaces, announcements, portfolio | tower via **human MCP** token (D-C2) | user's per-app OAuth grant |
 
 Human MCP tokens are never used to change roles or membership, and the provisioner never performs a surface
 action on a user's behalf.
 
-**Revocation bound (🟡, O-9):** claim refresh at tower login alone is not prompt revocation. Default: the
-tower exposes a **SCIM 2.0** endpoint (`/scim/v2/Users|Groups`, bearer secret in Secrets Manager) for the
-intranet IdP to push to; independently, a **reconcile job every 15 minutes** re-reads group membership (SCIM pull / IdP
-intranet directory API where available; otherwise forces a silent IdP re-authentication by capping tower sessions at
-15 min idle-refresh with `prompt=none`, which fails for removed users). Any change marks the user and triggers
-`sync-members --user` for all apps. **Target: ≤ 15 min** from IdP removal to loss of app access (app sessions
-deleted, tower-client OAuth tokens revoked, tower grants `revoked`); SCIM push typically ≤ 1 min. An IdP with
-neither SCIM nor a directory API meets the bound only through the session cap; `verify` reports which mode
-each deployment uses.
+**Directory sync and revocation (D-C16, R2-4; O-9).** Login-time claims are not revocation, and a tower session
+cap does not reach an existing app session or token, so revocation is driven by **directory sync** only and ends
+in a tenant-level deny, not a grant change.
+
+- **Sources.** (1) **SCIM 2.0 push** (preferred): the tower exposes `/scim/v2/Users|Groups` (bearer secret in
+  Secrets Manager) for the intranet IdP; `active=false`, user delete, or group membership change is applied to
+  `tower_users.status` / `source = 'claim'` memberships in the same request. (2) **Directory-API polling**
+  (fallback, and a safety net even when push is configured): every `TOWER_DIRECTORY_POLL_MS` (default 5 min) a
+  full or delta read of users and groups, same effect. `tower_directory_sync_state` records the last successful
+  push and poll.
+- **Queue.** Every change writes a durable `tower_revocation_jobs` row per (user, app) in the same control-DB
+  transaction: `kind` ∈ {`deny`, `resync`, `undeny`}. A long-running **revocation worker** (the provisioner image
+  run as an ECS service, `fork-provision worker`, same task role — no `RunTask` cold start) claims jobs
+  (`FOR UPDATE SKIP LOCKED`), runs `deny` / `sync-members --user` per app (§4.3.2), concurrency 5 apps.
+  The tower marks its own grants for the user `revoked` immediately, so tower surfaces stop at once.
+- **Retries.** Per job: exponential backoff 30 s, 1, 2, 4 min (≈ 8 min in-target budget), then every 5 min
+  indefinitely with `revocation_lag` alarming; an unreachable or suspended app keeps its job pending (a suspended
+  app runs it at `resume`, §4.4.4 step 4).
+
+**Budget — 15 minutes is a target (p99), not a hard maximum.**
+
+| Stage | Push path | Poll path |
+| --- | --- | --- |
+| IdP → tower learns of the change | ≤ 1 min (IdP-dependent) | ≤ 5 min (poll interval) + read time ≤ 1 min |
+| Job queued → claimed | ≤ 30 s | ≤ 30 s |
+| Deny applied in one app (one tenant transaction + cache bust) | ≤ 30 s | ≤ 30 s |
+| Retry allowance for transient app/DB failures | ≤ 8 min | ≤ 8 min |
+| **End-to-end target** | **≤ 10 min** | **≤ 15 min** |
+
+Effect once `denyPrincipal` Tx 1 commits (§4.3.2): next web request 401 (session rows gone), next MCP call 401
+(TW-1 even for a valid JWT), refresh refused, API keys refused (plan 10 R-1), new sign-in by any method refused
+(TW-2). Plan 10's F-8 sweep re-applies the denial every 5 min.
+
+**Failure behaviour.** Directory unavailable (push errors and no successful poll for 2× the poll interval) →
+`directory_sync_stale` alarm; deny jobs already queued keep running; no one is revoked who was not reported.
+Per-app deny failing past the budget → `revocation_lag` alarm naming the app and user. **Optional hard bound —
+entitlement lease** (off by default; plan 10 O-R8, `fork_settings['rbac.entitlement_lease']`):
+`fork_tower_principals.entitlement_expires_at` is extended to `now() + lease` (e.g. 60 min) by every successful
+`applyManagedRoleSet` from `sync-members`; plan 10's `isPrincipalDenied` (used by TW-1, TW-2 and R-1) treats an
+expired lease as a denial, and its F-8 sweep calls `denyPrincipal(p, 'lease_expired')`; the next successful sync
+lifts only `lease_expired`. With the lease on, the **hard maximum** is the lease length even if directory sync is down, at the
+cost that a directory or provisioner outage longer than the lease locks out every tower-managed person (break-glass
+admins are not tower-managed and are unaffected). `verify` reports push/poll health and lease mode per deployment.
 
 ### 4.6 MCP coverage for tower surfaces
 
@@ -740,9 +926,10 @@ provider webhook.
   `EMAIL_INBOUND_PROVIDER=imap` + `IMAP_HOST/PORT/USER/PASSWORD/TLS/MAILBOX` env (`conversation.email-imap.ts:53-70`);
   `isEmailImapPollable` returns false under `QUACKBACK_TENANCY=pooled` and logs why — every workspace loop would
   poll the same mailbox and ingest the same message into its own database (`conversation.email-imap-queue.ts:17-24,
-  47-60`). The pieces are reusable, though: `createImapClient` (`conversation.email-imap.ts:241`) and `pollOnce`
-  (`:78-96`, ingest callback; a throw leaves the message unseen for retry, a return marks it seen) are exported
-  and have no workspace dependency.
+  47-60`). The lower layer is reusable: `createImapClient(config)` (`conversation.email-imap.ts:241`) returns an
+  `ImapClient` with `fetchUnseen()` (raw RFC822 + UID), `markSeen(uid)` and `close()` (`:34-45`), all exported and
+  free of workspace dependencies. `pollOnce` (`:78-96`) is **not** reusable for routing: it hands its callback only
+  `parseRawEmail(raw)`, dropping the raw message and delivery headers (R2-7).
 - Two front doors on `POST /api/chat/email/inbound`: the Resend webhook (Svix-verified with the inbound secret,
   `email-webhook-handler.ts:37`) and the raw-MIME edge door (`email-cloudflare-handler.ts`), authenticated by a
   separate fleet key `INBOUND_HMAC_SECRET` (`:99`) over `timestamp.mailSlug.body`; it refuses mail whose signed
@@ -754,8 +941,8 @@ provider webhook.
 
 | Model | What it needs | Verdict |
 | --- | --- | --- |
-| **A. One fleet mailbox + per-app plus-addressing by `mail_slug`** (default) | Mail team, once: a dedicated inbound mail domain (e.g. `qb-mail.<company>`) whose every recipient is delivered into one mailbox, with the envelope recipient stamped in a header (V-9). Fork: the mail router below. | Zero seams, no per-app mail-server work, reuses the upstream address grammar and the upstream raw-MIME door with its slug binding. |
-| B. One mailbox per app | Mail team: a mailbox + credentials per app. Fork: a per-workspace poll job (shared seam F-8) reading sealed per-app IMAP credentials from `fork_settings`, reusing `createImapClient`/`pollOnce`/`ingestParsedEmail` in scope. | Fallback only if the mail team cannot provide a catch-all domain (O-11). |
+| **A. One fleet mailbox + per-app plus-addressing by `mail_slug`** (default) | Mail team, once: a dedicated inbound mail domain (e.g. `qb-mail.<company>`) whose every recipient is delivered into one mailbox, delivered one copy per envelope recipient, with any inbound copy of the routing header deleted and the envelope recipient stamped in it (V-9). Fork: the mail router below. | Zero seams, no per-app mail-server work, reuses the upstream address grammar and the upstream raw-MIME door with its slug binding. |
+| B. One mailbox per app | Mail team: a mailbox + credentials per app. Fork: a per-workspace poll job (shared seam F-8) reading sealed per-app IMAP credentials from `fork_settings`, reusing `createImapClient`/`pollOnce`/`ingestParsedEmail` in scope (here `pollOnce` fits: ingest is local, no forwarding). | Fallback only if the mail team cannot provide a catch-all domain (O-11). |
 
 **Fork change (model A):**
 
@@ -774,26 +961,56 @@ provider webhook.
    (`signInboundTag`) and verification (`claimVerifies`) go through `signingKey`, so both become per-app.
    Mint and verify run inside the app's scope (senders via `currentMailSlug()`; the inbound door is resolved by
    Host), so the same key is derived on both sides.
-3. **Mail router (replaces `apps/mail-edge`).** Logic `apps/web/src/lib/server/fork/mail-router/*`, entry
+3. **Mail router (replaces `apps/mail-edge`; R2-7).** Logic `apps/web/src/lib/server/fork/mail-router/*`, entry
    `apps/web/scripts/fork-mail-router.ts`, bundled as `/app/fork-mail-router.mjs` by `Dockerfile.fork` (§4.4.1).
    Runs as one ECS service (singleton by a Postgres advisory lock in the control DB; a second task idles).
-   Every `FORK_MAIL_ROUTER_POLL_MS` (default 15 s) it opens the fleet mailbox with `createImapClient` (TLS to
-   the internal mail server; credentials `FORK_MAIL_ROUTER_IMAP_*` from Secrets Manager) and runs `pollOnce`
-   with a routing callback instead of upstream ingest:
-   1. recipients = the envelope-recipient header(s) configured in `FORK_MAIL_ROUTER_RCPT_HEADERS` (default
-      `Delivered-To, X-Original-To`), else `To`/`Cc` addresses at the inbound domain (via `parseRawEmail`,
-      `conversation.email-inbound.ts:694`);
-   2. per distinct slug (`workspaceSlugFromInboundAddress`, `conversation.email-channel.ts:612-617`) resolve
-      `mail_slug → primary_hostname, state` through the column-limited control-DB role `cp_mail_router`;
-   3. POST the raw message to `https://<primary_hostname>/api/chat/email/inbound` (private DNS → internal ALB,
-      §4.1) with the upstream edge wire contract (`email-cloudflare-handler.ts:10-20`), `x-qb-envelope-to` = the
-      recipient that named the slug, signed with `INBOUND_HMAC_SECRET`;
-   4. every slug 2xx → return (message marked seen); unknown slug or non-active app → recorded `unroutable`
-      and returned (marked seen; alarm metric; no bounce is generated — the sender is an employee on the same
-      mail system and gets no reply, O-11); timeout/5xx → throw (left unseen, retried next poll). Per-slug
-      outcomes are kept in `cp_mail_deliveries(message_key, mail_slug, status, attempts, first_seen_at,
-      last_error)` (`message_key` = Message-ID, else a SHA-256 of the raw message) so a retry never re-posts to
-      a slug that already succeeded; after 24 h of failures the message is marked seen, status `dead`, alarm.
+   It does **not** use `pollOnce`: that function parses each message before its callback
+   (`ingest(parseRawEmail(message.raw))`, `conversation.email-imap.ts:78-96`), so the callback never sees the raw
+   MIME or the delivery headers. The router has its own loop over the lower layer: every
+   `FORK_MAIL_ROUTER_POLL_MS` (default 15 s) `createImapClient(config)` (`:241`; `config` built from
+   `FORK_MAIL_ROUTER_IMAP_*` in Secrets Manager, not from `readImapConfig`'s env) → `fetchUnseen()` (returns
+   `{ uid, raw }`, `:34-45`; at most 50 UIDs per poll, `MAX_UIDS_PER_POLL`) → per message: steps 1–2, then
+   **spool** — put the raw bytes to the fleet bucket at `mail-spool/<message_key>.eml` (idempotent) and insert one
+   `cp_mail_deliveries` row per slug (`pending`, `ON CONFLICT DO NOTHING`) — then `markSeen(uid)` → `close()`.
+   Delivery (steps 3–4) runs from the spool, not from IMAP, so messages waiting for a retry never occupy the
+   50-UID window and starve new mail. A crash between spool and `markSeen` re-fetches the same bytes → same
+   `message_key` → no new rows.
+   1. **Trusted recipient.** Exactly one routing header, `FORK_MAIL_ROUTER_RCPT_HEADER` (default
+      `X-Fleet-Envelope-To`), read from the raw header block. **Mail-server requirement (V-9):** on the inbound
+      domain's transport the server delivers **one copy per envelope recipient**, first **deletes every inbound
+      instance** of that header, then stamps its own with the SMTP `RCPT TO`. A copy with zero or several
+      instances is spooled and dead-lettered at once (`status = 'dead'`, `mail_slug = '*'`,
+      `last_error = 'bad_envelope'`) with an alarm. There is **no `To`/`Cc` fallback** — headers are
+      sender-controlled, and a BCC recipient never appears in them.
+   2. Slug via `workspaceSlugFromInboundAddress` (`conversation.email-channel.ts:612-617`); resolve
+      `mail_slug → primary_hostname, state` through the column-limited control-DB role `cp_mail_router`. Unknown
+      slug or non-active app → `unroutable` (terminal, recorded at spool time; alarm metric; no bounce — the sender is an employee on the
+      same mail system, O-11).
+   3. For each `pending`/`retrying` row whose `next_attempt_at` has passed: POST the spooled **raw bytes unchanged** to `https://<primary_hostname>/api/chat/email/inbound` (private DNS →
+      internal ALB, §4.1) with the upstream edge wire contract (`email-cloudflare-handler.ts:10-20`):
+      `x-qb-mail-slug`, `x-qb-envelope-to` = the trusted recipient, `x-qb-timestamp` = now (fresh on every
+      attempt, so a retry is never outside the door's replay window), `x-qb-signature` over
+      `timestamp.mailSlug.body` with `INBOUND_HMAC_SECRET`, and `x-qb-transport-message-id` = SHA-256 of the raw
+      message with the routing-header lines removed (identical on every copy and every retry;
+      `email-cloudflare-handler.ts:120-132,602-605`).
+   4. **Outcome per (copy, slug)**, recorded in `cp_mail_deliveries(message_key, mail_slug, …)`
+      (`message_key` = SHA-256 of that copy's raw bytes, stable across retries):
+
+      | Door response | Router action |
+      | --- | --- |
+      | 2xx (any JSON status, including `duplicate`) | `delivered` (terminal) |
+      | 400, 403, 405, 413, 415, 422 and any other 4xx not listed below | **permanent**: `dead` (terminal) — spooled copy kept (moved to `mail-dead-letter/<yyyy-mm-dd>/<message_key>.eml`), alarm, **no retry**; ops can replay with `fork-mail-router replay <message_key> <slug>` |
+      | 401 (door could not verify — our key management), 404 (host does not serve that slug yet — routing disagreement that resolves itself; the door deliberately does not mark it permanent, `email-cloudflare-handler.ts:403-416`), 408, 429, 5xx, timeout, connection error | `retrying`; `next_attempt_at = now() + min(30 s × 2^attempts, 15 min)`; after **24 h** from `first_seen_at` → `dead` as above |
+
+   **Deduplication across the crash window.** If the router dies after the tenant accepted a delivery but before
+   `cp_mail_deliveries` says `delivered`, the next poll re-POSTs. The tenant refuses the repeat itself: every
+   ingest path checks `inboundDedupeKey` — the `Message-ID`, else the transport id above
+   (`conversation.email-inbound.ts:167-175`) — before writing (reply `conversation.email-inbound.service.ts:501-508`,
+   cold `:645-652`, ticket reply `:825-832`), backed by the partial unique index
+   `conversation_messages_email_message_id_idx` (`packages/db/src/schema/conversation.ts:365-367`), and answers
+   2xx `duplicate`. No fork dedup table or seam is needed. Residual (upstream behaviour): a `Message-ID` longer than
+   `MAX_DEDUPE_KEY_CHARS` (255, `conversation.email-inbound.ts:137`) yields no key at all, so such a message can
+   duplicate on redelivery.
    The router inherits upstream IMAP's text decoding (`socket.setEncoding('utf8')`, `conversation.email-imap.ts:122`)
    and signs exactly the bytes it sends, so the door's byte signature verifies; fidelity for non-UTF-8 8-bit
    bodies is the same as single-tenant IMAP. Friendly per-app addresses (e.g. `payroll-help@<company>`) are
@@ -858,17 +1075,21 @@ the CP-0054 rename the upstream test reproduces (`schema-state.test.ts`): `cp_te
 `cp_workspace_schema_state`, `tenant_id` → `workspace_key`, FK retargeted. `status` stays `text + CHECK`.
 
 `0004_fork_state.sql` (fork-only, §4.4): `cp_fork_schema_state(workspace_key pk fk, fork_version int, fork_tag
-text, catalogue_version int, status text check in (ok,failed,upstream_pending,deferred_until_resume),
+text, catalogue_version int, status text check in (ok,fork_only,failed,upstream_pending,deferred_until_resume),
 last_error text, updated_at)`; `cp_parked_hostnames` (same columns as `cp_workspace_hostnames` + `parked_at`,
 `reason`) for publish-last on create/resume; `cp_mail_deliveries(message_key text, mail_slug text, status text
-check in (delivered,retrying,unroutable,dead), attempts int, first_seen_at, last_error text, updated_at; pk
-(message_key, mail_slug))` for the mail router (§4.11), pruned after 30 days.
+check in (pending,delivered,retrying,unroutable,dead), attempts int, http_status int, first_seen_at,
+next_attempt_at, spool_key text, last_error text, updated_at; pk (message_key, mail_slug))` for the mail router's
+spool (§4.11, R2-7), pruned (with `mail-spool/` objects) after 30 days; dead letters kept 90 days.
+`cp_fork_schema_state` also carries `resume_status text null check in (running, probing)` for the probing reaper
+(§4.4.4).
 
 Grants: `cp_reader` (web/worker): SELECT registry/hostnames, INSERT/UPDATE activity; `cp_migrator`: + RW
 schema_state; `cp_provisioner`: RW all `cp_*` + SELECT `tower_users`, `tower_roles`, `tower_role_members`,
 `tower_role_app_teams`, `tower_user_idp_links` + RW `tower_user_app_identities`;
 `cp_mail_router` (mail router): column SELECT `(mail_slug, primary_hostname, state)` on the registry + RW
-`cp_mail_deliveries`; `tower_app`: column SELECT
+`cp_mail_deliveries` (its task role also gets S3 put/get/delete on the fleet bucket's `mail-spool/` and
+`mail-dead-letter/` prefixes only); `tower_app`: column SELECT
 on registry (`workspace_key, state, state_reason, primary_hostname, base_url, revision`), SELECT
 hostnames/activity, RW `tower_*`.
 
@@ -887,6 +1108,8 @@ hostnames/activity, RW `tower_*`.
 | `tower_tenant_grants`       | `id uuid pk`, `user_id fk`, `workspace_key fk`, `tenant_principal_id text` (must equal `tower_user_app_identities`), `scopes text[]`, `refresh_token_ct bytea`, `access_token_ct bytea`, `access_expires_at`, `wrapped_dek bytea`, `kms_key_id`, `status text (active,needs_reconnect,revoked)`, `last_used_at`; unique (`user_id`,`workspace_key`) |
 | `tower_connect_runs`        | `id uuid pk`, `user_id fk`, `queue jsonb` (ordered `[{key, status: pending|connected|failed|skipped, reason}]`), `created_at`, `completed_at`                                     |
 | `tower_audit`               | `id uuid pk`, `user_id fk`, `user_email`, `workspace_key`, `tool text`, `args_digest`, `args_summary jsonb` (redacted), `target_ref`, `status (pending,ok,denied,error,uncertain)`, `tenant_result jsonb`, `request_id`, `created_at`; indexes (`workspace_key`,`created_at`), (`user_id`,`created_at`); append-only except status transition via function. Role/membership/mapping edits are audited here too (`tool = 'tower.roles.*'`). |
+| `tower_directory_sync_state` | `source text pk check in (scim_push,directory_poll)`, `last_success_at`, `last_error_at`, `last_error text`, `cursor text null` (delta token) — drives `directory_sync_stale` (§4.5.4) |
+| `tower_revocation_jobs` | `id uuid pk`, `user_id fk`, `workspace_key fk`, `kind text check in (deny,resync,undeny)`, `cause text` (e.g. `scim:active=false`), `status text check in (queued,running,done,retrying)`, `attempts int`, `next_attempt_at`, `enqueued_at`, `done_at`, `last_error`; index (`status`,`next_attempt_at`); claimed with `FOR UPDATE SKIP LOCKED` by the revocation worker |
 | `tower_auth_*`              | Better Auth user/session/account/verification/sso_provider (generated shape, own lineage)                                                                                       |
 
 PKCE verifiers for in-flight hops live in `tower_auth_verification` (Better Auth) or the tower session, keyed by
@@ -896,8 +1119,14 @@ PKCE verifiers for in-flight hops live in `tower_auth_verification` (Better Auth
 
 | Table | Columns |
 | ----- | ------- |
-| `fork_tower_principals` | `principal_id pk → principal.id ON DELETE CASCADE`, `tower_user_id uuid unique`, `app_idp_issuer`, `app_idp_subject`, `managed_since`, `last_sync_generation bigint`, `last_sync_status text` — marks a principal as tower-managed |
-| `fork_tower_assignments` | `id uuid pk`, `principal_id → principal.id ON DELETE CASCADE`, `role_id → roles.id ON DELETE CASCADE`, `team_id null → teams.id ON DELETE CASCADE`, `tower_role_keys text[]` (bundles that want it), `adopted_local bool default false`, `created_at`; unique (`principal_id`,`role_id`) WHERE `team_id IS NULL`, unique (`principal_id`,`role_id`,`team_id`) WHERE `team_id IS NOT NULL`. Keyed by (principal, role, team), **not** by assignment id, so an upstream reset that deletes the assignment leaves the provenance for drift repair. |
+| `fork_tower_principals` | Plan 10 §4.8's **managed-principal registry**: `principal_id pk → principal.id ON DELETE CASCADE`, `tower_user_id uuid unique`, `app_idp_issuer`, `app_idp_subject`, `managed_since`, `last_applied_legacy_role text`, `last_applied_at timestamptz`, `last_sync_run_id text` (written by `applyManagedRoleSet`), `last_sync_status text`, `entitlement_expires_at timestamptz null` (lease, plan 10 O-R8). Inserted in the same transaction as the first `applyManagedRoleSet`; deleted only after the final state or a denial is applied (D-C15). |
+
+`fork_principal_denials` and `fork_role_assignment_sources` are plan 10's tables (§5 there); this plan writes them
+only through `denyPrincipal` / `applyManagedRoleSet`.
+
+**Removed (R2-3):** `fork_tower_assignments` (and its `adopted_local` flag). Assignment provenance lives only in
+plan 10's `fork_role_assignment_sources` (`source = 'tower'`), written by `applyManagedRoleSet`; because the tower
+owns the whole role set, removal needs no provenance lookup (everything not desired goes).
 
 Plus `fork_settings` keys: `tower.oauth_client_id`, `tower.redirect_uri`, `tower.sso_provider_id`,
 `tower.sync_principal_id`, `fork.catalogue_version`. If a principal is deleted its rows cascade away and
@@ -974,13 +1203,22 @@ suggestion and widget tools, tier escalation and account actions.
 | IE-1 | `apps/web/src/lib/server/domains/conversation/conversation.email-channel.ts` (`signingKey`, `:243`) | `const forkKey = forkInboundAddressKey(); if (forkKey !== undefined) return forkKey` (`FORK-SEAM(inbound-email)`) + its import | The address key is read from process env in the one function both mint and verify use; no injection point exists. Permanently fork-only (D1). | Re-add as the first statement of whatever function returns the HMAC key for `signInboundTag`/`claimVerifies`. |
 | shared | `apps/web/src/lib/server/fleet/schema-floor.ts` (`assertSchemaFloor`, `:144`) | first statement `await forkAssertSchemaFloor(workspaceKey, sql)` (`FORK-SEAM(fork-floor)`) | **F-11** (shared, `SEAMS.md`; previously listed here as C-2). The fork function (`fork/fleet/fork-schema-floor.ts`) is owned by this plan; not counted here. | — |
 | shared (prerequisite) | `apps/web/src/lib/server/content/ssrf-guard.ts` (+ webhook write check) | env allow-list for intranet CIDRs/hosts | **F-12** (Foundations, E-1). Without it app SSO against the intranet IdP cannot be saved, tested, enforced or used (§4.5.1). Not counted here. | — |
+| TW-1 (R2-4) | `apps/web/src/lib/server/mcp/handler.ts` (`handleMcpRequest`, after `:244` `if (auth instanceof Response) return auth`, inside plan 10's R-4 fenced block — one edit site) | `if (auth.authMethod === 'oauth' && await isPrincipalDenied([auth.principalId])) return <upstream 401 + WWW-Authenticate>` (`FORK-SEAM(principal-deny)`), before scope step-up | `resolveOAuthContext` verifies the JWT statelessly and re-reads only `principal.role` (`:88-113`); it never consults `oauth_access_token.revoked`, so a revoked but unexpired JWT still authenticates. `isPrincipalDenied` is plan 10's (§4.9; also covers the lease). API-key MCP calls are covered by plan 10's R-1. | Re-add immediately after `resolveAuthContext` returns a context, before any scope/plan gate, in the same fenced block as R-4. |
+| TW-2 (R2-4) | `apps/web/src/lib/server/auth/index.ts` (`databaseHooks.session.create.before`, `:631-638`) | first statement: `if (await isUserDenied(sessionData.userId)) return false` (`FORK-SEAM(principal-deny)`) — refuses the session row before it exists | Every sign-in method (SSO, magic link, email OTP, password, recovery code) and the OAuth authorize flow create a session through this hook; the OIDC after-hook (`auth/hooks.ts`) runs only for OIDC and after the row exists. A directory-disabled person is normally refused by the IdP, but a stale IdP session, a re-enabled IdP account, or an expired lease must not mint a session. `isUserDenied` is plan 10's `isPrincipalDenied` resolved by user id. | Re-add as the first statement of whatever Better Auth hook runs before a session row is inserted. |
 | C-1 (conditional, V-1) | `apps/web/src/lib/server/workspaces/pool-cache.ts` | `prepare: config.workspacePoolPrepare` at `:179`/`:402` (env `WORKSPACE_POOL_PREPARE`, default true) | Only if RDS Proxy pins on prepared statements. | Replace the two literals again. |
 | shared | `mcp/tools/index.ts` | `registerForkTools` | **F-3**, not counted here. | — |
 | dep | `packages/db/src/migrate-runtime.ts`; MCP actor construction | fork lineage; custom-role enforcement | **F-1** (Foundations) and R-3…R-5 (10-rbac); not counted here. | — |
 
-**Count: 1 seam (IE-1) (+1 conditional, C-1).** Removed by the intranet revision: nothing that was a seam —
-the deleted `apps/mail-edge/**` (SES receipt + Lambda + SQS DLQ) was fork-owned; the mail router that replaces it
-is new files and needs no seam (it only imports upstream's exported IMAP client and address parser). Model B
+**Count: 3 seams (IE-1, TW-1, TW-2) (+1 conditional, C-1).** Second pass (R2-4) added TW-1 (same fenced block
+as plan 10's R-4) and TW-2. Added no seam: the maintenance scope (R2-2) composes exported upstream pieces
+(`SELECT_COLUMNS`, `interpretRow`, `resolveWorkspacePassword`, `resolveWorkspaceSecrets`, the fingerprint
+evaluators, `createWorkspaceScope`/`runWithWorkspaceScope`, `migrateDirect`, `assertSchemaFloor`) and is guarded by
+a parity contract test; the deny operation is plan 10's `denyPrincipal` (fork code; its sweep uses shared
+F-8). The tower role-set writer is plan 10's `applyManagedRoleSet` (its seams, incl. R-1, are plan 10's). Removed by the intranet revision: nothing
+that was a seam — the deleted `apps/mail-edge/**` (SES receipt + Lambda + SQS DLQ) was fork-owned; the mail router
+that replaces it is new files and needs no seam: it imports `createImapClient`/`ImapClient` (not `pollOnce`,
+R2-7), `workspaceSlugFromInboundAddress`, and speaks the existing raw-MIME door contract; tenant-side dedup is
+upstream's Message-ID / transport-id check. Model B
 (per-app mailboxes, O-11) would add a use of shared seam F-8. Everything else is new files: `apps/control-tower/**`,
 `apps/web/src/lib/server/fork/{provisioner,inbound-email,mail-router,fleet}/**`, `apps/web/src/routes/api/fork/tower-connect.ts`,
 `apps/web/scripts/fork-provision.ts`, `apps/web/scripts/fork-mail-router.ts`, `apps/web/Dockerfile.fork`, `apps/web/src/lib/server/mcp/tools/fork-fleet.ts`,
@@ -991,16 +1229,16 @@ fork migrations for §5.3. Generated: `MATRIX.md` (fork tools), `GRAPH.md`, `bun
 
 | Phase | Deliverable | Validation gate |
 | ----- | ----------- | --------------- |
-| **0. AWS spikes** (in the no-egress VPC) | Shared Aurora cluster + RDS Proxy + fleet S3 bucket + VPC endpoints (S3, Secrets Manager, KMS, ECS, RDS, Logs, SES SMTP) + internal ALB, internal DNS/private-CA certificate + 1 hand-made app | V-1 pinning measured (C-1 decision recorded); V-2 password auth; V-3 DSN/OID via proxy; V-7 S3 via `provider:'r2'` record through the VPC endpoint with static keys + `S3_PROXY=true`; V-4 token TTLs + `skip_consent` behaviour; V-9 envelope-recipient header from the internal mail server; V-10 private-DNS bypass of the edge proxy keeps Host/audience; no task has an internet route (egress test) |
+| **0. AWS spikes** (in the no-egress VPC) | Shared Aurora cluster + RDS Proxy + fleet S3 bucket + VPC endpoints (S3, Secrets Manager, KMS, ECS, RDS, Logs, SES SMTP) + internal ALB, internal DNS/private-CA certificate + 1 hand-made app | V-1 pinning measured (C-1 decision recorded); V-2 password auth; V-3 DSN/OID via proxy; V-7 S3 via `provider:'r2'` record through the VPC endpoint with static keys + `S3_PROXY=true`; V-4 token TTLs + `skip_consent` behaviour; V-9 internal mail server delivers one copy per envelope recipient, deletes inbound copies of the routing header and stamps its own (a forged header sent from outside is gone on arrival); V-10 private-DNS bypass of the edge proxy keeps Host/audience; no task has an internet route (egress test) |
 | **1. Control DB** | `apps/control-tower/migrations` 0001–0004 + migrate script + grants | Registry parity test green; `apps/web` boots pooled against a hand-seeded row; `fleet-migrator status/enrol` work |
-| **2. Provisioner** | `Dockerfile.fork` + image gate; `fork-provision create/verify/suspend/resume/deprovision/fork-migrate`; sign-in baseline (§4.3.1) + break-glass codes; F-11 fork floor; `cp_fork_schema_state` | Two apps provisioned; `verify` passes (secrets, storage prefix + `/api/storage` read-back, `skip_consent`, baseline fields); Quackback-level probes: writes refused without a session and with an anonymous session, every non-SSO sign-in/sign-up door refused; edge probe gets the SSO challenge; forced probe failure unpublishes + suspends; fingerprint refusals on a mis-wired row = 503 with the right code; `workspace-probe` isolation passes; mail slug > 13 chars refused; the four F1 rehearsals (§9) pass |
-| **3. App SSO + members** (after **F-12**) | IdP rows (OIDC direct or via intranet broker), verified domain, enforcement flip, `sync-members` with bundles + multi-role + adopt-by-subject, `tower-connect` route | SSO start reaches the intranet IdP (F-12 allow-list; fails without it); user signs into both apps via the IdP (direct OIDC and via broker) and lands on the mapped principal (no duplicate user, no email-linked extra account); a non-tower employee is JIT-created as portal `user`; a tower user who JIT-signed-in first is adopted by subject; `enforced` flips after the first real SSO sign-in; the C2 grant tests (§9) pass; disabled / IdP-removed user loses app access within the bound; `tower-connect` rejects a foreign `client_id`/`redirect_uri` |
+| **2. Provisioner** | `Dockerfile.fork` + image gate; `fork-provision create/verify/suspend/resume/deprovision/fork-migrate`; maintenance scope (§4.4.6) + parity contract test; full/fork-only `fork-migrate` paths; probing reaper; sign-in baseline (§4.3.1) + break-glass codes; F-11 fork floor; `cp_fork_schema_state` | Two apps provisioned; `verify` passes (secrets, storage prefix + `/api/storage` read-back, `skip_consent`, baseline fields); Quackback-level probes: writes refused without a session and with an anonymous session, every non-SSO sign-in/sign-up door refused; edge probe gets the SSO challenge; forced probe failure unpublishes + suspends; fingerprint refusals on a mis-wired row = 503 with the right code; `workspace-probe` isolation passes; mail slug > 13 chars refused; the F1 rehearsals and the R2-1/R2-2 tests (§9) pass |
+| **3. App SSO + members** (after **F-12** and plan 10 Phase 3 + §4.9) | IdP rows (OIDC direct or via intranet broker), verified domain, enforcement flip, `sync-members` over `applyManagedRoleSet` with bundles + multi-role + adopt-by-subject, deny via `denyPrincipal`, seams TW-1/TW-2, SCIM endpoint + directory poll + `tower_revocation_jobs` + revocation worker, `tower-connect` route | SSO start reaches the intranet IdP (F-12 allow-list; fails without it); user signs into both apps via the IdP (direct OIDC and via broker) and lands on the mapped principal (no duplicate user, no email-linked extra account); a non-tower employee is JIT-created as portal `user`; a tower user who JIT-signed-in first is adopted by subject; `enforced` flips after the first real SSO sign-in; the managed-role-set (R2-3) tests (§9) pass; the R2-4 disable test passes (session, MCP JWT, refresh, API key, new sign-in all refused within the target; `directory_sync_stale` fires with sync down); `tower-connect` rejects a foreign `client_id`/`redirect_uri` |
 | **4. Tower shell** | Better Auth + SSO plugin (OIDC and SAML), `tower_roles`/members/claim mappings + roles UI, silent "connect all", grants (KMS), `tower_audit` | Sign-in via an OIDC IdP and via a SAML IdP; claim-mapped roles applied, unknown subject refused; connect-all across 2 apps with **no consent screen and no click**; one app down → skipped, chain continues; identity mismatch → revoked; token refresh + `needs_reconnect`; tower task has no root-key/DSN access (IAM policy test) |
 | **5. Read + act** (after 10-rbac 1a) | `fork-fleet.ts` tools, unified inbox/tickets/feedback/roadmap/changelog/dashboard, actions | One app down → partial result; dormant app skipped; reply in A + status change in B from one screen; `tower_audit` + app activity both name the human; Fleet Observer write via MCP denied by the app; capability hidden in UI and refused server-side |
 | **6. Announcements** (after 60; later — R10 not delivered before it ships) | Tower announcements page over `fork-announcements.ts` | Fleet Owner **and** Fleet Agent publish to 2 apps; per-app `succeeded/failed/uncertain`; a timeout after tenant commit shows `uncertain` then reconciles to `succeeded` with no duplicate row; Fleet Observer lists but cannot publish (token has no write scope); bundle without `announcements.publish` cannot |
 | **7. Portfolio** (after 50; later — R11 not delivered before it ships) | Read-only cross-app views over `list_post_prioritization` | Scores match app UI; bundle template lacking `post.view_private` → app denies and `verify --contract` reports it; no write path |
-| **8. Per-app inbound email** (after Phase 2; parallel to 3–7) | `fork/inbound-email/address-key.ts`, seam IE-1, mail router (`fork/mail-router/`, `/app/fork-mail-router.mjs`, ECS service), `cp_mail_router` grant + `cp_mail_deliveries`, fleet mailbox + inbound domain on the internal mail server | Reply to app A's address lands in A; an address minted in A, re-slugged to B, fails verification in B; A's key ≠ B's key; single-tenant install unchanged (env key); unknown slug recorded `unroutable` + alarm; app 5xx → retried, no duplicate delivery to a slug that succeeded; mail to A and B in one message lands in both; router signature matches the upstream contract test vectors; web/worker have no `IMAP_*` |
-| **9. Ops hardening** | Deploy runbook (§4.4.5), cluster backup/PITR + restore drill (D-C8), rate limits, alarms (fork-migrate failures, `schema_below_floor`, sync drift, revocation lag > bound) | Upgrade rehearsal on a **populated** fleet (active + suspended apps): merge upstream, image gate, migrate fleet, fork-migrate, probe + tower e2e + inbound email e2e green |
+| **8. Per-app inbound email** (after Phase 2; parallel to 3–7) | `fork/inbound-email/address-key.ts`, seam IE-1, raw-message mail router over `createImapClient`/`fetchUnseen` with S3 spool (`fork/mail-router/`, `/app/fork-mail-router.mjs`, ECS service), `cp_mail_router` grant + `cp_mail_deliveries`, fleet mailbox + inbound domain on the internal mail server (V-9 header stripping) | Reply to app A's address lands in A; an address minted in A, re-slugged to B, fails verification in B; A's key ≠ B's key; single-tenant install unchanged (env key); unknown slug recorded `unroutable` + alarm; the R2-7 test (§9) passes (BCC, cross-tenant recipients, forged headers, crash after tenant accept → no duplicate, 413 dead-lettered, 5xx retried); mail to A and B in one message lands in both; router signature matches the upstream contract test vectors; web/worker have no `IMAP_*` |
+| **9. Ops hardening** | Deploy runbook (§4.4.5), cluster backup/PITR + restore drill (D-C8), rate limits, alarms (fork-migrate failures, `schema_below_floor`, `drift_reverted`, `revocation_lag`, `directory_sync_stale`, `resume_unverified`, mail `dead`) | Upgrade rehearsal on a **populated** fleet (active + suspended apps, local and tower-owned grants, denied principals): merge upstream, image gate, migrate fleet, fork-migrate, resume an old suspended app, probe + tower e2e + inbound email e2e green |
 
 ## 9. Testing
 
@@ -1008,20 +1246,36 @@ fork migrations for §5.3. Generated: `MATRIX.md` (fork tools), `GRAPH.md`, `bun
   from `apps/control-tower/migrations/*.sql`; run the real `listActiveWorkspaces`, `resolveWorkspaceByHostname`,
   `resolveWorkspaceById` against a provisioned-shape row (fleet-bucket storage, no `credentialRef`) → `kind: 'ok'`;
   assert every `SELECT_COLUMNS` identifier exists; revision bumps; `schema-state.ts` claim/complete.
-- **Provisioner integration:** scratch Postgres; `withWorkspaceScopeById` passes; negative cases (canary under
-  wrong key, stamp for another key); `sync-members` idempotence and multi-role add/remove.
+- **Provisioner integration:** scratch Postgres; maintenance scope and `withWorkspaceScopeById` pass for the
+  right database; negative cases (canary under wrong key, stamp for another key, cloned DB); `sync-members`
+  idempotence and multi-role add/remove.
+- **Maintenance-scope parity (R2-2, mandatory, every upstream merge):** `openWorkspaceDirectPool` and
+  `withForkMaintenanceScope` over the same fixtures (right DB; wrong DB; cloned DB with a different OID/cluster;
+  wrong key; missing stamp; missing canary) give identical accept/refuse verdicts and codes; the maintenance
+  scope never calls `ensureWorkspaceSchemaCurrent` (spy) and refuses `deleting`.
 - **Fork rollout rehearsals (F1, mandatory, scratch fleet of ≥ 3 workspaces, one suspended):**
   1. *Fork-only permission release:* image adds a fork permission key + a Manager exclusion, no upstream
      migration → `fleet-migrator run` claims nothing; `fork-migrate` lands the key, the Manager preset loses the
      excluded key, `catalogue_version` bumps; without `fork-migrate` the raised fork floor refuses with
      `schema_below_floor`.
-  2. *Suspended-then-resumed:* suspended app misses two releases; `resume` catches up upstream + fork +
-     catalogue before hostnames return; forced catch-up failure leaves it suspended with `resume_failed:*`.
+  2. *Suspended-then-resumed (R2-2):* suspended app misses two catalogue releases while both serving floors are
+     raised; `resume` with the newest image catches up upstream + fork + catalogue before hostnames return. Kill
+     the task after each of the ten §4.4.4 steps: before step 9 the tenant is still `suspended` and every route
+     answers "suspended"; after step 9 without probes the reaper re-suspends it (`resume_unverified`); the
+     catalogue marker is never newer than the committed reconcile; a re-run completes. Forced catch-up failure
+     leaves it suspended with `resume_failed:*`.
+  2a. *Image vs cohort target (R2-1):* a tenant whose upstream ledger is held at an older target; new-image
+     `fork-migrate` takes the fork-only path (or `upstream_pending` below `FORK_UPSTREAM_REQUIREMENT`) and the
+     withheld upstream migration is absent afterwards; the tenant is suspended for the roll, and a request to its
+     host and a worker sweep from the new image both leave the ledger unchanged; the deploy gate refuses to roll
+     while an **active** tenant is behind the image bundle; the CI check applies the fork lineage + catalogue +
+     template reconcile to a DB at exactly `FORK_UPSTREAM_REQUIREMENT`.
   3. *Partial failure:* one workspace's fork migration fails → others succeed, exit non-zero, deploy gate
      blocks web rollout, re-run completes idempotently.
   4. *Previous-code / new-schema:* old image serves every surface against the new upstream + fork schema
      (additive rule), then new image rolls.
-  Plus: image gate (files present, journal match, `self-check`); `fork-migrate` skips `upstream_pending`.
+  Plus: image gate (files present, journal match, `self-check`); `fork-migrate` path choice (full / fork-only /
+  `upstream_pending`); marker written only after reconcile commit (crash injection).
 - **Sign-in baseline (C1 fail-closed rules + D-E3, mandatory):** freshly provisioned app — every §4.3.1 field
   stored explicitly (no upstream default leaks through: `allowAnonymous`, both `openSignup`, every `oauth` key,
   `hmacRequired`); without a session and with an anonymous session, create post / vote / comment / support
@@ -1032,27 +1286,46 @@ fork migrations for §5.3. Generated: `MATRIX.md` (fork tools), `GRAPH.md`, `bun
   hard-blocked; no SSO-only state without active break-glass codes; partial config (write fails mid-way) → no
   hostname published; `resume` re-asserts. Edge probe (deployment test): unauthenticated request through the
   edge gets the SSO challenge.
-- **Tower-managed grants (C2, mandatory):** initial Fleet Observer provisioning (exactly the Observer row +
-  provenance, no Manager row, legacy `member`); last-role removal (all tower rows gone, legacy `user`, no
-  Manager fallback — `permissionsForPrincipal` returns ∅ teammate permissions); template replacement
-  (bundle retargeted → old row removed, new added, one transaction); manual grant of the same role (pre-existing
-  local grant is adopted and survives tower removal; later local re-grant of a tower-held role is a no-op and
-  is removed with it); upstream role change clearing extra hats (in-app role edit → preset inserted, tower rows
-  wiped → next sync restores desired set and removes the preset, `drift_repaired`); Tier bundle with/without a
-  team mapping; deleted tower role; concurrent sync runs on one principal serialise; seed heal (5a/5b) leaves
-  tower rows alone.
+- **Tower-managed role sets (R2-3/D-C15, mandatory):** initial Fleet Observer provisioning (registry row +
+  exactly the Observer row with `source = 'tower'` provenance in one transaction, no Manager row, legacy
+  `member`); the R2-3 sequence — local grant of role X → tower adds X (row re-attributed to `tower`) → tower
+  removes X (row gone, no local survivor; with no bundle left: legacy `user`, zero rows, no sentinel,
+  `permissionsForPrincipal` returns ∅ teammate permissions) → app admin changes the legacy role (preset inserted;
+  live until next sync) → `seedSystemData` / `fork-migrate` / sync (desired set restored, preset removed,
+  `drift_reverted`; seed heal 5a/5b adds nothing); template replacement (bundle retargeted → one transaction);
+  Tier bundle with/without a team mapping; team-roles-only `member` holds the `no_access` sentinel; deleted
+  tower role; concurrent sync runs and a concurrent upstream `setPrincipalRole` on one principal serialise (no
+  zero-row `member` observed); a sync racing a deny re-grants nothing; `assertTowerPrincipalsFailClosed` clean
+  after every step.
+- **Disable / revocation (R2-4/D-C16, mandatory):** a locally privileged managed user with a live web session,
+  an unexpired MCP JWT + refresh token and an API key they created, who never visits the tower, is disabled in
+  the directory. SCIM push path and poll path: within the §4.5.4 target, web request 401, MCP 401 despite a
+  valid JWT (TW-1), refresh refused, API key refused (plan 10 R-1), a new sign-in by SSO and by each other
+  method creates no session (TW-2), tower grants `revoked`; per-stage timings recorded against the budget
+  table. Directory/SCIM unavailable: `directory_sync_stale` at 2× poll interval, nothing revoked that was not
+  reported; after recovery the deny lands within the target; with the lease on, access ends at lease expiry
+  (plan 10 sweep). App unreachable → job retried, `revocation_lag` alarm, applied when it returns; suspended
+  app → applied at `resume`. Grep test on `FORK-SEAM(principal-deny)` (two sites).
 - **Identity (C3):** OIDC direct and SAML-via-broker users map to the recorded `tenant_user_id`/principal; an
   email change at the IdP does not relink; an email-auto-linked extra account is removed by sync; connect chain
-  rejects a token whose `sub`/`principalId` differ from the mapping; IdP group removal → app access lost
-  within 15 min (SCIM push and reconcile-job paths); contract test: every tool in §6.1 exists with the listed
+  rejects a token whose `sub`/`principalId` differ from the mapping; IdP group removal → role set replaced
+  in every app within the target (SCIM push and poll paths); contract test: every tool in §6.1 exists with the listed
   scope and permission (`scan.ts` output) and read capabilities never request a write scope.
 - **Inbound email (fork `__tests__`):** mint/verify round-trip under two scoped workspaces with distinct keys;
   cross-workspace forgery refused; `forkInboundAddressKey()` returns `undefined` when not pooled and `null`
-  unscoped; seam present (grep test on `FORK-SEAM(inbound-email)`). Mail router (fake `ImapClient`, as upstream
-  tests `pollOnce`): recipient extraction from `Delivered-To`/`X-Original-To` and the `To`/`Cc` fallback; slug
-  normalisation parity with `workspaceSlugFromInboundAddress`; unknown/suspended slug → `unroutable`, marked
-  seen; 5xx → left unseen, retried, no re-post to an already-delivered slug; 24 h → `dead`; request bytes and
-  headers match the upstream edge contract vectors; singleton lock.
+  unscoped; seam present (grep test on `FORK-SEAM(inbound-email)`). Mail router (fake `ImapClient` exposing
+  `fetchUnseen`/`markSeen`/`close`, as upstream's tests fake it): exactly one trusted routing header required,
+  zero or several → `bad_envelope` dead letter; `To`/`Cc` never used (BCC recipient routed only by its envelope
+  copy); slug normalisation parity with `workspaceSlugFromInboundAddress`; unknown/suspended slug →
+  `unroutable`; spool then `markSeen` (crash between → same `message_key`, no new rows); retrying messages do not
+  block new mail beyond the 50-UID window; status table (2xx incl. `duplicate` → delivered; 400/413/415/422 →
+  dead, no retry; 401/404/408/429/5xx/timeout → backoff, re-signed with a fresh timestamp; 24 h → dead); request
+  bytes and headers match the upstream edge contract vectors; singleton lock. **End-to-end (R2-7, mandatory):**
+  against two real tenants through the real door — cold mail, replies, BCC, one message to both tenants, forged
+  routing header injected by the sender (stripped by the mail server fixture), crash after tenant 2xx before
+  the delivery record → redelivery answered `duplicate`, one visible message; an id-less message retried → still
+  one message (transport id); raw MIME bytes byte-identical at the door; no delivery to a tenant the envelope
+  did not name.
 - **tower-connect route:** open-redirect cases (foreign host, foreign `client_id`, foreign `redirect_uri`),
   session-present shortcut, failure bounce to the tower.
 - **MCP fork tools:** per-tool scope, teamOnly, D3 permission denial; authz-matrix snapshot regenerated;
@@ -1076,16 +1349,19 @@ fork migrations for §5.3. Generated: `MATRIX.md` (fork tools), `GRAPH.md`, `bun
   fleet-wide (slug-bound, so not re-aimable). Making it per-app too would require the mail router to hold
   per-app keys. 🟡 default: one fleet-wide router-to-app HMAC secret. Question: is a shared router-to-app inbound
   HMAC secret acceptable (address keys stay per-app)?
-- **O-8 (🟡)** Default: the tower is authoritative for tower-managed users' tower-owned grants and legacy role
-  (local edits are reverted at next sync); local admins may add other roles, and a local grant that pre-dates
-  the tower's is kept. Question: should app admins instead be able to override tower-managed grants locally?
-- **O-9 (🟡)** Default: IdP group removal takes effect in every app within ≤ 15 min (SCIM push or a
-  15-minute reconcile). Question: is 15 minutes the required maximum revocation delay, or is a shorter bound needed?
+- **O-8 — closed by D-C15:** the tower owns the entire app role set of tower-managed people; local grants are
+  removed at the next sync (§4.3.2).
+- **O-9 (🟡, = O-C9)** Default: **15 minutes is a target** (p99; ≤ 10 min on SCIM push), budgeted in §4.5.4, with
+  alarms when it is missed; **no hard maximum** unless the tenant-side entitlement lease (plan 10 O-R8, default
+  off) is enabled, which caps access at the lease length even with sync down but locks out every managed person
+  during a sync outage longer than the lease. Question: is a target acceptable, or is a hard maximum (the lease)
+  required — and if so, what lease length?
 - **O-10 (🟡)** Default: Tier bundles need an explicit per-app team mapping (`tower_role_app_teams`) and
   grant nothing in apps without one. Question: is per-app team mapping for Tier bundles, maintained in the
   tower by `roles.manage`, acceptable?
 - **O-11 (🟡, new)** Default: inbound email uses **one fleet mailbox** on the internal mail server for a
-  dedicated inbound mail domain (every recipient delivered into it, envelope recipient stamped in a header),
+  dedicated inbound mail domain (one copy per envelope recipient delivered into it, routing header stripped then
+  stamped, O-16),
   routed per app by `mail_slug` by the fork mail router; unroutable mail is logged and alarmed, not bounced.
   Fallback: one mailbox per app (model B, §4.11; uses F-8). Question: can the mail team provide a catch-all
   inbound domain into one mailbox, or must each app have its own mailbox?
@@ -1101,6 +1377,16 @@ fork migrations for §5.3. Generated: `MATRIX.md` (fork tools), `GRAPH.md`, `bun
 - **O-14 (🟡, new)** Default: `<fleet-domain>` is an intranet-only DNS domain and the wildcard certificate comes
   from the company's private CA (imported into ACM, or ACM Private CA) on the internal ALB; per-app custom
   domains, when they come, are internal names too. Question: which internal domain and CA should the fleet use?
+- **O-15 (🟡, new, R2-1)** Default: **one serving image per fleet**; cohort targets only stage the pre-roll
+  migration pass, and a tenant that must stay on an older upstream version is suspended for the roll. Serving
+  several images pinned per cohort would need host routing per cohort **and** an upstream seam so workers skip
+  other cohorts before pool acquisition. Question: is suspending held-back tenants acceptable, or must some
+  tenants keep serving on an older release?
+- **O-16 (🟡, new, R2-7)** Default: the internal mail server can deliver one copy per envelope recipient into the
+  fleet mailbox and **delete any inbound copy** of a dedicated routing header (e.g. `X-Fleet-Envelope-To`)
+  before stamping its own (V-9). Without that, the router has no trusted recipient and falls back to model B
+  (one mailbox per app). Question: can the mail team configure header stripping + stamping on the inbound
+  domain?
 
 ## 11. Relationship to other v2 plans
 
@@ -1108,10 +1394,14 @@ Contracts this plan **consumes** (stated here, owned elsewhere):
 
 - **10-rbac:** Phase 1a (D3) makes app roles bind over MCP with an argument-aware permission map; tenant
   templates for every bundle (looked up by `template_key` in `fork_role_templates`), `ensurePersonaRoles` /
-  `fork_install_persona_roles`, and the grant/template reconcile primitives (plan 10 §reconcile) that
-  `sync-members` and `fork-migrate` call. The template permission sets must satisfy §6.1; `verify --contract`
-  reports any gap per app.
-- **30-tiered:** tier teams and the tier-membership service used for Tier bundle team grants. Tier escalation
+  `fork_install_persona_roles`, the template reconcile primitive (plan 10 §reconcile) that `fork-migrate`
+  calls, the managed writer `applyManagedRoleSet` + `fork_role_assignment_sources` + `assertTowerPrincipalsFailClosed`
+  (plan 10 §4.8, R2-3), and the denial primitive `denyPrincipal` / `liftPrincipalDenial` / `isPrincipalDenied` +
+  `fork_principal_denials` + the F-8 denial sweep + R-1 creator check + lease setting O-R8 (plan 10 §4.9, R2-4).
+  Plan 20 owns the registry table `fork_tower_principals` those read, and seams TW-1/TW-2 that call
+  `isPrincipalDenied`. The template permission sets must satisfy §6.1; `verify --contract` reports any gap per app.
+- **30-tiered:** tier teams and the tier-membership service used for Tier bundle team grants (called with
+  `applyManagedRoleSet`'s executor; its local writer refuses managed principals). Tier escalation
   and account actions are not exposed in the tower in v2.
 - **50-prioritization:** `list_post_prioritization` (§4.9.1 there) for Phase 7.
 - **60-announcements:** `list_announcements` (`announcement.view`), `upsert_announcement` /

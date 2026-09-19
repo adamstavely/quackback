@@ -1,6 +1,6 @@
 # Announcements Banner (Portal + Embeddable) — Design Plan v2
 
-> **Status:** v2 (round 2 + staff review + intranet revision 2026-09-19) — supersedes `plans/v1/announcements-banner-widget-plan.md`. Planning only; nothing implemented.
+> **Status:** v2 (round 2 + staff review + intranet revision + second-pass review 2026-09-19) — supersedes `plans/v1/announcements-banner-widget-plan.md`. Planning only; nothing implemented.
 > **Depends on:** Foundations (fork migration lineage, `fork_settings`, shared seams F-1..F-7, fork re-point
 > registry — `02-fork-conventions.md` §3, §8, §10); `10-rbac-persona-extensions.md` Phase 1a (custom roles +
 > permission keys enforced on MCP; "Fleet Agent" template holding `announcement.view` + `announcement.manage`, "Fleet
@@ -61,6 +61,15 @@ stream tokens are gone.
 | **Realtime stays on the intranet:** push is upstream `pg_notify` pub/sub + SSE from the Quackback instance to intranet browsers; no external push service, no internet egress from any component. | D-E2 | §4.6 |
 | New open item: the **edge SSO proxy** must let cross-origin, credential-less requests from other intranet apps reach the six embed paths (`banner.js`, `everyone.json`, `stream`, font, and the optional `embed/session` + `embed/feed`), or share its cookie domain with host apps. 🟡 NQ-15. | D-E1 | §4.7, §10 |
 | Seams: **none removed, none added** (N-1, N-3, N-5 all still needed). Fork-only removals: stream-token module usage, the `PortalAccessContext` replication in `embed-viewer.ts` and its contract-test coverage. | — | §7 |
+
+## Second-pass review changes
+
+Source: `REVIEW-2026-09-19-SECOND-PASS.md` R2-8. Body sections below are rewritten to match; superseded text removed.
+
+| Finding | Change | Where |
+| --- | --- | --- |
+| **R2-8** (P2): the SSE stream reads the revision before it subscribes | **Subscribe first, then read and send the current revision** (the reviewer's first option; "re-read after subscribing" is not needed as well). The stream `await`s `subscribe(['fork:announcements'], …)`, which resolves only after the listener's `LISTEN` is registered (`sql.listen`, `realtime/pg-listener.ts:94`, awaited through `acquireConnection`, `realtime/pubsub.ts:265`) and the handler is in the registry (`pubsub.ts:277`). Only **then** does it read the revision from the DB and send it. A write that commits before the read is covered by the read. A write that commits after it publishes after `LISTEN` is active, so it is delivered live. There is no gap. **Ordering / no regression:** the content hash is replaced by a **monotonically increasing revision number**, a per-workspace counter row bumped **inside each write transaction**. The row lock makes commit order equal revision order. Frames carry `{ epoch, rev }`. The server sends a frame only when `rev` > the last one it sent on that connection, and the client **ignores any frame with `rev` ≤ the last applied revision**. So an initial frame that loses a race with a live event cannot regress the view, and neither can an out-of-order notify or a slow feed response (feed responses older than the last applied revision are discarded). The feed reads the counter **before** its items, so a response is never labelled newer than its content. **Recovery kept, bound stated separately:** publish is still fire-and-forget (`pubsub.ts:306`), and a notify can be lost (publish failure, `LISTEN` reconnect). The visible-tab periodic refetch (every 5 min) is the recovery path: a committed change whose event is lost reaches an open, connected viewer within **5 min + ≤ 2 s jitter**, and immediately on focus or reconnect. Normal delivery stays **< 2 s**. **Acceptance:** with an injected stream hook, publish (commit + notify) (a) just before `subscribe` is called — the old read-then-subscribe gap, (b) after `subscribe` resolves but before the initial read, and (c) after the initial read but before the initial frame is sent. In each case the open **portal** tab and the **embed** show the new content with the `EventSource` opened once (no reconnect), the 5-minute refetch and the 60 s fallback poll not fired (fake timers), within 2 s. Plus: frames delivered out of order (7 then 6) → 6 ignored; a feed response with a lower revision than the last applied → discarded. | §3, §4.4, §4.6, §4.7, §4.9, §5, §8 Phase 2/3, §9 |
+| Seams | **None added or removed.** The counter is a fork table in the fork lineage; the stream hook is a dependency-injection parameter of the fork route's handler (no module state, no ledger entry). | §5, §7 |
 
 ## 1. Changes from v1
 
@@ -123,7 +132,8 @@ Everything runs inside the intranet (D-E1/D-E2): the browsers, the internal host
 No component calls the internet.
 
 One feed builder (`buildBannerFeed(actor, surface)`) serves both surfaces so they never diverge. The stream
-carries **no content** — only "revision changed" — so audience filtering stays in the feed read.
+carries **no content** — only a monotonically increasing revision number (`{ epoch, rev }`, §4.6) — so audience
+filtering stays in the feed read.
 
 ## 4. Design
 
@@ -260,7 +270,9 @@ isLive(a, now) = a.status === 'published' && a.publishAt <= now && (a.expiresAt 
 
 `BannerItem`: `{ id, source: 'announcement' | 'status', kind, title, body, link: {url,label} | null,
 priority, publishAt, expiresAt, updatedAt }`. Feed response:
-`{ enabled, revision, nextTransitionAt, items }`.
+`{ enabled, epoch, revision, nextTransitionAt, items }`. `revision` is the workspace's announcement revision
+number (§4.6), read **before** the items so a response is never labelled newer than its content (a label that is
+older than the content only costs one extra refetch).
 
 ### 4.5 Status fold-in (D-N3)
 
@@ -306,38 +318,72 @@ high-churn upstream file and would count banner viewers as chat presence. No oth
 stream exists (the only `subscribe` caller under `routes/` is `chat/stream.ts:300`). The fork route reuses
 upstream's primitives unchanged.
 
-- **Publish** (`revision.ts`): after every committed write (upsert, archive, draft delete, config or template
-  change) the service calls `publish(ANNOUNCEMENTS_CHANNEL, { rev })` (`realtime/pubsub.ts:306`,
-  fire-and-forget) with `ANNOUNCEMENTS_CHANNEL = 'fork:announcements'`. `rev` = sha256 over
-  `max(updated_at), count(*)` of `fork_announcements` + the `announcements` config's updated time, computed in
-  the same request (no stored counter, no module memo). The payload is tiny and content-free, well under the
-  7,800-byte inline limit (`pubsub.ts:62`). Called inside the request's workspace scope (admin server fn or MCP
-  request), which `publishAsync` requires (`currentWorkspaceNamespace()`, `pubsub.ts:312`).
+- **Revision number (R2-8).** `fork_announcement_revision` (§5) is a single row per workspace database holding
+  `revision bigint` and a random `epoch` (set when the row is created, so a restore or re-seed can be detected).
+  Every write transaction (upsert, archive, draft delete, config or template change) runs `UPDATE
+  fork_announcement_revision SET revision = revision + 1 WHERE singleton = 1 RETURNING epoch, revision`, in the same
+  transaction as the data change and its audit row (§4.9). Concurrent writers serialize on that row lock, so **commit
+  order equals revision order**. A sequence would not give this: it hands out numbers in call order, not commit order,
+  and a client would then skip a change that committed later with a lower number. No-op writes do not bump. There is no
+  module memo.
+- **Publish** (`revision.ts`): after the transaction commits, the service calls `publish(ANNOUNCEMENTS_CHANNEL,
+  { epoch, rev })` (`realtime/pubsub.ts:306`, fire-and-forget) with `ANNOUNCEMENTS_CHANNEL = 'fork:announcements'` and
+  the `revision` the transaction returned. The payload is tiny and content-free, well under the 7,800-byte inline
+  limit (`pubsub.ts:62`). It is called inside the request's workspace scope (admin server fn or MCP request), which
+  `publishAsync` requires (`currentWorkspaceNamespace()`, `pubsub.ts:312`). Publishes from different requests may
+  arrive out of order; the ordering rule below makes that harmless.
 - **Stream** `routes/api/fork-announcements/stream.ts` (GET, SSE), mirroring `chat/stream.ts`:
-  1. **No viewer authentication** (intranet revision): frames carry only a content hash, never announcement
+  1. **No viewer authentication** (intranet revision): frames carry only `{ epoch, rev }`, never announcement
      content, and identity-free embeds (§4.7) must be able to subscribe, so the stream token of the staff-review
      design is dropped. Reach is restricted by the network and edge SSO (D-E1); abuse is bounded by the
      dedicated limiter (step 2) and per-IP cap. Labs/`enabled` off → 404.
   2. Reserve a slot on the **dedicated** `announcementStreamLimiter` (`createStreamLimiter` from
      `realtime/stream-connection-limit.ts:77`; e.g. `maxGlobal 300, maxPerWorkspace 200, maxPerIp 20`). Refused →
      503; the client falls back to a 60 s poll of the feed.
-  3. `createSseStream` (`lib/server/utils/sse.ts:35`), `retry: 5000`, then an **initial `revision` frame**
-     computed from the DB so a reconnecting client catches any event missed while disconnected (pub/sub is
-     fire-and-forget).
-  4. `subscribe(['fork:announcements'], …)` (`pubsub.ts:256`) forwards each payload as `event: revision`.
-  5. `startStreamHeartbeat` (`realtime/stream-heartbeat.ts:40`) reaps abandoned tabs; teardown releases the
-     slot and unsubscribes, re-entering the captured workspace scope exactly as `chat/stream.ts:252-281`.
-  6. Headers: `SSE_RESPONSE_HEADERS` + `Access-Control-Allow-Origin: *` (no credentials, so a plain
+  3. `createSseStream` (`lib/server/utils/sse.ts:35`), `retry: 5000`.
+  4. **Subscribe first (R2-8).** `await subscribe(['fork:announcements'], handler)` (`pubsub.ts:256`). It resolves only
+     after the workspace's listener has executed `LISTEN` (`await sql.listen`, `realtime/pg-listener.ts:94`, reached
+     through `acquireConnection`, `pubsub.ts:265`) and the handler is in the registry (`pubsub.ts:277`). The handler
+     forwards a payload as `event: revision` only if its `rev` is greater than `lastSent`, a local variable of this
+     connection (not module state), or if its `epoch` differs.
+  5. **Then read and send the current revision.** Read `{ epoch, revision }` from `fork_announcement_revision` and send it
+     as the initial `revision` frame under the same `lastSent` rule. A write that committed before this read is covered
+     by it. A write that commits after it publishes after `LISTEN` is active, so it is delivered live. A live frame
+     that arrives before the initial one simply raises `lastSent`, and the older initial frame is then not sent.
+     Reconnecting clients catch any event they missed while disconnected through this frame.
+  6. `startStreamHeartbeat` (`realtime/stream-heartbeat.ts:40`) reaps abandoned tabs; teardown releases the
+     slot and unsubscribes, re-entering the captured workspace scope exactly as `chat/stream.ts:252-281`. If the
+     client aborted while `subscribe` was in flight, cleanup unsubscribes as `chat/stream.ts:316` does.
+  7. Headers: `SSE_RESPONSE_HEADERS` + `Access-Control-Allow-Origin: *` (no credentials, so a plain
      cross-origin `EventSource` from an internal app works without preflight; the portal's same-origin
      `EventSource` is unaffected).
+  8. **Test hooks.** The route handler is a thin wrapper over `openAnnouncementStream(request, deps)`. Tests pass
+     `deps.hooks.{beforeSubscribe, afterSubscribe, afterInitialRead}` (async callbacks) to inject a publish at each gap.
+     Production passes none. This is parameter injection, with no module-level state.
 - **Intranet only (D-E2):** push is upstream `pg_notify` pub/sub inside the deployment plus SSE from the
   Quackback instance to intranet browsers. No external push/WebSocket service, no internet egress.
 - **Client** (`use-banner-stream.ts` for the portal; `packages/widget/src/fork/banner/stream.ts` for the
   embed): opens the stream only while `document.visibilityState === 'visible'`, closes it when hidden and
-  refetches on return; on a `revision` different from the last feed's, refetches after 0–2 s random jitter
-  (broadcast fan-out would otherwise stampede the tenant DB). The embed refetches `everyone.json?rev=<rev>` and,
-  when identified, the identified feed (which re-validates the viewer, §4.7). Identity changes never touch the
-  stream: it is shared by the identified and identity-free paths.
+  refetches on return. **Ordering rule (no regression):** the client keeps `lastApplied = { epoch, revision }` of the
+  feed it last rendered.
+  - A frame with the same `epoch` and `rev ≤ lastApplied.revision` is **ignored**.
+  - Otherwise (a newer `rev`, or a different `epoch`) it refetches after 0–2 s random jitter, because broadcast fan-out
+    would otherwise stampede the tenant DB.
+  - A feed response is applied only if its `revision ≥ lastApplied.revision` (or its `epoch` differs). An equal revision
+    is applied, so status and timer refetches still refresh. A slower, older response that arrives later is discarded.
+  - Because the feed reads the counter before its items (§4.4), the applied revision never overstates the content.
+
+  The embed refetches `everyone.json?rev=<rev>` and, when identified, the identified feed (which re-validates the viewer,
+  §4.7). Identity changes never touch the stream: it is shared by the identified and identity-free paths.
+- **Recovery and freshness bounds (stated separately, R2-8).**
+  - **Normal path:** a committed announcement change reaches every open, connected portal tab and embed in **< 2 s**
+    (notify + ≤ 2 s jitter + feed read), with no gap at stream start.
+  - **Recovery path:** publish is fire-and-forget, and a notify can also be lost while the listener reconnects. The
+    periodic refetch that runs every **5 minutes** while the tab is visible (the same timer as the status fold-in, §4.5)
+    is the recovery path. A change whose event was lost reaches an open viewer within **5 min + ≤ 2 s**, and at once on
+    window focus, tab show or stream reconnect (the initial frame).
+  - **Limiter refusal:** the 60 s feed poll gives a 60 s + jitter bound.
+  - Status incidents keep their own 5-minute bound (NQ-10).
 - **Pooled tenancy:**
   - Isolation is upstream's: the logical channel rides inside the per-workspace envelope; the registry is keyed
     by `(namespace, channel)` and `dispatch` refuses envelopes naming another workspace (`pubsub.ts:121-150`).
@@ -488,12 +534,12 @@ never blanks the banner.
   `requireAuth({ permission: PERMISSIONS.ANNOUNCEMENT_MANAGE })`: `upsertAnnouncementFn`, `archiveAnnouncementFn`,
   `deleteDraftAnnouncementFn`, `updateAnnouncementsConfigFn`, `saveAnnouncementTemplatesFn`. Service functions
   take the acting principal so admin and MCP share them.
-- **Atomic audit (N3).** Every write runs as `db.transaction(async (tx) => { write; await
+- **Atomic audit (N3).** Every write runs as `db.transaction(async (tx) => { write; bump revision (§4.6); await
   recordAuditEventInTransaction(tx, …) })` (`audit/log.ts:260`) — the `fork_announcements` row or the
   `fork_settings` upsert **and** its `fork_announcement.*` audit row commit or roll back together; the
   best-effort `recordAuditEvent` (`:223`, logs and swallows insert errors) is not used. Only after commit does
-  the service `publish()` the revision (fire-and-forget; a lost event is healed by the stream's initial frame and
-  the next refetch). No-op writes (idempotent replay, unchanged content) write no audit row and publish nothing.
+  the service `publish()` the revision the transaction returned (fire-and-forget; a lost event is healed within the
+  §4.6 recovery bound: the 5-minute visible-tab refetch, or at once on focus or reconnect). No-op writes (idempotent replay, unchanged content) write no audit row and publish nothing.
   Events: `fork_announcement.created|updated|archived|config_updated|templates_updated` (draft delete records
   `archived` with `metadata.deletedDraft`), actor = the human principal, `metadata.origin` incl. `broadcastId`.
 
@@ -548,11 +594,17 @@ never blanks the banner.
 | `audience` | `jsonb not null default '{"tier":"authenticated","segmentIds":[]}'` | `tier` ∈ authenticated/segments |
 | `origin` | `jsonb not null default '{"source":"local"}'` | `{source:'local'\|'tower', broadcastId?, towerActor?}` |
 | `created_by_principal_id`, `updated_by_principal_id` | `typeIdColumnNullable('principal')` FK `on delete set null` | staff-only → **exemption** in `fork/principals/fork-repoint.ts` (F-5) |
-| `created_at`, `updated_at` | `timestamptz not null default now()` | `updated_at` feeds the revision |
+| `created_at`, `updated_at` | `timestamptz not null default now()` | informational (the revision is the counter below) |
 
 Indexes: `fork_announcements_live_idx (status, publish_at, expires_at)`; `fork_announcements_broadcast_uq`
 unique on `((origin->>'broadcastId'))` where `origin ? 'broadcastId'`. No `notified_at`, no dismissals table,
 no templates table.
+
+`fork_announcement_revision` (same schema file and migration; R2-8): `singleton smallint PK CHECK (singleton = 1)`,
+`epoch uuid not null default gen_random_uuid()`, `revision bigint not null default 0`, `updated_at timestamptz not null
+default now()`. The migration inserts the one row. It is bumped only inside announcement write transactions (§4.6,
+§4.9) and never decreases. A restored or re-created row gets a new `epoch`, which clients treat as newer. It holds no
+principal references.
 
 `fork_settings` keys (zod, defaults on read):
 - `announcements`: `{ enabled: false, embedEnabled: false, foldInStatus: true, statusLeadHours: 24, placement: 'top' }`.
@@ -598,7 +650,9 @@ entry) and N-5 (dedicated limiter; still needed because identity-free embed stre
 exhaust chat's budget) all remain. The removals are fork-only: stream-token minting/verification, the
 `PortalAccessContext` replication in `embed-viewer.ts` (and its contract-test coverage). The new
 `everyone[.]json.ts` route uses the existing `publicWorkspaceCacheHeaders` helper, so the host-vary guard covers
-it without an edit. Generated (regenerate): `lib/shared/permissions.ts`, `MATRIX.md`, `MODULE-STATE.md`,
+it without an edit. **Second-pass (R2-8): no seams added or removed.** The subscribe-then-read order, the revision
+counter table (fork lineage) and the injected stream test hooks are all fork code; `realtime/*` is used unchanged.
+Generated (regenerate): `lib/shared/permissions.ts`, `MATRIX.md`, `MODULE-STATE.md`,
 `GRAPH.md`. Not touched: `settings` schema, `classifications.ts`, `hook-job.ts`, `startup.ts`,
 `jobs/deadlines.ts`, `routes/api/chat/stream.ts`, `realtime/*`, `events/targets.ts`, `domains/status/*`,
 `packages/widget/src/core/*`, `packages/widget/package.json`, locale files.
@@ -607,9 +661,9 @@ it without an edit. Generated (regenerate): `lib/shared/permissions.ts`, `MATRIX
 
 | Phase | Deliverable | Gate |
 | --- | --- | --- |
-| **1. Data + authoring** | Table + migration, service, `visibility.ts`, `presets.ts`, `placeholders.ts`, templates key + page, config, key via F-7, Labs via F-6, page via F-4, re-point exemption via F-5, audit members (F-9), transactional audit, both keys, revision publish | Fork drift clean; `isLive` + placeholder unit tests; Manager and a Fleet-Agent-template role can author; Contributor reads the list but write fns 403; audit rows name the author; injected audit-insert failure rolls back the write and publishes nothing; `MATRIX.md` regenerated; module-state green |
-| **2. Portal banner + push + status** | `feed.ts`, `status-feed.ts`, `getPortalBannerFn`, `portal-banner.tsx`, `_portal.tsx` mount, `stream.ts` route, dedicated limiter (N-5), resolved-at status read | `check:widget-bundle` passes; non-user actor → nothing; segment row only to members; publish in admin appears in an open portal tab < 2 s without reload; archive disappears likewise; scheduled item appears at `publish_at` via timer; hidden tab closes the stream; limiter refusal falls back to polling; open incident appears / resolves; a >14-day-old incident resolved now shows `success` for 1 h then disappears on the `nextTransitionAt` timer; maintenance appears on lead-window entry |
-| **3. Embed** | tsup entry (N-3), `banner[.]js.ts`, `embed/everyone[.]json.ts`, `embed/session.ts`, `embed/feed.ts`, font route (bundled `@fontsource` files), viewer token, optional identity lifecycle + `getIdentityToken`, shadow-DOM renderer + SSE client, install page | host-vary green (incl. `everyone.json`); script-tag-only install shows audience-all embed items and never segment items; `everyone.json` needs no preflight and a new `rev` bypasses the cached body; portal not `public` or embed off → nothing; bad/expired `ssoToken` → 403 and everyone feed stays; unknown identity → everyone feed, no user created; identified user sees the same items as in the portal incl. segments (D-N7); banner initialised before widget identify gains segment items after it; account switch never shows the previous user's segment items; viewer-token expiry recovers via `getIdentityToken`, or falls back to everyone without it; deleted/recreated principal → `reidentify`; viewer token from workspace A rejected on B; strict-CSP page (incl. `font-src <instance>`) renders with the branding font and makes no request to any other origin; widget + banner coexist; publish reaches the embed instantly |
+| **1. Data + authoring** | Table + migration, service, `visibility.ts`, `presets.ts`, `placeholders.ts`, templates key + page, config, key via F-7, Labs via F-6, page via F-4, re-point exemption via F-5, audit members (F-9), transactional audit, both keys, revision counter (`fork_announcement_revision`, bumped in each write tx) + publish | Fork drift clean; `isLive` + placeholder unit tests; Manager and a Fleet-Agent-template role can author; Contributor reads the list but write fns 403; audit rows name the author; injected audit-insert failure rolls back the write and publishes nothing; `MATRIX.md` regenerated; module-state green |
+| **2. Portal banner + push + status** | `feed.ts`, `status-feed.ts`, `getPortalBannerFn`, `portal-banner.tsx`, `_portal.tsx` mount, `stream.ts` route, dedicated limiter (N-5), resolved-at status read | `check:widget-bundle` passes; non-user actor → nothing; segment row only to members; publish in admin appears in an open portal tab < 2 s without reload; **R2-8 gap test green** (publish injected before `subscribe`, between `subscribe` and the initial read, and between the read and the initial frame → the open portal tab shows the new content without reconnect or poll); out-of-order frames and older feed responses never regress the banner; archive disappears likewise; scheduled item appears at `publish_at` via timer; hidden tab closes the stream; limiter refusal falls back to polling; open incident appears / resolves; a >14-day-old incident resolved now shows `success` for 1 h then disappears on the `nextTransitionAt` timer; maintenance appears on lead-window entry |
+| **3. Embed** | tsup entry (N-3), `banner[.]js.ts`, `embed/everyone[.]json.ts`, `embed/session.ts`, `embed/feed.ts`, font route (bundled `@fontsource` files), viewer token, optional identity lifecycle + `getIdentityToken`, shadow-DOM renderer + SSE client, install page | host-vary green (incl. `everyone.json`); script-tag-only install shows audience-all embed items and never segment items; `everyone.json` needs no preflight and a new `rev` bypasses the cached body; portal not `public` or embed off → nothing; bad/expired `ssoToken` → 403 and everyone feed stays; unknown identity → everyone feed, no user created; identified user sees the same items as in the portal incl. segments (D-N7); banner initialised before widget identify gains segment items after it; account switch never shows the previous user's segment items; viewer-token expiry recovers via `getIdentityToken`, or falls back to everyone without it; deleted/recreated principal → `reidentify`; viewer token from workspace A rejected on B; strict-CSP page (incl. `font-src <instance>`) renders with the branding font and makes no request to any other origin; widget + banner coexist; publish reaches the embed instantly, including the R2-8 gap test (publish at each injected stream hook → embed updates without reconnect or poll) |
 | **4. Tower** | MCP tools (F-3), tower UI (`20-…`) | Needs `10-…` Phase 1a + `20-…` OAuth. Publish to A only; broadcast A+B arrives instantly on both; retry idempotent (no second row/audit); timeout after tenant commit reported `uncertain` then reconciled `succeeded`; fleet owner and Fleet Agent publish; Fleet Observer lists announcements/templates but upsert/archive denied; tenant audit names the human |
 | **5. Notifications — deferred, not planned in detail** | `announcement.published` event → in-app/email for `critical` | **Not delivered by Phases 1–4**: nothing notifies users outside an open portal/embed. Would need a `notified_at` claim in `side-effect-ledger.ts` plus events-catalogue + template seams, none counted in §7. |
 
@@ -639,8 +693,10 @@ it without an edit. Generated (regenerate): `lib/shared/permissions.ts`, `MATRIX
   `evaluatePortalAccess` pins are removed with the replication;
   realtime primitives (`subscribe`, `publish`, `createStreamLimiter`, `startStreamHeartbeat`, `createSseStream`).
 - **Route:** stream — no auth required, `Access-Control-Allow-Origin: *`, 404 when Labs/`enabled` off,
-  initial `revision` frame, forwards a published revision, frames contain no announcement content, releases slot
-  on abort, 503 at limiter cap; `everyone.json` — `Vary: Host` + `public, max-age=30`, ACAO `*`, rate limit,
+  `subscribe` resolves **before** the initial read (call order asserted through the hooks), initial `revision` frame,
+  forwards a published revision, frames contain only `{ epoch, rev }` and no announcement content, never sends a `rev`
+  ≤ the last one sent on that connection, releases slot on abort (including abort during `subscribe`), 503 at
+  limiter cap; `everyone.json` — `Vary: Host` + `public, max-age=30`, ACAO `*`, rate limit,
   `{ enabled:false }` when embed off or portal visibility `private`, no segment rows; embed session/feed — preflight headers,
   `no-store`, rate limit, blocked principal → `unknown`, unknown principal → `{ status: 'unknown' }` with no
   token and no user row created; feed `401 reidentify` for a deleted principal and for an email that now
@@ -655,6 +711,21 @@ it without an edit. Generated (regenerate): `lib/shared/permissions.ts`, `MATRIX
   deleted then recreated principal (same email/externalId) → reidentify → new principal's segments.
 - **Realtime DB test (pooled):** two workspaces on the fleet harness; a revision published in A is never
   delivered to B's stream (extends the `pubsub.db.test.ts` pattern).
+- **Subscription gap (mandatory, R2-8; DB + Playwright, `single` and `pooled`).** Using the injected stream hooks
+  (`beforeSubscribe`, `afterSubscribe`, `afterInitialRead`), commit an announcement write and its publish (a) before
+  `subscribe` is called (the old read-then-subscribe window), (b) after `subscribe` resolves and before the initial read,
+  (c) after the initial read and before the initial frame is sent. Also run each case on a replica whose workspace
+  `LISTEN` connection is already open (shared) and on one where this stream opens it. For each: the open **portal** tab
+  and the **embed** render the new content within 2 s; the `EventSource` was opened exactly once (no reconnect); the
+  5-minute refetch and the 60 s fallback poll never fired (fake timers).
+- **Revision ordering (mandatory, R2-8).** Two concurrent write transactions commit in the order B, A. Their revisions
+  follow commit order (B < A), which a sequence would not guarantee. Frames delivered out of order (7 then 6) → 6
+  ignored, no refetch. An initial frame older than an already-forwarded live frame is not sent. A slow feed response with
+  `revision` < last applied is discarded, and an equal one is applied. An `epoch` change (row re-created) → the client
+  refetches even though `rev` is lower. A no-op write does not bump. A rolled-back write (injected audit failure)
+  neither bumps nor publishes.
+- **Recovery bound (R2-8).** Drop the publish of a committed write (stub `publish` to no-op): an open viewer shows it at
+  the next 5-minute visible refetch (fake timers), at once on focus, and at once on stream reconnect.
 - **Guardrails in CI:** host-vary, module-state (with the new ledger entry), authz-matrix, `check:widget-bundle`.
 - **Embed (Playwright):** script-tag-only host page (everyone items, no identity requests); host page with
   widget + banner sharing one `ssoToken`; network log shows requests only to the instance origin (D-E2); strict CSP incl. `font-src`;
@@ -677,6 +748,7 @@ it without an edit. Generated (regenerate): `lib/shared/permissions.ts`, `MATRIX
 | NQ-7 | Do you want a banner strip inside the support widget panel too (in addition to the portal and the on-site banner)? | 🟡 no — `widget` surface value reserved, not built; **deferred, not delivered** by any phase |
 | NQ-10 | Is it acceptable that a new, changed or resolved status incident can take up to 5 minutes to appear in an already-open banner (instant on page load or tab focus)? | 🟡 yes; faster needs an upstream `events/targets.ts` hook seam |
 | NQ-11 | Dedicated banner stream limiter sizes (300 global / 200 per workspace / 20 per IP) and FD headroom next to chat's 500; and acceptance that an embed on a busy internal app keeps the tenant's compute warm via the LISTEN connection. | 🟡 adopt; confirm in pooled load test |
+| NQ-16 | Is it acceptable that, if a live-update message is lost (rare: a notify failure or listener reconnect), an already-open banner picks up the change within 5 minutes (at once on tab focus or reconnect), while normal updates stay under 2 seconds? | 🟡 yes — the 5-minute visible-tab refetch is the recovery path (§4.6); faster recovery would need a durable outbox |
 | NQ-13 | On other internal apps, should the banner use only the app's theme colours and font — not its custom CSS (which then styles the portal only, incl. any custom kind colours)? | 🟡 yes — custom CSS is portal/hub only |
 
 Open-item IDs use `NQ-` so they don't collide with seam IDs N-1/N-3/N-5; the `N-x` references in the Round-2

@@ -1,12 +1,12 @@
 # RBAC Persona Extensions — v2 Plan
 
-> **Status:** v2 (round-2 revision + staff-review revision, 2026-09-19) — supersedes
+> **Status:** v2 (round-2 revision + staff-review revision + second-pass revision, 2026-09-19) — supersedes
 > `plans/v1/rbac-persona-extensions-plan.md`. Nothing here is implemented.
 > **Depends on:** Foundations (fork migration lineage `packages/db/drizzle-fork` + `drizzle.__fork_migrations`,
 > `fork_settings`, shared seams F-1…F-11, `plans/v2/SEAMS.md`) — see `02-fork-conventions.md`, in particular
 > §3.3a (fork-only releases run `seedSystemData`).
 > **Decisions applied:** D1, D3, D4, D-R1…D-R9, D-T4, D-T7, D-A3, D-A4, D-A6, D-A8, D-P6, D-N8, D-C5 (🟡),
-> D-C9.
+> D-C9, D-C15, D-C16.
 > **Baseline:** upstream `780a7b577` (fork `main` has no `apps/`/`packages/` diff against it); staff-review
 > additions re-verified against `eb79147`. Every `file:line` below was verified against that tree.
 
@@ -38,13 +38,62 @@
 | R1 (service row scope) | Default adopted: **API-key/service principals stay workspace-wide** (upstream `ticketFilter`/`conversationFilter` bypass, `policy/tickets.ts:48`, `policy/conversations.ts:38`, untouched) **but** a service principal's resolved set is narrowed: without `ticket.view_all` it loses every `ticket.*` key; without `conversation.view_all` every `conversation.*` key; team-scopable keys are always dropped. So copying a team-restricted creator's roles cannot widen their row scope. 🟡 O-R6. | §4.3 (3), §10 |
 | R1 (tests) | Mandatory tests added: direct IDs outside the caller's team (MCP + REST + dashboard), mixed allowed/forbidden mutation fields, resources, service-principal narrowing, REST actor guard. | §8, §9 |
 | C2 (`canInTeam`) | System-role branch reads **real system-role assignment rows** (`roles.is_system` + `roles.key`, `schema/rbac.ts:30-34`), never legacy `member` and never the zero-row fallback. Service principals never pass `canInTeam`. | §4.4 |
-| C2 (zero-role fallback) | `permissionsForPrincipal` falls back to the Manager preset when a `member` has **no** workspace rows (`policy/permissions.ts:74`), and `seedSystemData` backfills such members to Manager on every migrate (`seed-system.ts:136-175`). Fail-closed for tower-managed principals: an empty-bundle sentinel template **`no_access`** keeps them at ≥1 workspace row (a row with no keys resolves to the empty set, `permissions.ts:75`); fork writers never delete the last row; invariant check `assertTowerPrincipalsFailClosed`. | §4.8 |
+| C2 (zero-role fallback) | `permissionsForPrincipal` falls back to the Manager preset when a `member` has **no** workspace rows (`policy/permissions.ts:74`), and `seedSystemData` backfills such members to Manager on every migrate (`seed-system.ts:136-175`). Fail-closed for tower-managed principals: an empty-bundle sentinel template **`no_access`** keeps them at ≥1 workspace row (a row with no keys resolves to the empty set, `permissions.ts:75`); fork writers never delete the last row; invariant check `assertTowerPrincipalsFailClosed`. *Refined by the second-pass section: an active managed principal with an empty set is legacy `user` with zero rows; the sentinel is only used for a `member` with team-only roles.* | §4.8 |
 | C2 (template sync) | `syncPersonaTemplateFn` add-only replaced by `reconcilePersonaTemplate(roleId, mode)`: `add_only` (local default, reports excess keys) or `exact` (removes keys not in the template via upstream `updateRole`, `role.service.ts:304`; removals are ceiling-free). Tower-managed templates (`fork_role_templates.managed_by = 'tower'`) are always reconciled `exact`. | §4.2, §5 |
-| C2 (provenance hooks) | New fork table `fork_role_assignment_sources` (per assignment row: `source`, `bundle_key`, `sync_run_id`) + `applyAssignmentSet(principalId, desired, opts)` exact-set writer (principal row `FOR UPDATE`, same lock upstream's role writer takes, `principal.factory.ts:314-320`). Plan 20 builds tower sync on these hooks. | §4.8, §5 |
+| C2 (provenance hooks) | New fork table `fork_role_assignment_sources` (per assignment row: `source`, `bundle_key`, `sync_run_id`) + an exact-set writer (principal row `FOR UPDATE`, same lock upstream's role writer takes). Plan 20 builds tower sync on these hooks. *Superseded by the second-pass section: the writer is now `applyManagedRoleSet` (whole role set, D-C15).* | §4.8, §5 |
 | F1 (catalogue) | Fork keys, Manager exclusions (`prioritization.manage` move) and preset changes reach a database **only** when `seedSystemData` runs (`seed-system.ts:28`, preset reconcile `:70-104`). Phase 1 depends on Foundations 02 §3.3a item 2 (`fork-migrate` = fork SQL **then** `seedSystemData`, every tenant, every release). Deploy gate asserts catalogue state per tenant. Custom (template) roles are not touched by `seedSystemData` — they reconcile via §4.2. | §4.1, §8 |
 | C3 (RBAC side, via 60) | New read key ✱`announcement.view` (Manager ✓, Contributor ✓, Fleet Agent, Fleet Observer) so read-only fleet roles can list announcements without `announcement.manage`; fork MCP read tools from 50/60 added to the inventory. | §4.2, §6, Appendix A.1 |
 | X-6 | Removed the request to plan 20 about observer token scopes; seam IDs aligned with `SEAMS.md` (R-9…R-12 new). Open items renamed to the `01-decisions.md` IDs (O-R3…O-R5). | §7, §10, §11 |
 | X-7 | No phase of this plan is deferred; §8 states that Phase 0 templates do not bind on REST/MCP until 1a ships. | §8 |
+
+## 0b. Second-pass review changes
+
+Driven by `REVIEW-2026-09-19-SECOND-PASS.md` and owner decisions **D-C15** (the tower owns the entire app role
+set of every tower-managed person) and **D-C16** (directory-driven revocation; disable = tenant-level denial on
+every auth path). Where this section and an earlier changes table disagree, this section wins; the body is
+rewritten to match it. Plan 20 consumes the contract in §4.8 and §4.9.
+
+| Finding | Change | Where |
+| --- | --- | --- |
+| R2-3 (RBAC side) | **One writer for managed principals: `applyManagedRoleSet(principalId, desired, source)`.** It replaces **all** workspace-wide **and** team-scoped assignment rows of a tower-managed principal, including preset Owner/Manager rows, rows written by upstream role changes or role-delete reassignment, and fork-UI rows. It also sets the legacy role. Everything happens in one transaction under the locks upstream's role writer takes, in the same order: `pg_advisory_xact_lock(7061636)` then principal row `FOR UPDATE` (`principal.factory.ts:277,320`). It accepts the caller's executor, so plan 20/30 can put tier membership in the same transaction. The old `applyAssignmentSet` and its `authoritative` flag are **removed**; there are no `adopted_local` or "local roles survive" cases. Provenance lives only in `fork_role_assignment_sources`. Every row a managed principal holds must have `source = 'tower'`. The **managed-principal registry** is plan 20's `fork_tower_principals` (one row per managed principal). The writer refuses any principal that is not in it, and all fork-UI writers (Phase 2/3) refuse any principal that is. **Legacy role rule:** `admin` ⇒ the Owner preset row only. `member` ⇒ the desired templates, plus the `no_access` sentinel only when no workspace-wide template is desired. Empty desired set for an **active** principal ⇒ legacy **`user`** and zero rows (no sentinel). **Disabled** ⇒ `denyPrincipal` (R2-4). An upstream legacy-role change to a managed principal is reverted at the next sync and reported `drift_reverted`. `assertTowerPrincipalsFailClosed` now tests exactly this policy. | §2 R8, §4.4, §4.5, §4.7, §4.8, §5, §8, §9 |
+| R2-4 (tenant denial) | **Tenant-level denial primitive, separate from grants.** New table `fork_principal_denials`, plus the functions `denyPrincipal(principalId, reason, opts)`, `liftPrincipalDenial` and `isPrincipalDenied(ids[])`. Once the denial row commits, every auth path refuses the principal. Session rows are deleted (`session` table, the same SQL as upstream `forceSignOutUserFn`, `functions/admin.ts:289-300`). OAuth access and refresh token rows are revoked (`oauth_access_token`/`oauth_refresh_token.revoked`, `schema/auth.ts:1046-1120`). The principal is demoted to `user` with zero assignments. Then every API key the principal created is revoked through upstream `revokeApiKey` (`api-key.service.ts:264-281`), which also demotes the key's service principal. **Check sites:** **R-1** (extended, this plan) refuses any API key whose service principal **or creator** is denied, on REST and MCP-key paths. **TW-1** (plan 20) is in the MCP handler, in the same fenced block as R-4: the OAuth path verifies the JWT and re-reads only `principal.role` (`mcp/handler.ts:90-113`). **TW-2** (plan 20) blocks new sessions and must sit at `databaseHooks.session.create.before` (`auth/index.ts:631-638`), which every sign-in method passes through. A new fork job via shared **F-8**, `fork-principal-denial-sweep` (every 5 min), re-applies all active denials. It closes the sign-in-concurrent-with-deny race, and it enforces the optional entitlement lease (off by default, 🟡 O-R8). | §2 R9, §4.9, §5, §7, §8, §9, §10 |
+
+**Acceptance tests** (all mandatory, real Postgres, in §9):
+
+- **R2-3.** Use one tower-managed principal P in the Tier 2 + Dev Team templates. Check the resolved permissions
+  (`permissionsForPrincipal`, `teamPermissionsForPrincipal`) and `assertTowerPrincipalsFailClosed` after each step:
+  1. A local admin grants UX Team to P through the upstream member-role dialog. Upstream replace-all leaves only
+     UX Team, with no provenance. P holds UX Team until the next sync. The next `applyManagedRoleSet` restores
+     Tier 2 + Dev Team, deletes UX Team and reports `drift_reverted`. The assertion is clean.
+  2. The tower adds UX Team. The row exists with `source = 'tower'` and `bundle_keys` set.
+  3. The tower removes UX Team. The row is gone and no local survivor exists.
+  4. A local admin grants the Tier 2 team-scoped role on another team through the fork UI. The call is refused
+     with `TOWER_MANAGED`. A row inserted directly in SQL is removed at the next sync.
+  5. A local admin changes P's legacy role to `admin`. P holds the Owner preset until the next sync. The sync
+     restores `member` + templates, removes Owner and reports `drift_reverted`.
+  6. A local admin removes P from the team (legacy `user`). The next sync restores P.
+  7. The tower removes every bundle. P becomes `user` with zero rows.
+  8. The tower grants a team-only bundle (only if forced past the tower's write check). P becomes `member` with
+     `no_access` + the team row.
+  9. Run `seedSystemData`, `runMigrations` and `fork-migrate` between every step above. P **never** resolves to the
+     Manager preset: there is no Manager row, and no `member`/`admin` principal has zero workspace-wide rows.
+     `assertTowerPrincipalsFailClosed` fails on a hand-made zero-row managed `member`, a Manager row, or a row
+     without tower provenance.
+- **R2-4.** Start with managed principal Q, locally privileged (legacy `admin` via upstream UI, plus an extra
+  local Manager row). Q holds a live dashboard session cookie, a widget/portal session, an unexpired MCP OAuth
+  JWT with its refresh token, and an API key they created.
+  - Call `denyPrincipal(Q, 'tower_disabled')` without Q visiting the tower. As soon as that call commits, the
+    next dashboard request and portal upload return 401. MCP returns 401 although the JWT still verifies. The
+    token refresh fails. The API key is refused on REST and on MCP. A fresh sign-in by SSO, magic link, OTP and
+    recovery code is refused, with no session row created. Q is `user` with zero assignment rows and every
+    key is `revoked_at`-stamped.
+  - Race: a sign-in whose session-create check ran before the denial committed leaves at most one session. The
+    next sweep deletes it, and until then it carries no team authority (Q is `user`).
+  - Sync unavailable, lease **off**: the tenant keeps the last applied state. Access ends only when a sync
+    delivers `denyPrincipal`, and plan 20's `directory_sync_stale` alarm fires.
+  - Sync unavailable, lease **on**: the sweep denies Q with `lease_expired` within lease + 5 min. A later
+    successful sync lifts only `lease_expired` denials and re-applies roles. A `tower_disabled` denial is never
+    lifted by lease renewal.
 
 ## 1. Changes from v1
 
@@ -80,7 +129,11 @@
 - **R6** Read-only teammates cannot comment on any surface (D-R6); existing custom-role holders keep commenting.
 - **R7** Upgrade-safe: no upstream schema edits, no new legacy role, no seat mechanics (D4); seams limited to
   what R2 needs.
-- **R8** Tower-managed principals fail closed: no state of theirs resolves to the Manager preset by fallback.
+- **R8** Tower-managed principals fail closed: no state of theirs resolves to the Manager preset by fallback. The
+  tower owns their **entire** role set (D-C15). Local grants and legacy-role edits do not survive the next sync.
+- **R9** A disabled tower-managed person is denied at the tenant on every auth path, independent of grant
+  bookkeeping (D-C16). The auth paths are cookie sessions (dashboard, portal, widget, uploads), MCP OAuth JWTs,
+  OAuth refresh, API keys they created (REST and MCP) and new sign-ins.
 
 ## 3. How it works today (verified)
 
@@ -170,7 +223,8 @@ before that change. Resumed suspended tenants get the same via `fork-migrate --w
   `fork_install_persona_roles` (`mcp/tools/fork-rbac.ts`, registered via F-3) so the tower installs **and
   reconciles** roles per tenant (§4.7).
 - **Sentinel `no_access` template** (C2): empty bundle, `managed_by = 'tower'`, installed with the others; used
-  only by §4.8 to keep tower-managed principals at ≥1 workspace row.
+  only by `applyManagedRoleSet` (§4.8) when a tower-managed `member` has team-scoped roles but no workspace-wide
+  template, so it still holds ≥1 workspace-wide row. An empty desired set yields legacy `user` instead.
 - Not seeded on migrate: installation is an explicit, audited admin action (ceiling applies).
 
 Bundles (✱ = fork key; **T** = team-scoped grant on the tier team, §4.4; tier bundles are starting points —
@@ -296,12 +350,15 @@ R-8…R-12 are carried permanently and re-applied at every sync. Appendix A is t
     account actions are human-attributed, D-C2). A scopable key reaching a person only through a
     **workspace-wide custom-role** assignment is inert (flagged in the UI) — so a Tier role can be assigned
     workspace-wide for its dashboard keys without its scopable keys leaking beyond the tier team.
-- **Tier assignment** = one fork action `assignTierAgentFn(principal, tierTeam)` (`member.manage`): workspace-wide
-  assignment of the Tier N role (dashboard keys) + team-scoped grant of the same role on the tier team
-  (scopable keys), both through `applyAssignmentSet` (§4.8). Effective tier / roll-up is computed by 30/40 from
-  tier-team membership (D-A8).
+- **Tier assignment** (unmanaged principals) = one fork action `assignTierAgentFn(principal, tierTeam)`
+  (`member.manage`). It writes a workspace-wide assignment of the Tier N role (dashboard keys) and a team-scoped
+  grant of the same role on the tier team (scopable keys), both through the local writer (§4.8,
+  `source = 'fork_ui'`). For a **tower-managed** principal the tier roles come only from the tower through
+  `applyManagedRoleSet`, and `assignTierAgentFn` refuses with `TOWER_MANAGED` (D-C15). Effective tier and roll-up
+  are computed by 30/40 from tier-team membership (D-A8).
 - **Writer:** `grantTeamRoleFn` / `revokeTeamRoleFn` (`member.manage` + `assertGrantableRole`,
-  `domains/roles/role.grants.ts:22-38`). Audit via `user.role.changed` (`audit/log.ts:68`) with metadata
+  `domains/roles/role.grants.ts:22-38`), for unmanaged principals only; both refuse a tower-managed principal
+  with `TOWER_MANAGED`. Audit via `user.role.changed` (`audit/log.ts:68`) with metadata
   `{ scope: 'team', teamId, roleId, op, source }`. A role with no scopable keys is rejected for team-scoped
   assignment.
 - **Upstream interactions (accepted):** role delete ignores team-scoped holders in its in-use check and
@@ -310,16 +367,17 @@ R-8…R-12 are carried permanently and re-applied at every sync. Appendix A is t
 
 ### 4.5 Phase 3 — multi-role assignment (in scope, D-R4)
 
-- `addRoleAssignmentFn` / `removeRoleAssignmentFn` (fork, `member.manage` + ceiling) insert/delete extra
-  workspace-wide rows (`team_id IS NULL`, protected by the existing partial unique index) through
-  `applyAssignmentSet` (§4.8), recording `source = 'fork_ui'`. Resolution already unions (`permissions.ts:75`).
-  Refuses the last remaining row (use upstream role change) and the Owner preset.
+- `addRoleAssignmentFn` / `removeRoleAssignmentFn` (fork, `member.manage` + ceiling) insert or delete extra
+  workspace-wide rows (`team_id IS NULL`, protected by the existing partial unique index) through the local
+  writer (§4.8), recording `source = 'fork_ui'`. Resolution already unions (`permissions.ts:75`). Both refuse the
+  last remaining row (use the upstream role change instead) and the Owner preset. Both refuse a tower-managed
+  principal with `TOWER_MANAGED`: a managed person's hats come only from the tower (D-C15).
 - **Reset semantics (documented, not patched):** any upstream role change calls `reconcileWorkspaceAssignment`,
   which deletes **all** workspace rows (`principal.factory.ts:364-371`) — extra hats are cleared (team-scoped
   rows are untouched: that delete filters `isNull(teamId)`, `:369`); their provenance rows cascade away. Same-role
   saves do not reconcile (`:325-334`). The fork page shows "additional roles"; upstream's members table
-  (`functions/settings.ts:165-185`) keeps showing one — acceptable. For tower-managed principals the next tower
-  sync detects and repairs the drift (§4.8).
+  (`functions/settings.ts:165-185`) keeps showing one, which is acceptable. For tower-managed principals, any
+  upstream reset is drift: the next tower sync replaces the whole set and reports `drift_reverted` (§4.8).
 
 ### 4.6 Phase 1b — teammate comment gate (in scope, D-R6)
 
@@ -350,41 +408,186 @@ R-8…R-12 are carried permanently and re-applied at every sync. Appendix A is t
 - Tower authorization is **configurable role bundles**; `observer`/`agent`/`owner` are only seeds (D-C9). Each
   bundle carries its tower capabilities **and** a tenant role target: `admin` (legacy Admin, seed `owner`) or a
   **`template_key`** from §4.2 (seeds: `agent → fleet_agent`, `observer → fleet_observer`, D-C5 🟡).
-- Tenant-side contract this plan provides: `fork_install_persona_roles({ templateKeys, reconcile: 'exact' })`
-  installs/reconciles tower-managed templates; `applyAssignmentSet` (§4.8) sets a principal's exact tower-owned
-  role set (workspace-wide and tier-team rows) with provenance; `assertTowerPrincipalsFailClosed` reports
-  violations. Tenant keys are always enforced by the tenant (Phase 1a); tower capabilities by the tower.
+- Tenant-side contract this plan provides:
+  - `fork_install_persona_roles({ templateKeys, reconcile: 'exact' })` installs and reconciles tower-managed
+    templates.
+  - `applyManagedRoleSet` (§4.8) sets a managed principal's **entire** role set (legacy role, workspace-wide
+    rows and team rows) with provenance.
+  - `denyPrincipal` / `liftPrincipalDenial` / `isPrincipalDenied` (§4.9) handle account disablement.
+  - `assertTowerPrincipalsFailClosed` reports violations.
 
-### 4.8 Assignment provenance and fail-closed principals (C2; hooks consumed by 20)
+  Tenant keys are always enforced by the tenant (Phase 1a); tower capabilities by the tower.
 
-- **Provenance:** every fork writer (`applyAssignmentSet`, hence Phase 2/3 fns, tier assignment and tower sync)
-  writes `fork_role_assignment_sources(assignment_id, source, bundle_key, sync_run_id)` in the same transaction
-  as the assignment row. `source ∈ { 'tower', 'fork_ui' }`. Rows with no provenance were written by upstream
-  (invite, role change, seed backfill). Because upstream's reconcile deletes and re-inserts rows, a lost
-  provenance row is itself the drift signal.
-- **`applyAssignmentSet(principalId, desired, { source, bundleKey?, syncRunId?, authoritative })`:**
-  `desired = { legacyRole: 'admin'|'member'|'user', workspace: RoleId[], team: {teamId, roleId}[] }`.
-  In one transaction: lock the principal row `FOR UPDATE` (the lock upstream's role writer takes,
-  `principal.factory.ts:314-320`, so the two serialize); if `legacyRole` differs, call upstream's role change with
-  `assignRoleId = desired.workspace[0]` (keeps upstream's audit + membership sync); insert missing rows; delete
-  rows not in `desired` — **only rows with the same `source`** unless `authoritative`, in which case every
-  workspace-wide row not in `desired` (including NULL-grantor Manager rows from invites or backfill) and every
-  same-source team row goes. Tower sync always runs `authoritative` for tower-managed principals. Never leaves
-  a `member` with zero workspace rows: an empty `workspace` set writes the `no_access` sentinel role instead.
-  Returns the applied diff; audited as `user.role.changed` with `{ source, bundleKey, syncRunId }`.
-- **Fail-closed (R8):** a tower-managed principal is one with any `source = 'tower'` provenance row or listed by
-  the tower. Guarantees:
-  - ≥1 workspace row at all times (sentinel), so neither the runtime fallback (`permissions.ts:74`) nor the
-    seed backfill (`seed-system.ts:136-175`) can hand them Manager.
-  - Full revocation = `legacyRole: 'user'` (upstream reconcile clears workspace rows; `user` maps to no preset),
-    plus removal of tower team rows.
-  - `canInTeam` ignores the fallback anyway (§4.4).
-  - `assertTowerPrincipalsFailClosed()` lists tower-managed principals that have zero workspace rows, hold a
-    workspace row without tower provenance, or hold a Manager/Owner row the tower did not assign; run by tower
-    sync (repairs via `applyAssignmentSet`), after every `fork-migrate`, and as a deploy-gate query.
-  - Remaining window (documented): between upstream principal creation at first sign-in (which may insert a
-    Manager preset row) and the tower's first `applyAssignmentSet`. Plan 20 closes it by pre-provisioning with
-    the sentinel or applying in the sign-in hook; this plan provides the writer.
+### 4.8 Managed role sets, provenance and fail-closed principals (C2, D-C15; contract consumed by 20)
+
+**Ownership (D-C15).** A principal is **tower-managed** iff it has a row in the managed-principal registry,
+plan 20's `fork_tower_principals` (§5.3 there: `principal_id` PK → `principal.id` ON DELETE CASCADE,
+`tower_user_id`, `managed_since`, …). This plan reads `principal_id` and writes the columns plan 20 adds
+for it (§5): `last_applied_legacy_role`, `last_applied_at` and `last_sync_run_id`, plus `entitlement_expires_at`
+for the lease (§4.9). The rules:
+
+- The tower owns the entire role set of a managed principal: its legacy role, every workspace-wide row and every
+  team-scoped row. Nothing granted locally survives the next sync.
+- Unmanaged principals are never touched by the managed writer or the managed checks. They keep upstream
+  behaviour plus the fork-UI writers.
+- Plan 20 inserts the registry row in the same transaction as the first `applyManagedRoleSet`. To stop managing
+  a principal, plan 20 applies the final state (or `denyPrincipal`) first and then deletes the registry row.
+
+**Provenance.** `fork_role_assignment_sources(assignment_id PK → principal_role_assignments.id ON DELETE
+CASCADE, source, bundle_keys, sync_run_id)` is the only provenance table. Plan 20's `fork_tower_assignments` is
+dropped, because the desired state lives in the tower and is recomputed on every sync.
+
+- `source = 'tower'`: written by `applyManagedRoleSet`. **Every** row a managed principal holds must carry it.
+- `source = 'fork_ui'`: written by the local writer for unmanaged principals.
+- No provenance row: written by upstream (invite, role change, role-delete reassignment
+  `role.service.ts:464`, seed backfill).
+- An upstream replace-all deletes and re-inserts rows (`principal.factory.ts:365,388`), so the provenance row
+  cascades away with the old row. A managed row without tower provenance is itself the drift signal.
+
+**The managed writer.**
+
+```ts
+applyManagedRoleSet(
+  principalId: PrincipalId,
+  desired: {
+    legacyRole: 'admin' | 'member' | 'user'
+    workspaceRoles: { roleId: RoleId; bundleKeys: string[] }[]            // team_id IS NULL
+    teamScopedRoles: { teamId: TeamId; roleId: RoleId; bundleKeys: string[] }[]
+  },
+  source: { kind: 'tower'; syncRunId: string; grantorPrincipalId: PrincipalId }, // tower.sync_principal_id
+  opts?: { executor?: Tx }            // caller's transaction (plan 20 adds tier membership via plan 30)
+): Promise<{ applied: Diff; driftReverted: DriftItem[]; denied: boolean; cacheKeysToBust: string[] }>
+```
+
+1. **Validate `desired`**, refusing with `INVALID_DESIRED` when the input breaks one of these rules:
+   - `user` ⇔ both sets are empty.
+   - `admin` ⇒ `workspaceRoles` is empty (the Owner preset rides the legacy role) and `teamScopedRoles` may be
+     non-empty.
+   - `member` ⇒ at least one set is non-empty, and neither set contains a system preset (the tower never grants
+     Manager). Team roles must pass the §4.4 "has scopable keys" rule.
+2. **Lock** in upstream's order, which avoids a lock-order inversion with a concurrent `setPrincipalRole`:
+   `pg_advisory_xact_lock(7061636)` (`principal.factory.ts:277`), then `SELECT … FROM principal WHERE id = $1
+   FOR UPDATE` (`:320`). Both locks are re-entrant within the transaction when `setPrincipalRole` takes them
+   again in step 5.
+3. **Refuse** with `NOT_MANAGED` when there is no registry row. When an active `fork_principal_denials` row
+   exists (§4.9), replace `desired` with `{ user, [], [] }` and return `denied: true`, so a stale sync run can
+   never re-grant a disabled person.
+4. **Record drift:** a legacy role that differs from the registry's `last_applied_legacy_role`, and every
+   existing row without `source = 'tower'` provenance. Report each as `driftReverted`.
+5. **Legacy role:** if the current role ≠ `desired.legacyRole`, call upstream
+   `setPrincipalRole(ref, desired.legacyRole, { executor, assignRoleId, assignGrantedBy: grantorPrincipalId })`
+   (`SetRoleOpts`, `principal.factory.ts:231-245`). `assignRoleId` is the first workspace role, the `no_access`
+   sentinel when a `member` has none, and omitted for `admin`/`user`. Using the upstream call keeps its
+   last-admin guard, audit and membership sync.
+6. **Exact workspace-wide set.** The target is `{Owner preset}` for `admin`, `workspaceRoles ∪ ({no_access} if
+   workspaceRoles is empty)` for `member`, and `∅` for `user`. Delete every workspace-wide row not in the target,
+   including NULL-grantor Owner/Manager preset rows and local grants. Insert missing rows with
+   `granted_by_principal_id = grantorPrincipalId`, except the Owner preset, which stays NULL-grantor as upstream
+   writes it. On an existing row that is still desired, set the grantor to the sync principal.
+7. **Exact team-scoped set.** Delete every team-scoped row not in `teamScopedRoles`, whatever wrote it, then
+   insert the missing ones. The principal row lock serialises every fork writer for this principal, and upstream
+   never writes team rows.
+8. **Provenance:** upsert `fork_role_assignment_sources` for every surviving row (`source = 'tower'`,
+   `bundle_keys`, `sync_run_id`). Update the registry's `last_applied_legacy_role`, `last_applied_at` and
+   `last_sync_run_id`.
+9. **Audit** one `user.role.changed` row with `{ source: 'tower', syncRunId, diff, driftReverted }`. Return
+   `cacheKeysToBust`, which the caller busts after commit. The call is idempotent: a re-run with the same
+   `desired` is a no-op diff.
+
+**The local writer** (unmanaged principals only) is used by Phase 2/3 fns and tier assignment. It applies the
+same row-diff helper with `source = 'fork_ui'`, touching only the rows the call names. It refuses registry
+principals with `TOWER_MANAGED`, and it never leaves a `member` with zero workspace-wide rows.
+
+**Legacy-role changes through upstream UI on a managed principal.** These are not blocked (no seam; 🟡 O-R9).
+Examples: the member-role dialog, "remove from team", or a role delete with reassignment. Upstream applies its
+replace-all, and the change stays live until the next sync (plan 20's target interval). The next sync reverts it
+and reports `drift_reverted` to the tower.
+
+**Fail-closed (R8).** Policy and the checks that prove it:
+
+- **Active + non-empty:** `admin` + Owner row, or `member` + ≥1 workspace-wide row (a template or the
+  sentinel), all with tower provenance. Neither the runtime fallback (`permissions.ts:74`, zero rows only) nor
+  the seed backfill (`seed-system.ts:136-175`, zero rows only) applies. The seed heal (`:106-133`) only deletes
+  NULL-grantor Owner/Manager rows whose legacy role no longer matches, which the writer never leaves.
+- **Active + empty:** legacy `user`, zero rows. `user` maps to no preset (`rbac-catalogue.ts:725-729`), backfill
+  selects only `admin`/`member` (`seed-system.ts:148-157`), and SSO JIT never promotes it. Plan 20 configures
+  `autoProvisionRole = 'user'` with no claim mapping, so `handleAutoProvisionAfter` returns early at
+  `auth/hooks.ts:746,750`.
+- **Disabled:** legacy `user`, zero rows, plus an active denial (§4.9).
+- `canInTeam` never uses the fallback (§4.4).
+- **`assertTowerPrincipalsFailClosed()`** returns a violation for any managed principal that meets one of
+  these conditions:
+  - (a) legacy `admin`/`member` with zero workspace-wide rows;
+  - (b) any workspace-wide or team row without `source = 'tower'` provenance;
+  - (c) a Manager preset row, or an Owner row while legacy ≠ `admin`;
+  - (d) legacy `user` while holding any row;
+  - (e) an active denial while legacy ≠ `user`, or while any assignment row, session row, unrevoked
+    OAuth token or unrevoked API key created by the principal remains.
+
+  It runs after every sync (plan 20 repairs through `applyManagedRoleSet` / `denyPrincipal`), after every
+  `fork-migrate` (after `seedSystemData`), and as a deploy-gate query. (a)–(c) together mean no Manager
+  fallback or Manager row is reachable for a managed principal.
+- **Remaining window (documented):** between upstream principal creation at a person's first sign-in and the
+  first `applyManagedRoleSet`. With `autoProvisionRole = 'user'` that principal is `user` (no preset), so the
+  window grants nothing. Plan 20 pre-provisions managed principals before their first sign-in.
+
+### 4.9 Tenant-level denial (D-C16, R2-4; contract consumed by 20)
+
+Disablement is independent of grants: grants can be re-applied, but a denial blocks every path until it is
+lifted explicitly. Module `apps/web/src/lib/server/fork/rbac/denials.ts`.
+
+- **`isPrincipalDenied(principalIds: PrincipalId[]): Promise<boolean>`**: one indexed query. It is true when
+  any id has a `fork_principal_denials` row with `lifted_at IS NULL`, or (only when
+  `fork_settings['rbac.entitlement_lease'].enabled`) has a registry row with `entitlement_expires_at < now()`.
+  There is **no** Redis cache, because a cache would add revocation latency. Per-request memoisation only.
+- **`denyPrincipal(principalId, reason, { syncRunId?, actor })`** runs in three stages. `reason` is one of
+  `tower_disabled`, `idp_removed`, `tower_deprovisioned`, `lease_expired`. The call is idempotent and returns a
+  report.
+  1. **Tx 1 (effective at commit):**
+     - Upsert the denial row: `denied_at`, `reason`, `lifted_at = NULL`.
+     - `DELETE FROM session WHERE user_id = <principal.user_id>`. This is the same statement as upstream
+       `forceSignOutUserFn` (`functions/admin.ts:289-300`). Better Auth stores sessions in the database with no
+       cookie cache (`auth/index.ts:544-551`), so every cookie and widget-bearer session is gone.
+     - `UPDATE oauth_access_token / oauth_refresh_token SET revoked = now() WHERE user_id = … AND revoked IS
+       NULL` (`schema/auth.ts:1046-1120`).
+     - Write the audit row `session.revoked.individual` with `reason: 'principal_denied'`.
+
+     Tx 1 takes no upstream role locks, so the denial commits even when stage 2 is refused.
+  2. **Tx 2:** `applyManagedRoleSet(principalId, { user, [], [] })` for a registry principal, or
+     `setPrincipalRole(user)` plus deletion of team rows for an unmanaged one. If this returns `LAST_ADMIN`, it is
+     reported as `demote_blocked_last_admin`. The denial still holds, and plan 20's break-glass admin (not
+     managed) keeps that from happening in practice.
+  3. **Keys:** for each `api_keys` row with `created_by_id = principalId` and `revoked_at IS NULL`, call upstream
+     `revokeApiKey(id)` (`api-key.service.ts:264-281`). It stamps `revoked_at` and demotes the key's service
+     principal to `user`, and `API_KEY_NOT_FOUND` is treated as done. The keys are already refused at the Tx 1
+     commit, because R-1 checks the creator (below).
+- **`liftPrincipalDenial(principalId, { onlyReason? })`** sets `lifted_at`. It restores nothing: roles come back
+  only through the next `applyManagedRoleSet`, and sessions come back only through a new sign-in. Lease renewal
+  lifts only `lease_expired`.
+- **Sweep job** `fork-principal-denial-sweep` (shared F-8, every 5 min, per tenant):
+  - Re-runs stages 1–3 for every active denial, catching a session minted by a sign-in whose create-check ran
+    just before the denial committed.
+  - When the lease is on, calls `denyPrincipal(p, 'lease_expired')` for every registry principal past
+    `entitlement_expires_at`.
+  - Emits `fork_denial_sweep` metrics.
+
+**Where each check lives** (every path that authenticates a principal):
+
+| Auth path | Enforcement | Site / seam |
+| --- | --- | --- |
+| Cookie sessions: dashboard `requireAuth`, portal, uploads, chat stream, integrations and every other `auth.api.getSession` caller; widget bearer sessions (`widget-auth.ts:59`) | Session rows deleted in Tx 1 (no row means no session). Demotion to `user` removes team authority from any row that survives the race. | `denyPrincipal` (fork code, no seam) + sweep |
+| New sign-in: SSO, magic link, email OTP, password, recovery code, OAuth authorize (needs a session) | `if (await isUserDenied(sessionData.userId)) return false` before the session row exists | **TW-2** (plan 20), **required at** `databaseHooks.session.create.before` (`auth/index.ts:631-638`). The OIDC after-hook (`auth/hooks.ts:687`) runs only on OIDC callbacks and after the row exists, so it misses the other methods. |
+| MCP OAuth JWT | The JWT is verified statelessly and the handler re-reads only `principal.role` (`mcp/handler.ts:90-113`), so revoking the token row alone does nothing until expiry. Denied ⇒ 401 before scope step-up. | **TW-1** (plan 20), `mcp/handler.ts` after `:244`, in the same fenced block as R-4 (one edit site) |
+| OAuth refresh | Refresh token `revoked` in Tx 1. Any JWT minted anyway is still refused by TW-1. | `denyPrincipal` |
+| API key, REST and MCP-key (`withApiKeyAuth` → `requireApiKey`, used by `mcp/handler.ts:153`) | `requireApiKey` returns `null` (401) when `isPrincipalDenied([apiKey.principalId, apiKey.createdById])` | **R-1** (this plan, extended; `domains/api/auth.ts:72-86`) |
+
+No check is added to `requireAuth` or to the other `getSession` callers. Deleting the session row covers them
+all, so no auth-helper seam is needed.
+
+**Revocation bound (plan 20 owns the budget).** Once the denial commits, every path above refuses on its next
+request. The only exception is the documented sign-in race, which is closed within ≤ 5 min (one sweep). End to
+end, the bound is plan 20's directory-to-tenant sync **target**. It becomes a **hard maximum** only with the
+lease on: lease duration + 5 min, 🟡 O-R8.
 
 ## 5. Data model (fork lineage)
 
@@ -406,17 +609,35 @@ R-8…R-12 are carried permanently and re-applied at every sync. Appendix A is t
 | Column | Type | Notes |
 | --- | --- | --- |
 | `assignment_id` | `typeIdColumn('role_asgn')` **PK** | FK → `principal_role_assignments.id` (`schema/rbac.ts:65`) ON DELETE CASCADE |
-| `source` | text not null, check in (`tower`, `fork_ui`) | |
-| `bundle_key` | text null | tower bundle that produced the row |
+| `source` | text not null, check in (`tower`, `fork_ui`) | `tower` = `applyManagedRoleSet` only |
+| `bundle_keys` | text[] not null default `{}` | tower bundles that want the row (several bundles may want one role) |
 | `sync_run_id` | text null | tower sync correlation id |
 | `recorded_at` | timestamptz not null default now() | |
 
-- Principal references are indirect (via the assignment row), so no re-point registry entry is needed for
-  `fork_role_assignment_sources`; principal merge in upstream moves or deletes the assignment and the cascade
-  follows.
+**`fork_principal_denials`** (§4.9)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `principal_id` | `typeIdColumn('principal')` **PK** | FK → `principal.id` ON DELETE CASCADE; one current row per principal (history in the audit log) |
+| `reason` | text not null, check in (`tower_disabled`, `idp_removed`, `tower_deprovisioned`, `lease_expired`) | |
+| `denied_at` | timestamptz not null | |
+| `denied_by` | text not null | `sync_run_id`, or `sweep` for the lease |
+| `lifted_at` | timestamptz null | NULL = active; partial index `WHERE lifted_at IS NULL` |
+| `last_enforced_at` | timestamptz null | last `denyPrincipal` / sweep pass |
+| `last_report` | jsonb null | stage 1–3 counts (sessions, tokens, keys, demotion outcome) |
+
+- The managed-principal **registry** is plan 20's `fork_tower_principals` (not duplicated here). This plan
+  requires its `principal_id` PK and, for the lease, `entitlement_expires_at timestamptz null`,
+  `last_applied_legacy_role text null`, `last_applied_at` and `last_sync_run_id`. Plan 20 adds those columns
+  to its DDL.
+- Principal references in `fork_role_assignment_sources` are indirect (via the assignment row), so it needs no
+  re-point registry entry: upstream principal merge moves or deletes the assignment, and the cascade follows.
+  `fork_principal_denials` references staff principals only, so it gets a re-point registry **exemption**
+  (02 §8, F-5), like `fork_role_templates.installed_by_principal_id`.
 - No other DDL: team-scoped and multi-role rows use existing `principal_role_assignments` columns.
 - `fork_settings` keys: `rbac.key_backfill`, `rbac.teammate_comment_gate`, `rbac.comment_create_backfill`,
-  `rbac.team_scoped_enabled`, `rbac.multi_role_enabled` (Phase 1a is never gated — it is a fix).
+  `rbac.team_scoped_enabled`, `rbac.multi_role_enabled`, and `rbac.entitlement_lease` (`{ enabled, durationMinutes }`,
+  default off, O-R8). Phase 1a is never gated, because it is a fix.
 
 ## 6. Permissions
 
@@ -438,17 +659,19 @@ every key by construction (`rbac-catalogue.ts:645-646`).
   `account.execute`. `ticket.escalate`, `announcement.view` and `announcement.manage` are deliberately **not** in
   it (Manager ✓). `FORK_CONTRIBUTOR_PERMISSIONS` = `comment.create`, `announcement.view`.
 - Fork server functions gate `requireAuth({ permission })`: `role.manage` (templates, reconcile, comment-gate
-  enable), `member.manage` (team / multi-role / tier assignment, `applyAssignmentSet` callers), `api_key.manage`
-  (key backfill). Regenerate `MATRIX.md`.
+  enable), `member.manage` (team, multi-role and tier assignment through the local writer), `api_key.manage`
+  (key backfill). `applyManagedRoleSet`, `denyPrincipal` and `liftPrincipalDenial` are **not** server functions.
+  They are called only by the provisioner's `sync-members` (plan 20, root key, scoped DB) and by the sweep job.
+  Regenerate `MATRIX.md`.
 
 ## 7. Seams (own; catalogue = F-7, settings page = F-4, MCP registration = F-3, fork-only rollout = F-1/F-11)
 
 | # | Upstream file | Change (one-liner) | Why unavoidable | Re-apply on conflict |
 | --- | --- | --- | --- | --- |
-| R-1 | `apps/web/src/lib/server/domains/api/auth.ts` | Resolve + narrow `permissionsForPrincipal` in `requireApiKey`; read `auth.permissions` at :134/:158 | REST authority is decided here (X5) | Re-apply 3 marked edits; test "custom-role key denied" |
+| R-1 | `apps/web/src/lib/server/domains/api/auth.ts` | In `requireApiKey`: return `null` when `isPrincipalDenied([apiKey.principalId, apiKey.createdById])` (§4.9), then resolve + narrow `permissionsForPrincipal`; read `auth.permissions` at :134/:158 | REST authority and API-key identity (REST and MCP-key) are decided here (X5, D-C16) | Re-apply 4 marked edits; tests "custom-role key denied", "denied creator's key refused" |
 | R-2 | `apps/web/src/lib/server/domains/api-keys/api-key.service.ts` | After `createServicePrincipal`: `await forkCopyCreatorAssignments(createdById, sp.id)` | Only point where creator and key principal are both known | Re-insert after the service-principal create |
 | R-3 | `apps/web/src/lib/server/mcp/types.ts` | `permissions?: ReadonlySet<PermissionKey>` on `McpAuthContext` | Context must carry the set to tools | Re-add field |
-| R-4 | `apps/web/src/lib/server/mcp/handler.ts` | After `resolveAuthContext` (:240): `auth.permissions = await resolveMcpPermissions(auth)` | Single consumer of all context shapes | Re-insert after the call |
+| R-4 | `apps/web/src/lib/server/mcp/handler.ts` | After `resolveAuthContext` (:240): `auth.permissions = await resolveMcpPermissions(auth)`. Plan 20's TW-1 denial check sits in the same fenced block, first. | Single consumer of all context shapes | Re-insert after the call |
 | R-5 | `apps/web/src/lib/server/mcp/tools/helpers.ts` | Actors: `permissions: auth.permissions`; `wrapped` in `registerTool`: `forkMcpToolGate(auth, def.name, args)` | Tool guard (with args) + actor construction live here | Re-apply 3 marked lines; run MCP coverage test |
 | R-6 | `apps/web/src/lib/server/functions/comments.ts` | First line of `runCreateComment`: `await forkAssertTeammateMayComment(auth)` | Dashboard/portal/widget comment create has no permission gate | Re-insert first line of fn |
 | R-8 | `apps/web/src/routes/api/v1/posts/$postId.comments.ts` | After `withApiKeyAuth` in POST (:74): `assertApiPermissions(auth, [COMMENT_CREATE])`; actor at :159 gets `permissions` | REST comment create gates only `comment.moderate`; actor falls back to preset | Re-insert both marked lines |
@@ -458,7 +681,9 @@ every key by construction (`rbac-catalogue.ts:645-646`).
 | R-12 | `apps/web/src/lib/server/functions/tickets.ts` | `assertTicketVisible(ticketId, actor)` before `getTicket` at :128, :368, :772 | By-ID dashboard reads skip `ticketFilter` | Re-insert 3 marked lines; team-scope negative test |
 
 **Total: 11 seam IDs over 20 upstream files, all permanent** (R-1…R-5, R-9…R-12 = Phase 1a, D3; R-6/R-8 =
-Phase 1b, D-R6). **R-7 (`seat-usage.ts`) retired** (D-R1). Not seams: fork route
+Phase 1b, D-R6). **R-7 (`seat-usage.ts`) retired** (D-R1). The second pass adds **no new seam ID** here: the
+denial check extends R-1. The MCP OAuth and session-create checks are plan 20's TW-1/TW-2, placed as §4.9
+specifies. The sweep job registers through shared F-8. Not seams: fork route
 `routes/admin/settings.fork-access.tsx` (via F-4), `mcp/tools/fork-rbac.ts` (via F-3), fork migration,
 `MATRIX.md` / mirror regeneration.
 
@@ -474,7 +699,8 @@ together.
 | **1** Fork keys | F-7 block; §6 keys; `bun run db:permissions`; template reconcile. **Requires Foundations `fork-migrate` → `seedSystemData` (02 §3.3a).** | Per tenant after `fork-migrate`: every `FORK_PERMISSIONS` key present in `permissions`; Manager holds `ticket.escalate`/`announcement.view`/`announcement.manage`/`comment.create`, Contributor holds `comment.create`/`announcement.view`, Manager lacks `account.*`/`prioritization.*` (incl. the moved `prioritization.manage`); `MATRIX.md` regenerated; `scopeForPermission` maps as §6. Fork-only release rehearsed on a populated pooled DB and a suspended-then-resumed tenant. |
 | **1b** Comment gate | R-6, R-8; `add_comment` spec; enable fn with one-time grant | Portal user can still comment; Stakeholder and Fleet Observer cannot (dashboard, portal, widget, REST, MCP); pre-existing custom roles still can |
 | **2** Team-scoped RBAC | Resolver, `systemRolesForPrincipal`, `canInTeam`, grant/revoke + `assignTierAgentFn` + UI | Team grant on T2 allows `account.execute` only via T2 team; workspace-wide custom-role scopable key is inert; custom-role `member` with no Manager row does **not** get `ticket.escalate` via the system branch; zero-row `member` denied; service principal denied; leaving `team_members` revokes; `permissionsForPrincipal` snapshot unchanged |
-| **3** Multi-role + provenance | add/remove fns, `applyAssignmentSet`, `fork_role_assignment_sources`, `assertTowerPrincipalsFailClosed` + UI | Dev Team + Tier 2 union; upstream role change clears extra hats + provenance, keeps team rows (asserted); authoritative apply removes an invite-created Manager row; empty set writes `no_access`; concurrent upstream role change + apply serialize (no zero-row state observed) |
+| **3** Multi-role + provenance | add/remove fns (local writer, unmanaged only), `fork_role_assignment_sources` + UI | Dev Team + Tier 2 union; an upstream role change clears the extra hats and their provenance but keeps team rows (asserted); the fns refuse a registry principal (`TOWER_MANAGED`); the last row is never removed |
+| **3t** Managed principals + denial (ships before plan 20's `sync-members`) | `applyManagedRoleSet`, `denyPrincipal` / `liftPrincipalDenial` / `isPrincipalDenied`, `fork_principal_denials`, R-1 denial edit, sweep job (F-8), `assertTowerPrincipalsFailClosed`; plan 20 TW-1/TW-2 at the §4.9 sites | §0b R2-3 and R2-4 acceptance tests pass. A concurrent upstream `setPrincipalRole` and `applyManagedRoleSet` serialise with no deadlock (same lock order) and no zero-row `member` observed. Apply removes an invite-created Manager row. Apply on a denied principal yields `user`/zero rows. `assertTowerPrincipalsFailClosed` is clean after `seedSystemData` on a populated tenant. |
 
 ## 9. Testing strategy
 
@@ -503,9 +729,15 @@ together.
     `changelog.view_draft` denied; `get_details` on a changelog ID likewise.
   - *REST actors:* a custom-role key calling a ticket mutation route whose service checks a key the role lacks
     → denied (proves R-9/R-10 threading); Tier 1-created key → ticket list returns 403/empty (narrowing).
-  - *Fail-closed:* tower-managed principal with all bundles removed resolves to the empty set, survives a
-    `seedSystemData` run without gaining Manager; `assertTowerPrincipalsFailClosed` flags a hand-made zero-row
-    tower principal.
+  - *Fail-closed:* a tower-managed principal with all bundles removed is `user` with zero rows and resolves to
+    the empty set. It survives `seedSystemData` / `runMigrations` / `fork-migrate` without gaining Manager.
+    `assertTowerPrincipalsFailClosed` flags each violation class (a)–(e) of §4.8 when it is made by hand.
+  - *Tower owns everything (R2-3):* the §0b R2-3 sequence (local grant → removed at sync; add via tower; remove
+    via tower; fork-UI grant refused; upstream legacy-role change → reverted and reported `drift_reverted`;
+    seed/migration/reconciliation between every step → no Manager fallback).
+  - *Tenant denial (R2-4):* the §0b R2-4 sequence (locally privileged managed user denied mid-session with a live
+    cookie session, widget session, MCP JWT + refresh token and a self-created API key; every sign-in method
+    refused; sign-in/deny race closed by the sweep; sync unavailable with the lease off and on).
 - **Integration (real Postgres, `QUACKBACK_TENANCY=single` and `pooled`):** REST + MCP (OAuth and key) matrix for
   Owner / Manager / Contributor / Tier 1 / Stakeholder / Fleet Observer; comment create across all five paths;
   key backfill dry-run vs apply; comment-gate one-time grant; role delete cascading team grants; upstream role
@@ -516,6 +748,12 @@ together.
   actor guard first — the canaries for new upstream surfaces; check the 6 `isNull(teamId)` filters, the service
   bypass lines (`policy/tickets.ts:48`, `policy/conversations.ts:38`), `canViewConversation` semantics and the
   zero-row fallback (`permissions.ts:74`) / seed backfill (`seed-system.ts:136-175`) are unchanged (D-R9).
+  Also re-verify the upstream behaviours the managed writer and the denial depend on (contract tests):
+  `setPrincipalRole` lock order (`principal.factory.ts:277,320`) and replace-all; the absence of new
+  assignment writers beyond `principal.factory.ts:365,388`, `role.service.ts:464` and
+  `seed-system.ts:122,174` (a grep guard fails on a new one); sessions stored in the database with no cookie
+  cache; the MCP OAuth path still not consulting token rows; and `databaseHooks.session.create.before`
+  still aborting on `false`.
 
 ## 10. Open items
 
@@ -537,6 +775,13 @@ together.
 - **O-R7 (🟡, new)** Upstream lets any teammate with `conversation.view` open **any** conversation by ID
   (lists are team-filtered); tickets are team-filtered by ID after R-12. Keep upstream's conversation behaviour
   for Tier agents? *Default: keep upstream (no seam in `policy/conversation.ts`).*
+- **O-R8 (🟡, new)** Turn on the tenant-side entitlement lease? With it on, a managed person loses app access
+  when the tower has not renewed their entitlement for the lease duration. This makes lease + 5 min a hard
+  maximum for revocation, but a long tower or IdP outage also locks managed staff out; the unmanaged break-glass
+  admin is unaffected. *Default: off (15-minute target only, alarm on stale sync); if turned on, 4 hours.*
+- **O-R9 (🟡, new)** Should app admins be **blocked** from changing a tower-managed person's role in the app?
+  Blocking needs a new seam in `setPrincipalRole`. Without it, the change is allowed and reverted at the next
+  sync. *Default: allow, revert at next sync, report `drift_reverted`.*
 - **O6** Onboarding checklist legacy resolution (`functions/admin.ts:397`) left as-is (non-security).
 
 ## 11. Relationship to other v2 plans
@@ -555,9 +800,12 @@ together.
 - **60 announcements:** `announcement.view` (Manager, Contributor, Fleet Agent, Fleet Observer) and
   `announcement.manage` (Manager ✓, Fleet Agent template ✓, D-N8).
 - **20 control tower:** relies on Phase 1a (tower acts through tenant MCP with human OAuth tokens, D-C2);
-  configurable bundles map to tenant templates via `template_key` (§4.7, D-C9); builds role sync on
-  `fork_install_persona_roles` (`exact`), `applyAssignmentSet` (authoritative, provenance) and
-  `assertTowerPrincipalsFailClosed` (§4.8).
+  configurable bundles map to tenant templates via `template_key` (§4.7, D-C9). Plan 20 builds role sync on
+  `fork_install_persona_roles` (`exact`), `applyManagedRoleSet` (whole role set, D-C15) and
+  `assertTowerPrincipalsFailClosed` (§4.8), and builds disablement on `denyPrincipal` / `liftPrincipalDenial`
+  (§4.9, D-C16). Plan 20 owns the registry `fork_tower_principals` (adding the columns listed in §5), seams
+  TW-1 (MCP handler, same block as R-4) and TW-2 (at `databaseHooks.session.create.before`), the directory sync
+  and the revocation budget. Plan 20 drops `fork_tower_assignments`.
 
 ## Appendix A — Authorization inventory (Phase 1a; verified at `eb79147`)
 
