@@ -33,7 +33,7 @@ The fork's production image is a fork-owned `apps/web/Dockerfile.fork` layered o
 
 | ID | Upstream file | Seam (one line) | Plan / phase | Status |
 | --- | --- | --- | --- | --- |
-| R-1 | `apps/web/src/lib/server/domains/api/auth.ts` | Resolve and trim principal permissions in `requireApiKey`; use at :134/:158 | 10 / 1a | planned |
+| R-1 | `apps/web/src/lib/server/domains/api/auth.ts` | Resolve and trim principal permissions in `requireApiKey`; refuse keys whose principal or creator is denied (D-C16) | 10 / 1a | planned |
 | R-2 | `apps/web/src/lib/server/domains/api-keys/api-key.service.ts` | Copy creator's role assignments onto the key's service principal | 10 / 1a | planned |
 | R-3 | `apps/web/src/lib/server/mcp/types.ts` | `permissions` on `McpAuthContext` | 10 / 1a | planned |
 | R-4 | `apps/web/src/lib/server/mcp/handler.ts` | Resolve MCP permissions after `resolveAuthContext` | 10 / 1a | planned |
@@ -46,11 +46,14 @@ The fork's production image is a fork-owned `apps/web/Dockerfile.fork` layered o
 | R-12 | `apps/web/src/lib/server/functions/tickets.ts` | `assertTicketVisible` before `getTicket` at :128, :368, :772 | 10 / 1a | planned |
 | C-1 | `apps/web/src/lib/server/workspaces/pool-cache.ts` | Configurable `prepare` (only if RDS Proxy pins) | 20 / 0–2 (conditional) | planned |
 | IE-1 | `apps/web/src/lib/server/domains/conversation/conversation.email-channel.ts` | Per-app inbound reply-address key in `signingKey` | 20 / 8 | planned |
+| TW-1 | `apps/web/src/lib/server/mcp/handler.ts` (in R-4's fenced block after :244) | OAuth path returns 401 when `isPrincipalDenied` (D-C16) | 20 / 5 | planned |
+| TW-2 | `apps/web/src/lib/server/auth/index.ts` (`databaseHooks.session.create.before`, :631-638) | Refuse session creation for denied users — every sign-in method (D-C16) | 20 / 5 | planned |
 | T-1 | `apps/web/src/lib/server/policy/tickets.ts` | Escalator-while-watching read term in `ticketFilter` (D-T6) | 30 / 2 | planned |
 | T-2 | `apps/web/src/components/admin/inbox/inbox-detail-panel.tsx` | Shared fork detail-panel slot (tier panel + account actions; A-2 uses the same slot) | 30 / 2 | planned |
-| T-8 | `apps/web/src/lib/server/domains/tickets/ticket.service.ts` | `assignTicket` pre/post tier hooks; read-only-escalator write guard in status/priority/delete | 30 / 2 | planned |
-| T-9 | `apps/web/src/lib/server/domains/conversation/conversation.service.ts` | `assignTeam` pre/post tier hooks; export two system-message helpers | 30 / 2 | planned |
+| T-8 | `apps/web/src/lib/server/domains/tickets/ticket.service.ts` | `assignTicket` hands the team write to `forkApplyTeamAssignment` (one locked transaction: re-check tier invariant, mirror pair, `assignment_seq`, ledger/outbox); read-only-escalator write guard in status/priority/delete (~12 lines) | 30 / 2 | planned |
+| T-9 | `apps/web/src/lib/server/domains/conversation/conversation.service.ts` | `assignTeam` routes member pick + team write through `forkApplyTeamAssignment` (~15 lines); export two system-message helpers | 30 / 2 | planned |
 | T-10 | `apps/web/src/lib/server/domains/tickets/ticket-message.service.ts` | Read-only-escalator write guard in `insertTicketMessage` | 30 / 2 | planned |
+| T-14 | `apps/web/src/lib/server/domains/tickets/ticket-intake.service.ts` | Optional `opts.inTx(tx, ticket)` in `createTicketCore` so conversion tickets are recorded on the escalation operation atomically | 30 / 2 | planned |
 | T-11 | `apps/web/src/lib/server/domains/settings/settings.conversation-routing.ts` | Refuse enabling auto-routing while tiers are on | 30 / 3 | planned |
 | T-4 | apps/web/src/locales/*.json (9) | `portal.forkHub.*` keys | 30 / 7b | planned |
 | T-5 | `apps/web/src/components/widget/widget-overview.tsx` | Hub section on widget Home | 30 / 7b | planned |
@@ -79,7 +82,7 @@ The fork's production image is a fork-owned `apps/web/Dockerfile.fork` layered o
 
 ## Totals (core phases, excluding conditional / optional / deferred)
 
-Foundations 12 (incl. F-12 SSRF allow-list, a blocker for intranet SSO) · RBAC 11 (R-10 spans 10 files) · Control tower 1 (+1 conditional) · Tiered support 9 (6 core +
+Foundations 12 (incl. F-12 SSRF allow-list, a blocker for intranet SSO) · RBAC 11 (R-10 spans 10 files) · Control tower 3 (+1 conditional) · Tiered support 10 (7 core +
 3 hub) · Account actions 0 own (uses T-2's slot; +1 optional, +1 deferred) · Prioritization 11 · Announcements 3.
 
 Per the staff review, these counts are an estimate of merge surface, not a target: add a seam whenever an

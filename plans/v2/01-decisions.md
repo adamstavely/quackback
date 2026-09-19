@@ -206,4 +206,22 @@ D-T8 default: higher-tier agents outside the owning team, and Managers, may de-e
 **Ask of the mail team:** have the internal mail server stamp an `Authentication-Results` header on inbound mail; without
 it Quackback treats every internal email as unverified.
 
+
+## Raised by the second-pass revisions (owner input needed; plans use the stated default meanwhile)
+
+| ID    | Plan | Question | Default in plan |
+| ----- | ---- | -------- | --------------- |
+| O-R8  | 10/20 | Turn on a tenant-side entitlement lease so revocation becomes a **hard maximum** (lease length + 5 min), rather than a 15-minute target? | Off; 4 hours if turned on |
+| O-R9  | 10 | Block app admins from changing a tower-managed person's role (needs an upstream edit), or allow it and revert at the next sync with a `drift_reverted` report? | Allow + revert + report |
+| O-C15 | 20 | A tenant that must stay on an older upstream release has to be **suspended** (the serving path catches every served tenant up to the image). Acceptable, or must some keep serving on an older image? | One serving image; suspend held-back tenants |
+| O-C16 | 20 | Can the mail team deliver one copy per recipient and **strip any inbound copy of, then stamp,** a dedicated routing header? | Yes (validated by V-9); otherwise one mailbox per app |
+| O-T21 | 30 | When the sweep finds a ticket/conversation team that disagrees with the last recorded assignment, restore the recorded team or adopt the unrecorded write? | Restore and alert |
+| O-T22 | 30 | Refuse a human's assignment made from a stale screen after the pair has been escalated? (Needs an expected-team input on upstream's assign.) | No — allowed as a recorded manual override |
+| O-T23 | 30 | Accept that a note or system message can repeat if a worker stalls longer than twice its 30-second lease mid-call? | Accept |
+| O-A14 | 40 | Can a disabled employee still be the **target** of an account action (e.g. to deprovision them)? | Yes |
+| O-A15 | 40 | If the requester is disabled after approval but before the action is sent, cancel the request? | Yes |
+| O-A16 | 40 | If an escalation is already in flight when a request closes, let it complete (ticket stays on the higher tier)? | Yes |
+| O-A17 | 40 | Is a signed conformance-kit attestation (plus live probes) required and sufficient to enable a connected app? | Yes, required and audited |
+| O-N16 | 60 | Is a 5-minute recovery bound acceptable when a live banner update is lost (normal updates arrive in under 2 s)? | Yes |
+
 Verification tasks recorded in the plans (not decisions): RDS Proxy pinning (20 V-1); MCP token lifetimes and `skip_consent` behaviour (20 V-4, V-8); AWS S3 through the registry's storage record, which today only accepts `provider: 'r2'` and static keys (20 V-7); whether `/api/widget/kb-ask` respects private-portal/help-center audience rules (30); banner stream limiter sizing (60 N-11).

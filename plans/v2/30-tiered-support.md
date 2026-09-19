@@ -1,6 +1,7 @@
 # Tiered Support (Tier 1/2/3) + Support Hub — v2 Design Plan
 
-> **Status:** v2 (round 2 + staff review, `03-staff-review.md` + intranet revision, `04-intranet-deployment.md`) — supersedes
+> **Status:** v2 (round 2 + staff review, `03-staff-review.md` + intranet revision, `04-intranet-deployment.md` + second-pass
+> review, `REVIEW-2026-09-19-SECOND-PASS.md` R2-5/R2-6) — supersedes
 > `plans/v1/tiered-support-helpdesk-plan.md`. Plan only; nothing is implemented.
 > **Depends on:** Foundations (fork migration lineage, `fork_settings`, shared seams F-1…F-8, F-10, `SEAMS.md`; F-12 indirectly, because saving the intranet IdP needs it);
 > `10-rbac-persona-extensions.md` Phase 1a (custom roles on REST/MCP) and Phase 2 (team-scoped RBAC, `canInTeam`) (D-T4);
@@ -10,7 +11,7 @@
 > D-N5). D-T8 is 🟡 (default adopted, flagged). D-T11 is decided: option B (hub landing + links).
 > Baseline: upstream `780a7b577`. Claims that are new in round 2 were checked against `92fb29335`; claims new in the staff-review
 > revision were checked against `eb7914767`; claims new in the intranet revision were checked against the current checkout
-> (`d23ceb673`).
+> (`d23ceb673`); second-pass claims were checked against the current checkout on 2026-09-19.
 > **Conventions:** `02-fork-conventions.md` is binding.
 
 ## Round-2 changes
@@ -45,8 +46,8 @@ sign-in, private portals) is superseded by the intranet table. The body reflects
 | Finding ID | Change | Where in plan |
 | --- | --- | --- |
 | T1 | The hub no longer calls `mergeLeadIntoUser`: it rejects `!lead.userId` (`user.merge.ts:61`) and tears down a user identity, and cold-inbound leads have **no** user row (`conversation.email-cold-inbound.ts:118,139`). A fork **claim service** `claimRequesterLeads` re-points each standalone lead in one transaction through the upstream registry (`repointPrincipalActivity`, `principal-repoint.ts:552`, which also runs fork steps via F-5), then does a **principal-only** teardown (`DELETE principal WHERE id=lead AND type='anonymous' AND user_id IS NULL`). It requires a verified session email (inbox proof), exact normalized address match, `FOR UPDATE` on lead rows (concurrent claims serialize; a loser finds nothing), and keeps provenance: `unverifiedSender` stays on the conversation row, and the block transfers through the registry's `blocked_at` fill-if-empty step (`:420`). A **blocked** lead is kept as an activity-free **block anchor**, so later weak-DMARC mail from the address still reuses a blocked lead. The upstream helper is unchanged, and leads with a `userId` (widget pre-chat emails) are never claimed. Tests cover the OTP and magic-link paths. | §3, §4.11 step 3, §5, §9, §10 |
-| T2 | Escalation is rewritten as a **durable operation**. First, **before any mutation**, it claims an operation row (ledger, `state='claimed'`), keyed `UNIQUE (subject_key, idempotency_key)` by the **required, caller-supplied** key; one un-applied operation is allowed per subject. Conversion (if needed) and the agent pick are persisted on that row. The state change then runs in **one transaction**: `SELECT … FOR UPDATE` on the ticket (then the paired conversation) row, a CAS on `expectedFromTeamId`, conditional `UPDATE`s of team and agent on both rows through fork primitives, and `state='applied'` with pre-images and a pending-effects list. Side effects (realtime, events, activity, SLA, attribute, note, watcher, system messages) then run from that outbox. Each is idempotent or deduplicated and is marked done individually. A retry with the same key **resumes** the same operation, and an F-8 sweep resumes stranded operations. Upstream writers that run concurrently block on the row lock and commit **after** the escalation; their hook (T3) records them. The escalation never calls `assignTicket`/`assignTeam`, so it never re-distributes and never stamps `firstResponseAt`. Mandatory tests: kill/retry at every step, and two competing escalations. | §4.2, §5, §7, §9 |
-| T3 | **Every team-assignment path goes through one invariant.** Seams T-8 (`assignTicket`) and T-9 (`assignTeam`) call fork hooks. A pre-hook skips an **automated** (service-actor) team move that would lower a ticket's tier (D-T9) or undo an escalation, which covers delayed intake workflows. A post-hook writes a ledger row (`source='assignment'`) and **syncs the pair** so ticket team = conversation team, using the same locked fork primitive. The §4.1 fallback now applies only to ticket-less conversations. **Auto-routing is enforced off** by seam T-11 in `updateConversationRouting` (refuse, with a verify-after-write check), not just a warning. **Intake:** enabling requires a designated T1 intake team and turns on the seeded workflows. An F-8 intake sweep assigns unpaired and manual/API customer tickets with no team to the intake team. Back-office and tracker tickets stay untiered unless someone assigns them. **First response:** escalation does not count (default 🟡). The fork primitives never stamp `firstResponseAt`; ordinary upstream `assignTicket` keeps its behaviour (`ticket.service.ts:774`). Every tier change, including conversation-only changes before conversion, lands in the ledger, which becomes the source for per-tier metrics. | §4.1, §4.2, §4.6, §4.7, §5, §7, §9, §10 |
+| T2 | *(Worker ownership, conversion, agent pick, effect dedup and ordering superseded by R2-5; see the second-pass table.)* Escalation is rewritten as a **durable operation**. First, **before any mutation**, it claims an operation row (ledger, `state='claimed'`), keyed `UNIQUE (subject_key, idempotency_key)` by the **required, caller-supplied** key; one un-applied operation is allowed per subject. Conversion (if needed) and the agent pick are persisted on that row. The state change then runs in **one transaction**: `SELECT … FOR UPDATE` on the ticket (then the paired conversation) row, a CAS on `expectedFromTeamId`, conditional `UPDATE`s of team and agent on both rows through fork primitives, and `state='applied'` with pre-images and a pending-effects list. Side effects (realtime, events, activity, SLA, attribute, note, watcher, system messages) then run from that outbox. Each is idempotent or deduplicated and is marked done individually. A retry with the same key **resumes** the same operation, and an F-8 sweep resumes stranded operations. Upstream writers that run concurrently block on the row lock and commit **after** the escalation; their hook (T3) records them. The escalation never calls `assignTicket`/`assignTeam`, so it never re-distributes and never stamps `firstResponseAt`. Mandatory tests: kill/retry at every step, and two competing escalations. | §4.2, §5, §7, §9 |
+| T3 | *(The pre-hook/post-hook design and the `updated_at` reconciliation superseded by R2-6; see the second-pass table.)* **Every team-assignment path goes through one invariant.** Seams T-8 (`assignTicket`) and T-9 (`assignTeam`) call fork hooks. A pre-hook skips an **automated** (service-actor) team move that would lower a ticket's tier (D-T9) or undo an escalation, which covers delayed intake workflows. A post-hook writes a ledger row (`source='assignment'`) and **syncs the pair** so ticket team = conversation team, using the same locked fork primitive. The §4.1 fallback now applies only to ticket-less conversations. **Auto-routing is enforced off** by seam T-11 in `updateConversationRouting` (refuse, with a verify-after-write check), not just a warning. **Intake:** enabling requires a designated T1 intake team and turns on the seeded workflows. An F-8 intake sweep assigns unpaired and manual/API customer tickets with no team to the intake team. Back-office and tracker tickets stay untiered unless someone assigns them. **First response:** escalation does not count (default 🟡). The fork primitives never stamp `firstResponseAt`; ordinary upstream `assignTicket` keeps its behaviour (`ticket.service.ts:774`). Every tier change, including conversation-only changes before conversion, lands in the ledger, which becomes the source for per-tier metrics. | §4.1, §4.2, §4.6, §4.7, §5, §7, §9, §10 |
 | X-1 | Tier membership no longer calls the replace-set `setTeamMembers` (`team.service.ts:205`). `assignTierAgent` / `removeTierAgent` use **atomic single-row** fork SQL: `INSERT … ON CONFLICT DO NOTHING` on `team_members_principal_team_uq`, and `DELETE … WHERE team_id AND principal_id`, with upstream's teammate validation replicated. A stale replace-set save from upstream's team UI can still drop a member (upstream's lost-update). The tier reconciliation (§4.12) repairs the grants when that happens. | §4.12, §9 |
 | X-2 | Tiers are limited to **1–3** in v1 (`CHECK tier BETWEEN 1 AND 3`), matching the three Tier templates. `resolveTeamForTier` and the `targetTier` / `min_tier` contract reject values outside 1–3. | §4.1, §5, §11 |
 | X-3 | **"Read access while watching" is read-only after handoff.** A write guard (`forkAssertTicketWritable`) is placed in the ticket writers (T-8: status, priority, assign, delete; T-10: agent reply and note in `insertTicketMessage`). It refuses a human actor who does not hold `ticket.view_all`, is not the assignee, is not on the assigned team, and whose only access is the escalator-watch term, once their operation's effects are done. The plan also states the limit: upstream ticket writers check permission only, not row scope, and `canViewConversation` already allows deep-links across teams. **Team queues are therefore not strict isolation.** Conversation-side writes on the pair stay a routing convention. | §4.5, §6, §7, §9 |
@@ -74,12 +75,31 @@ OI-15 row (T-12). See the next table.
 | Email (the existing resolution email, deferred Phase 8 stage email) goes through upstream's configured transport: SMTP to the internal relay or the SES SMTP VPC endpoint. Inbound email is IMAP. The fork adds no mail transport, no inbound webhook and no internet call, and hub links use the intranet portal URL. | D-E2 | §4.10, §8 |
 | New 🟡 items: OI-19 (accept an IdP address without `email_verified` when the IdP owns the verified domain) and OI-20 (nav link item instead of a localized built-in). | — | §10 |
 
+## Second-pass review changes (`REVIEW-2026-09-19-SECOND-PASS.md`)
+
+The second pass found that a durable operation row did not serialize its workers (R2-5), and that ordinary assignment could
+still undo an escalation between a pre-check and an unconditional upstream update (R2-6). This revision replaces the parts
+of staff-review rows **T2** (steps 2–5 of the operation, the out-of-transaction agent pick, "find marker, then insert") and
+**T3** (the pre-hook/post-hook two-call design and the `updated_at` reconciliation) described below. The 40 contract is kept:
+`escalateTicket` takes a required, caller-supplied `idempotencyKey`, and every replay returns the same `escalationId`.
+
+| Finding | Change | Where |
+| --- | --- | --- |
+| R2-5 (ownership) | **Operation lease with fencing.** Before running any step, a worker claims the operation row with `UPDATE fork_support_escalations SET lease_owner=$w, lease_until=now()+'30 s', lease_token=lease_token+1 WHERE id=$id AND state IN ('claimed','converting') AND (lease_owner IS NULL OR lease_until < now()) RETURNING lease_token`. Request threads (first call and same-key retries) and the recovery job all use this one claim, so only one worker runs a step at a time. Every step commits its writes **and** its state transition in one transaction, and that transition is `UPDATE … WHERE id=$id AND lease_token=$token AND state=$expected`. If it matches 0 rows, the lease was lost and the transaction rolls back. A worker that stalls past its lease therefore cannot commit a step. A same-key replay that cannot claim the lease waits up to 10 s for a terminal state, then throws a retryable `ESCALATION_IN_PROGRESS` error that carries the `escalationId`. It never starts a second operation. A same-key replay with different inputs gets `IDEMPOTENCY_KEY_REUSED` (the row stores `request_hash`). | §4.2 steps 1, 1a; §5 |
+| R2-5 (conversion) | **One ticket per operation, durably.** `createTicketCore` opens its own transaction (`ticket-intake.service.ts:196`) and has no `tx` input. **New seam T-14** adds an optional `opts.inTx(tx, ticket)` callback, which runs inside that transaction right after the ticket insert. The fork callback (1) runs `UPDATE fork_support_escalations SET ticket_id=$new, state='converting' WHERE id=$op AND lease_token=$t AND ticket_id IS NULL`, which must match exactly one row; (2) locks the conversation `FOR UPDATE` and inserts the customer pair row into `ticket_conversations`. The 1:1 partial unique indexes reject a conversation that is already paired. Any failure rolls back the ticket. So a committed conversion ticket always has its op row pointing at it, and no orphan ticket is possible. The old JSON marker (`forkEscalationOpId`) and the separate `linkTicketToConversation` call are removed. That call also required `ticket.create` (`ticket-conversation-link.service.ts:103`), which Tier roles do not hold. The link's post-commit tail (the "Ticket created from this conversation" system message, the SLA handoff through exported `handoffConversationSlaToTicket` (`:324`), and the first-response backfill from an earlier agent reply) runs as the once-effect `conversion_tail`. If the conversation is already paired by another path, the op continues on that ticket, and the CAS still applies. | §3, §4.2 step 2, §7 |
+| R2-5 (agent pick) | **The pick and the cursor advance commit in the apply transaction.** Upstream `distributeToTeamMember` reads the cursor from an unlocked `Team` object and writes it through `setRoundRobinCursor` in autocommit (`team-distribution.ts:55-56`, `team.service.ts:268-273`), so the escalation no longer calls it. A fork function, `pickTierAgentInTx(tx, teamId)`, does the same thing inside the apply transaction. It runs `SELECT … FROM teams WHERE id=$t FOR UPDATE` and computes candidates with the same exported helpers (`listTeamMemberPrincipalIds`, `listOnlineAgentIds`, `listAvailableAgentIds`, `pickRoundRobin`, `countOpenConversationLoad`, `pickLeastLoaded`). It then writes `teams.rr_cursor_principal_id` and the op row's `chosen_agent_id` in that transaction. A crash before commit rolls back both, and the retry picks again from the unchanged cursor. The "advance once" guarantee therefore **holds** for committed escalations. No seam is needed; a parity test pins the fork pick to upstream's rotation and least-loaded rules. | §4.2 step 3, §9 |
+| R2-5 (once-effects) | **Atomic effect claims replace "find marker, then insert".** Effects that are promised once each get a row in `fork_tier_effects (ledger_id, effect)` PK. A runner owns an effect only if its `INSERT … ON CONFLICT DO NOTHING RETURNING` returned a row. It then runs the effect and sets `state='done'`. Only a `started` row older than 2 × the lease is taken over, and only after the new owner checks the effect's marker (`ESC-<id>` in the note, the op id in the system-message metadata). The activity row and the reason attribute are no longer effects at all. They are written **inside** the apply transaction: a direct `ticket_activity` insert, and the same `custom_attributes \|\| jsonb` merge that `setConversationAttribute` performs (`set-attribute.service.ts:175-185`). Upstream `recordTicketActivity` is fire-and-forget (`ticket-activity.service.ts:56-70`), so it cannot report success. **Stated limit:** events, webhooks and realtime stay at-least-once. A note or system message can repeat only if a runner stalls longer than 2 × the lease in the middle of the effect. | §4.2 step 5, §5 |
+| R2-5 (ordering) | **Per-pair transition sequence.** New sidecar `fork_tier_pair_state` (one row per ticket/conversation pair) holds `assignment_seq`. Every team transition (escalation apply, hooked assignment, intake, drift repair) increments it under the row lock and stamps the ledger row's `seq`. Effects run under a **pair effects lease**, in ascending `seq`. A **stateful** effect (tier-default SLA, the reason attribute's `attribute_changed` event) at `seq = n` is marked `superseded` if any ledger row of the pair with `seq > n` carries the same effect kind. An older pending SLA or reason effect therefore cannot overwrite a later transition. | §4.2 step 5, §4.7, §5 |
+| R2-6 | **Ordinary team assignment is one locked transaction (narrow transactional integration).** T-8 and T-9 no longer bracket upstream's unconditional `UPDATE` with a pre-hook and a later post-hook. In tier mode, they hand the team write to `forkApplyTeamAssignment`. In one transaction, that function locks ticket → conversation → `fork_tier_pair_state` (fixed order; a conversation-side call that finds a ticket after locking restarts, see §4.6). It then re-checks the tier invariant (no automated lowering, and no automated move off a team that an escalation set) against the **locked** current state. It applies upstream's own patch to the written side, mirrors the team onto the other side, increments `assignment_seq`, and inserts the ledger row (`source='assignment'`, `seq`, outbox effects), all before commit. It returns the locked pre-image, so upstream's events use the true "from". With the flag off it returns `null`, and upstream runs unchanged. T-9 also moves the team's member pick into that transaction (`pickTierAgentInTx`). **Recovery no longer uses `updated_at`.** No crash window is left between a team write and its ledger or pair write. The sweep compares each tiered pair with `fork_tier_pair_state.current_team_id` (the last recorded assignment version). Any disagreement comes from an unhooked writer: the sweep raises `TIER_INVARIANT_DRIFT` and restores the recorded version with a new `seq` (it never adopts the unrecorded write). **Stated limit:** a *human* manual move stays an allowed, recorded override (OI-16). A stale human form can still move a ticket after an escalation. | §4.6, §5, §7 (T-8, T-9), §9 |
+| Open items | New 🟡 defaults: OI-21 (drift repair restores the recorded team), OI-22 (stale human assigns stay overrides), OI-23 (a residual repeat of a once-effect after a stall longer than 2 × the lease). | §10 |
+| Tests | **R2-5 acceptance test (reviewer's, adapted):** race two identical `escalateTicketFn` submits (same key) with the recovery job on a ticket-less conversation, on a round-robin team. Crash (a) right after the T-14 ticket commit, (b) inside the apply transaction after the cursor write, and (c) between an effect's claim and its `done`. Assert: one conversion ticket (and no orphan), one link, one applied move (one ledger row, `seq` +1), the cursor advanced exactly once and matching `chosen_agent_id`, one note, one activity row, one system message. Events are at-least-once. Then run two successive escalations (T1→T2→T3) with the first one's effects held back; the T2 SLA default and reason are marked `superseded` and never overwrite T3's. **R2-6 acceptance test (reviewer's, adapted):** pause a workflow `assign_team` (service actor, target T1) after upstream's no-op check, escalate the pair to T2, then resume the workflow. It returns the current row, and the pair stays on T2 with no ledger row for the skipped move. Repeat through `assignTicket` (REST as a service principal) and bulk. Kill the process inside and immediately after the assignment transaction. Make an unrelated edit (ticket title/priority, which advances `updated_at`) before running the sweep. The pair matches the last recorded `assignment_seq`, and no transition is invented or lost. | §8, §9 |
+
 ## 1. Changes from v1
 
 | # | v1 issue (review §3.4 + follow-up) | v2 resolution |
 | --- | --- | --- |
 | 1 | **Blocker:** tier routing strategy. `RoutingResult` returns an agent only (`routing.types.ts:17-22`). `settings.conversation-routing.ts:17,22,36,58,82` hard-codes `auto_assign_active`. `assignRoutedConversation` (`conversation.service.ts:1454-1474`) only claims the agent column. | **No routing strategy change.** T1 intake is a workflow (`conversation.created` / `assistant.handed_off` → `assign_team` T1 + `apply_sla`) plus a ticket intake sweep (§4.6). Workspace auto-routing is **enforced** off while tiers are on (seam T-11). |
-| 2 | Conversation and ticket have separate assignees (`schema/conversation.ts:61,66`; `schema/tickets.ts:112-114`). `assignTicket` (`ticket.service.ts:744-800`) never runs team distribution and is gated by `ticket.assign`. Conversation assignment is gated by `canActAsAgent` (`policy/conversation.ts:55-58`). Balanced distribution counts conversations only. | `escalateTicket` moves **both** sides in one locked transaction through fork primitives, using one agent picked with `distributeToTeamMember` (`team-distribution.ts:43-66`). Events, realtime and activity are replayed from a durable outbox (§4.2). Ordinary assignments keep the pair in sync through hooks T-8/T-9 (§4.6). The balanced-load limitation is accepted (D-T14). |
+| 2 | Conversation and ticket have separate assignees (`schema/conversation.ts:61,66`; `schema/tickets.ts:112-114`). `assignTicket` (`ticket.service.ts:744-800`) never runs team distribution and is gated by `ticket.assign`. Conversation assignment is gated by `canActAsAgent` (`policy/conversation.ts:55-58`). Balanced distribution counts conversations only. | `escalateTicket` moves **both** sides in one locked transaction through fork primitives. The agent is picked **inside** that transaction by `pickTierAgentInTx`, which applies `distributeToTeamMember`'s rules (`team-distribution.ts:43-66`) and commits the round-robin cursor atomically. Events, realtime and notes are replayed from a durable outbox (§4.2). Ordinary team assignments run as one locked fork transaction through T-8/T-9 (§4.6). The balanced-load limitation is accepted (D-T14). |
 | 3 | `applySlaToConversation` resets clocks on re-apply (`sla.service.ts:162-219`), and so does `applySlaToTicket` (`ticket-sla.service.ts:270`). | **D-T1:** escalation never calls either function while an SLA is active (§4.4). Per-tier attainment comes from the tier timeline. |
 | 4 | Clearing the agent hides the ticket from a T1 agent who has only `*.view` (`policy/tickets.ts:44-62`, `policy/conversations.ts:36-50`). `assignTeam` never clears the agent (`conversation.service.ts:1573-1576`). | **D-T2/D-T6:** the service replaces or clears the agent explicitly. The escalator is auto-watched, and seam T-1 grants "escalated-by-me AND still watching" visibility, **read-only** after handoff (§4.5). |
 | 5 | The `escalate` workflow/macro action was treated as cheap. It is a closed union across about 15 sites, and `MacroAction` has no ticket actions (`schema/macros.ts:38-45`). | Manual escalation ships first. Automated escalation is a later, seam-counted phase (Phase 6). |
@@ -94,7 +114,7 @@ OI-15 row (T-12). See the next table.
 | 14 | `support.escalate` (a 3-part key) | `ticket.escalate` (2-part, category `support`). |
 | 15 | Upstream migration sequence; `esc_` TypeID | Fork lineage; uuid PK (conventions §3). |
 | 16 | "Strong upstream-contribution candidates" | D1: fork-only. |
-| 17 | Churn not considered | Churn is recorded per seam (90-day: `conversation.service.ts` 51, `ticket.service.ts` 32, `workflow-graph.ts` 25, `inbox-detail-panel.tsx` 25, `action.executor.ts` 20, `inbox-scope.ts` 16). Correctness (T-8/T-9 hooks in the two hot assignment writers) wins over avoiding hot files. Those seams are small, fenced calls, and they are on the upgrade watch-list (§7). |
+| 17 | Churn not considered | Churn is recorded per seam (90-day: `conversation.service.ts` 51, `ticket.service.ts` 32, `workflow-graph.ts` 25, `inbox-detail-panel.tsx` 25, `action.executor.ts` 20, `inbox-scope.ts` 16). Correctness (T-8/T-9 route the team write in the two hot assignment writers through one fork transaction) wins over avoiding hot files. Those seams are small fenced blocks (about 12–15 lines each), and they are on the upgrade watch-list (§7). |
 | 18 | Channels and hub scope unanswered | Channels are dropped (D-T13). The hub is scoped by D-T11/D-T12 (§4.10–4.11). |
 
 ## 2. Requirements
@@ -107,7 +127,7 @@ OI-15 row (T-12). See the next table.
 | R4 | The previous agent is cleared (D-T2). The escalator keeps **read-only** access while watching (D-T6, X-3). | 2 |
 | R5 | Everything starts at T1 via workflows and the ticket intake sweep. Auto-routing is enforced off while tiers are on (D-T5, D-T10). Every team-assignment path keeps ticket and conversation on the same team and writes the ledger. | 2–3 |
 | R6 | Tier queues (seeded views) and per-tier reporting. | 4–5 |
-| R7 | Automated escalation (workflow/macro action; up only, D-T9). **Deferred:** until Phase 6 ships, escalation is manual, MCP or account-action only, and automation can only move teams via `assign_team` (recorded by the T-9 hook, never downward). | 6 |
+| R7 | Automated escalation (workflow/macro action; up only, D-T9). **Deferred:** until Phase 6 ships, escalation is manual, MCP or account-action only, and automation can only move teams via `assign_team` (recorded through T-9's transaction, never downward). | 6 |
 | R8 | End-user hub (D-T11 B) inside the portal, for SSO-signed-in employees (D-E1, D-E3). Requests an employee emailed in before their first SSO sign-in are claimed into their account at sign-in (D-T12, D-E4). No extra channels (D-T13). **Deferred:** email on non-close stage changes (Phase 8). Until then, requesters see stage changes only in the hub, `/support`, the widget and existing emails. | 7–8 |
 | R9 | Single and pooled tenancy; passes all upstream CI guardrails; ships dark behind `fork_settings`. | all |
 
@@ -129,7 +149,17 @@ OI-15 row (T-12). See the next table.
   and never apply `ticketFilter`. Row scope applies to reads only (`assertTicketVisible`, `:115`).
 - **Watchers:** `ticket_subscriptions`, with reasons `'requester'|'assignee'|'replier'|'manual'`, set through
   `safeSubscribeToTicket` (`ticket-subscription.service.ts:85`). A watch triggers notifications but grants no visibility.
-- **Conversion:** `createTicketCore` + `linkTicketToConversation` (`ticket-conversation-link.service.ts:98`).
+- **Conversion:** `createTicketCore` opens its **own** transaction (`ticket-intake.service.ts:196`) and has no `tx` input.
+  `linkTicketToConversation` (`ticket-conversation-link.service.ts:98`) is a separate call. It requires `ticket.create` (`:103`),
+  inserts the pair row with the 1:1 partial unique indexes as the only guard (`:121-151`), and then runs a post-link tail: the
+  first-response backfill, the conversion system message and `handoffConversationSlaToTicket` (exported, `:324`).
+- **Round-robin cursor:** `distributeToTeamMember` reads `team.rrCursorPrincipalId` from the `Team` object it is given (not
+  locked) and persists the pick through `setRoundRobinCursor` in autocommit (`team-distribution.ts:55-56`,
+  `team.service.ts:268-273`). The helpers it uses are exported: `pickRoundRobin` (`team-distribution.ts:27`),
+  `listTeamMemberPrincipalIds` (`team.service.ts:196`), `listOnlineAgentIds` / `listAvailableAgentIds` (`realtime/presence.ts:229,251`),
+  `pickLeastLoaded` / `countOpenConversationLoad` (`strategies/auto-assign-active.ts:15,31`).
+- **Activity and attributes:** `recordTicketActivity` is fire-and-forget (`ticket-activity.service.ts:56-70`).
+  `setConversationAttribute` writes a `custom_attributes || jsonb` merge on the conversation or ticket row (`set-attribute.service.ts:175-185`).
 - **Pair lookup:** `getLinkedCustomerTicket` (`inbox/inbox.query.ts:647`); `resolvePairConversationId` (`pair-thread.service.ts:122`).
 - **SLA:** `applySlaToConversation` (`sla.service.ts:162`), `applySlaToTicket` (`ticket-sla.service.ts:270`), and `sla_events` (`schema/sla.ts:61-92`).
 - **Notes / attributes:** `addTicketNote` (`ticket-message.service.ts:481`); `setConversationAttribute` (`set-attribute.service.ts:124`).
@@ -180,7 +210,7 @@ role template. A fourth tier would need a new template, a CHECK change and a new
 team has its own `escalates_to_team_id` edge, which must point to a higher tier. Cycles are rejected. Soft-deleted teams are ignored.
 Exactly one T1 team is flagged `is_intake` (the intake target, §4.6).
 
-**Current tier of a ticket** is the tier of `tickets.assignee_team_id` (D-T3). In tier mode the hooks (§4.6) keep a paired
+**Current tier of a ticket** is the tier of `tickets.assignee_team_id` (D-T3). In tier mode the transactional assignment (§4.6) keeps a paired
 conversation on the same team, so there is no fallback for tickets. A **ticket-less conversation** has the tier of its
 `assigned_team_id`. A ticket with no team is "intake" (untiered) until the intake sweep assigns it.
 
@@ -205,7 +235,10 @@ team-scoped `account.execute` per team: some membership `{teamId, tier}` must ha
 ### 4.2 `escalateTicket` (fork domain service, `lib/server/fork/tiered-support/escalation.service.ts`)
 
 Input: `{ subject: {ticketId} | {conversationId}, toTeamId?, targetTier?: 1|2|3, direction?: 'up'|'down', reason, note?,
-expectedFromTeamId, source: 'manual'|'workflow'|'mcp'|'account_action', idempotencyKey }` (key required), plus an actor.
+expectedFromTeamId, expectedAssignmentSeq?, source: 'manual'|'workflow'|'mcp'|'account_action', idempotencyKey }` (key
+required), plus an actor. `expectedAssignmentSeq` (optional) is a stricter CAS used by plan 40: it must equal the pair's
+current `fork_tier_pair_state.assignment_seq`. A read-only `getEscalationByKey(subject, idempotencyKey)` returns the
+operation's state and `escalationId` so callers can look up a replayed key without re-submitting.
 
 `escalateTicket` is a **durable operation** (T2). Its operation row is the ledger row (`fork_support_escalations`, §5), and it is
 written **before** anything is mutated. Every later step reads its inputs from that row, so a retry or the recovery sweep
@@ -225,64 +258,108 @@ finishes the **same** operation instead of starting a new one.
 `up` with no `toTeamId` or `targetTier` is a **no-op**, and the panel shows Escalate disabled ("Highest tier"). De-escalate
 stays available (D-T8).
 
-**Steps** (`state` column: `claimed → converting? → applied → done`, or the terminal state `rejected`):
+**Steps** (`state` column: `claimed → converting? → applied → done`, or the terminal state `rejected`). Every step runs
+under the operation lease (step 1a). Each step commits its writes **and** its state transition in one transaction, fenced by
+`WHERE id=$id AND lease_token=$token AND state=$expected` (R2-5):
 
 1. **Claim (own tx, before any mutation).** `idempotencyKey` is **required**. The UI mints one per dialog submit, and 40 passes its
-   deterministic key. Insert the operation row with `state='claimed'`: subject, `expectedFromTeamId`, requested
-   `toTeamId`/`targetTier`/direction, reason, note, source and actor. `UNIQUE (subject_key, idempotency_key)` makes a retry find
-   its row and **resume** from its `state`. A `rejected` row returns the stored error again. A partial unique index
-   `(subject_key) WHERE state IN ('claimed','converting')` allows only one un-applied operation per subject, so a second
-   escalation with a different key gets `CONFLICT` until the first applies or is rejected.
-2. **Convert first (D-T3), only for a conversation with no ticket.** Set `state='converting'` and call `createTicketCore`
-   with `customAttributes.forkEscalationOpId = op.id`. Store `ticket_id` on the row, then call `linkTicketToConversation`,
-   whose 1:1 partial unique indexes reject a racing second link. Recovery re-resolves `getLinkedCustomerTicket` first. It also
-   finds a ticket created before a crash by `custom_attributes->>'forkEscalationOpId'`, so it never creates a second ticket.
-3. **Pick the target and agent (persisted).** Resolve the target:
+   deterministic key. `INSERT … ON CONFLICT (subject_key, idempotency_key) DO NOTHING RETURNING` creates the operation row with
+   `state='claimed'`: subject, `expectedFromTeamId`, requested `toTeamId`/`targetTier`/direction, reason, note, source, actor and
+   `request_hash` (a hash of those inputs). If the insert returns nothing, the call is a replay. It loads the existing row and
+   gets `IDEMPOTENCY_KEY_REUSED` if `request_hash` differs. A `rejected` row returns the stored error again. An `applied`/`done`
+   row returns its result. A partial unique index `(subject_key) WHERE state IN ('claimed','converting')` allows only one
+   un-applied operation per subject, so a second escalation with a different key gets `CONFLICT` until the first applies or is
+   rejected.
+1a. **Lease (ownership).** Before running steps 2–4, the caller claims the row:
+   `UPDATE fork_support_escalations SET lease_owner=$worker, lease_until=now()+interval '30 seconds', lease_token=lease_token+1
+   WHERE id=$id AND state IN ('claimed','converting') AND (lease_owner IS NULL OR lease_until < now()) RETURNING lease_token`.
+   The first request, a same-key replay and the recovery job all use this claim, so two workers never run a step of the same
+   operation at once. A worker whose lease expired (for example after a long pause) fails its next fenced transition, rolls back
+   and stops. A replay that cannot claim the lease polls the row for up to 10 s. If the row reaches a terminal or `applied`
+   state, the replay returns that result. Otherwise it throws the retryable `ESCALATION_IN_PROGRESS` error, with `escalationId`
+   in its details. The lease is renewed between steps and cleared when the op reaches `applied` or `rejected`.
+2. **Convert first (D-T3), only for a conversation with no ticket.** If `getLinkedCustomerTicket` already finds a pair ticket (for
+   example, an agent converted the conversation manually), the op continues on that ticket and the CAS still decides. Otherwise
+   call `createTicketCore` (customer type, requester = the conversation's visitor, title from the conversation subject, no
+   backing conversation) with **seam T-14**'s `opts.inTx`. Inside `createTicketCore`'s own transaction, the fork callback:
+   - runs `UPDATE fork_support_escalations SET ticket_id=$new, state='converting' WHERE id=$op AND lease_token=$t AND ticket_id
+     IS NULL`, which must match exactly one row;
+   - locks the conversation `FOR UPDATE`;
+   - inserts the customer pair row into `ticket_conversations`. The 1:1 partial unique indexes reject an already-paired
+     conversation;
+   - binds `fork_tier_pair_state` to the new ticket.
+
+   Any failure rolls the whole creation back, so **at most one conversion ticket per operation ever commits, and there is no
+   orphan ticket**. This uniqueness does not depend on the lease: a second transaction blocks on the op row and then matches 0
+   rows. After commit, `createTicketCore` runs its normal tail (`ticket.created` after the link exists, activity, realtime). The
+   upstream link tail (first-response backfill from an earlier agent reply, the "Ticket created from this conversation" system
+   message, `handoffConversationSlaToTicket`) is queued as the once-effect `conversion_tail`. A crash after commit resumes at
+   step 3, because the op row already holds `ticket_id`. `linkTicketToConversation` is not called. It would also require
+   `ticket.create`, which Tier roles lack.
+3. **Resolve the target.** This is a pure read, repeated on every attempt:
    - `toTeamId`, if given;
    - else `targetTier`, through `resolveTeamForTier`;
    - else `up`, which follows `escalates_to_team_id`;
    - else `down`, which picks the unique tier team whose edge points at the from-team (if several match, `toTeamId` is required).
-
-   Call `distributeToTeamMember(team)` **once**. It persists the round-robin cursor outside any transaction
-   (`team-distribution.ts:53-56`), so it runs before the apply transaction. Store `to_team_id` and `chosen_agent_id` (null for
-   manual teams or when nobody is online) on the row. A retry reuses the stored pick and never re-distributes. Balanced mode
-   counts conversations only (D-T14).
 4. **Apply (one tx).**
-   - `SELECT … FOR UPDATE` the ticket row, then the paired conversation row (fixed lock order: ticket, then conversation).
-   - **CAS:** if the ticket's `assignee_team_id` ≠ `expectedFromTeamId`, set `state='rejected'` with `CONFLICT`. If it already
-     equals `to_team_id`, set `state='done'` with no effects (a no-op).
+   - Lock in the fixed order: ticket row → paired conversation row → `fork_tier_pair_state` row → target `teams` row (all
+     `FOR UPDATE`).
+   - **CAS:** if the ticket's `assignee_team_id` ≠ `expectedFromTeamId`, or `expectedAssignmentSeq` is given and ≠ the locked
+     `assignment_seq`, set `state='rejected'` with `CONFLICT`. If it already
+     equals the target, set `state='done'` with no effects (a no-op).
+   - **Pick the agent in this transaction (R2-5).** `pickTierAgentInTx(tx, team)` applies `distributeToTeamMember`'s rules (manual →
+     none; round-robin over online and available members after the **locked** cursor; balanced → least loaded, counting
+     conversations only, D-T14). It writes `teams.rr_cursor_principal_id` in this transaction. The pick and the cursor advance
+     therefore commit or roll back together with the move. A retry after a crash picks again from the unchanged cursor.
+     `distributeToTeamMember` itself is not called.
    - Fork primitives (`lib/server/fork/tiered-support/assignment-primitives.ts`) run `UPDATE tickets SET assignee_team_id,
-     assignee_principal_id, updated_at` and `UPDATE conversations SET assigned_team_id, assigned_agent_principal_id, updated_at`
-     with `WHERE id = … AND assignee_team_id IS NOT DISTINCT FROM <from>`. D-T2: the agent becomes `chosen_agent_id`, or
-     **null** when there is none. The primitives **never** touch `first_response_at` (escalation is not a first response,
-     🟡 default), and they never call `assignTicket`/`assignTeam`, so the T-8/T-9 hooks do not fire for them.
-   - Record the pre-images (from team and agent on both sides), `from_tier`/`to_tier` and `direction`. Set `state='applied'` and
-     `effects_pending` = the list in step 5.
+     assignee_principal_id, custom_attributes = custom_attributes || {fork_escalation_reason}, updated_at` and the same on
+     `conversations` (`assigned_team_id`, `assigned_agent_principal_id`), `WHERE id = … AND <team> IS NOT DISTINCT FROM <from>`.
+     D-T2: the agent becomes `chosen_agent_id`, or **null** when there is none. The primitives **never** touch
+     `first_response_at` (escalation is not a first response, 🟡 default), and they never call `assignTicket`/`assignTeam`.
+   - Insert the `ticket.assigned` row into `ticket_activity` directly (with `metadata.forkEscalationOpId`), so it is exactly-once
+     by construction.
+   - `fork_tier_pair_state`: `assignment_seq += 1`, `current_team_id = to`. Stamp the op row with that `seq`, the pre-images
+     (from team and agent on both sides), `to_team_id`, `chosen_agent_id`, `from_tier`/`to_tier` and `direction`. Set
+     `state='applied'` and `effects_pending` = the list in step 5. The fenced transition and all of these writes commit together.
 
-   An ordinary upstream writer that races this transaction blocks on the row lock, commits **after** it (last writer wins), and
-   is recorded by its own hook (§4.6). Its event may carry a stale "from", which is documented and accepted.
-5. **Effects (outbox, after commit).** Each effect is removed from `effects_pending` by a conditional update once it succeeds.
-   Recovery re-runs only the effects that remain.
+   An ordinary team assignment that races this transaction takes the same locks through T-8/T-9 (§4.6). It either runs first,
+   in which case the CAS rejects the escalation, or it runs after, in which case its re-check sees the escalated state.
+   Automated moves are then skipped, and human moves are recorded with the next `seq`. Last-writer-wins on the team column no
+   longer exists in tier mode.
+5. **Effects (outbox, after commit).** Effects run under the **pair effects lease** (`fork_tier_pair_state.effects_lease_*`,
+   claimed with the same conditional `UPDATE … RETURNING` as step 1a). The runner processes the pair's ledger rows in
+   ascending `seq`. Each finished effect is removed from `effects_pending` by a conditional update.
+   - **Once-effects** first claim `INSERT INTO fork_tier_effects (ledger_id, effect, state) VALUES (…,'started') ON CONFLICT DO
+     NOTHING RETURNING`. Only the runner that got the row performs the effect, then sets `done`. A `started` row older than
+     2 × the lease is taken over only after the new owner checks the effect's marker.
+   - **Stateful effects** at `seq = n` are marked `superseded` (and not run) if any ledger row of the same pair with `seq > n`
+     carries the same effect kind. An older SLA default or reason event can therefore never overwrite a later transition.
 
-   | Effect | Idempotency |
-   | --- | --- |
-   | `publishTicketUpdated` / `publishConversationUpdate` (current row) | naturally idempotent |
-   | `emitTicketAssigned` / `emitConversationAssigned` with the stored pre-images (`ticket.webhooks.ts:154`, `conversation.webhooks.ts:182`) | at-least-once: a crash between the emit and the mark can repeat it once (documented) |
-   | `ticket.assigned` activity via `recordTicketActivity` (`ticket-activity.service.ts:56`) with `metadata.forkEscalationOpId` | skipped if a row with that marker exists |
-   | Conversation system messages via upstream `emitTeamAssignmentSystemMessage` / `emitAssignmentSystemMessage` (exported by T-9) | at-least-once, as with events |
-   | SLA (§4.4): apply the tier default only where no SLA is active | the "no active SLA" check makes it idempotent |
-   | `fork_escalation_reason` attribute on ticket and conversation | setting the same value is idempotent |
-   | Internal note `Escalated T1 → T2 · ESC-<short op id> (reason): note` via `addTicketNote(escActor, …)` | before inserting, look for an internal note on the ticket containing `ESC-<short op id>`. The ref is also shown to humans. |
-   | Watch (D-T2): `safeSubscribeToTicket(actor, ticket, 'manual')` | `onConflictDoNothing` (`ticket-subscription.service.ts:77`) |
+   | Effect | Kind | Guarantee |
+   | --- | --- | --- |
+   | `publishTicketUpdated` / `publishConversationUpdate` (current row) | plain | naturally idempotent |
+   | `emitTicketAssigned` / `emitConversationAssigned` with the stored pre-images (`ticket.webhooks.ts:154`, `conversation.webhooks.ts:182`) | plain | **at-least-once** (stated): a crash between emit and mark repeats it |
+   | Conversation system messages via upstream `emitTeamAssignmentSystemMessage` / `emitAssignmentSystemMessage` (exported by T-9) | once | effect claim; marker = op id in message metadata |
+   | `conversion_tail` (convert-first only) | once | effect claim; its steps are each idempotent (backfill only if null, the SLA handoff no-ops once applied, system-message marker) |
+   | SLA (§4.4): apply the tier default only where no SLA is active | stateful | superseded check + "no active SLA" check |
+   | `conversation.attribute_changed` for `fork_escalation_reason` (the value itself was written in step 4) | stateful | superseded check; the event is at-least-once |
+   | Internal note `Escalated T1 → T2 · ESC-<short op id> (reason): note` via `addTicketNote(escActor, …)` | once | effect claim; takeover marker = `ESC-<short op id>` |
+   | Watch (D-T2): `safeSubscribeToTicket(actor, ticket, 'manual')` | plain | `onConflictDoNothing` (`ticket-subscription.service.ts:77`) |
 
    `escActor` is a copy of the human actor whose `permissions` add `ESCALATION_AUTHORITY = {ticket.note, conversation.reply}`.
    The principal is unchanged, so every event is attributed to the human. When `effects_pending` is empty, set `state='done'`.
-6. **Return** `{ escalationId, fromTeamId, toTeamId, direction, state }`. A caller that receives `applied` (some effects still
-   pending) can treat the escalation as complete. The effects finish on retry or in the sweep.
+   **Stated limit:** a once-effect can repeat only if a runner stalls longer than 2 × the lease in the middle of its upstream
+   call. The fence cannot reach inside `addTicketNote` or `emitSystemMessage`.
+6. **Return** `{ escalationId, fromTeamId, toTeamId, direction, state }` once the op is `applied` or `done`. A caller that
+   receives `applied` (some effects still pending) can treat the escalation as complete. The effects finish on retry or in the
+   sweep. `rejected` → the stored error. In progress under another worker's lease → `ESCALATION_IN_PROGRESS` (retryable,
+   carries `escalationId`).
 
-**Recovery.** An F-8 job, `fork-tier-escalation-recovery`, runs every minute. It resumes rows in `claimed`/`converting` older than
-two minutes (running steps 2–4 with the stored inputs; the CAS still applies) and rows in `applied` with effects pending. Nothing
-is re-derived from live state except the CAS.
+**Recovery.** An F-8 job, `fork-tier-escalation-recovery`, runs every minute. It claims the lease (step 1a) on rows in
+`claimed`/`converting` whose lease is free or expired and that are older than two minutes, then runs steps 2–4 with the
+stored inputs (the CAS still applies). It also claims the pair effects lease for pairs with ledger rows that have
+`effects_pending`. Nothing is re-derived from live state except the CAS and the target resolution in step 3.
 
 **No automatic de-escalation (D-T9).** No workflow, timer or status change moves a ticket down. Phase 6 automation is **up-only**.
 
@@ -335,49 +412,78 @@ Admins can edit the options on the existing Conversation data page. The ledger s
 ### 4.6 T1 intake and the assignment invariant (D-T5, D-T10, T3)
 
 **Invariant (tier mode on).** A paired ticket and conversation are always on the same team. Every team change is in the
-ledger. No automated path lowers a tier. Every writer that can change a team goes through the same fork operation:
+ledger with a per-pair `assignment_seq`. No automated path lowers a tier. Every writer that can change a team goes through the
+same locks (ticket → conversation → pair state) and the same fork primitives:
 
 | Path | How it is covered |
 | --- | --- |
-| `escalateTicket` (UI, MCP, 40, Phase 6) | §4.2 (fork primitives, no hooks) |
-| `assignTicket`: UI `assignTicketFn`, bulk (`ticket.service.ts:919-921`), REST `/api/v1/tickets/:id/assign` | **T-8** pre/post hooks |
-| `assignTeam`: workflow `assign_team` (`action.executor.ts:479-480`), `functions/teams.ts:172`, inbox bulk (`functions/conversation.ts:1475`) | **T-9** pre/post hooks |
+| `escalateTicket` (UI, MCP, 40, Phase 6) | §4.2 (fork primitives under the same locks and `assignment_seq`) |
+| `assignTicket`: UI `assignTicketFn`, bulk (`ticket.service.ts:919-921`), REST `/api/v1/tickets/:id/assign` | **T-8**: team write through `forkApplyTeamAssignment` (one locked transaction) |
+| `assignTeam`: workflow `assign_team` (`action.executor.ts:479-480`), `functions/teams.ts:172`, inbox bulk (`functions/conversation.ts:1475`) | **T-9**: team write and member pick through `forkApplyTeamAssignment` |
 | Ticket creation (`createTicketCore` sets no team) | intake sweep (below) |
 | Agent-only assignment (`assignConversation`) | does not change the tier. Not hooked. |
 
-- **Pre-hook** `forkBeforeTeamAssignment({kind, id, fromTeamId, toTeamId, actor})` returns `'skip'` when tier mode is on, the
-  actor is a **service principal** (a workflow or automation), and the move would lower the current tier or leave a team that an
-  escalation put the ticket on. Examples: a delayed `conversation.created` intake run that fires after an escalation, or a
-  workflow `assign_team` to T1 on a T2 ticket. The upstream function then returns its current row unchanged
-  (`if (… === 'skip') return existing` in `assignTeam`; `return ticketRowToDTO(existing)` in `assignTicket`), and the skip is
-  logged. Human `ticket.assign` / `canActAsAgent` holders are **not** blocked. A manual reassignment is an allowed override and is
-  recorded (routing convention, 🟡). The same pre-hook also runs the X-3 write guard for `assignTicket`.
-- **Post-hook** `forkAfterTeamAssigned({kind, id, existing, updated, actor})` runs when the team moved. In one transaction it
-  locks the ticket row, then the conversation row, and:
-  1. writes a ledger row with `source='assignment'` (`state='done'`, direction from the tiers, `lateral`/`intake` where
-     untiered);
-  2. mirrors the team onto the other side of the pair with the same fork primitive as §4.2, conditional on the other side's
-     current team. The agent is untouched. `first_response_at` is never stamped.
+- **Transactional assignment (R2-6).** In tier mode, T-8 and T-9 hand upstream's team write to one fork function,
+  `forkApplyTeamAssignment({ kind: 'ticket'|'conversation', id, toTeamId, buildPatch, actor })`
+  (`lib/server/fork/tiered-support/assignment-tx.ts`). `buildPatch(lockedRow, pickedAgentId)` is a closure defined in the seam
+  around upstream's own patch expression. For the ticket, that is the assignee/team patch with `firstResponseStamp` re-evaluated
+  on the locked row. For the conversation, it is the team, the distributed agent and the snooze wake (`shouldWakeSnoozedOnTriage`).
+  Upstream's validation (`getTeam`, the assignee role check) still runs before the call. In **one transaction**, the function:
+  1. **Locks** ticket → paired conversation → `fork_tier_pair_state` (`FOR UPDATE`, fixed order, shared with §4.2).
+     - The ticket path finds the pair through `ticket_conversations`.
+     - The conversation path first reads the link without a lock, then locks the ticket (if any) and the conversation, and
+       re-reads the link. If a ticket appeared in between (a conversion committed), it restarts the transaction, at most 3 times.
+       This keeps the lock order without deadlocks.
+  2. **Re-checks the invariant against the locked row**, not against a value read before the lock. For a **service
+     principal** (a workflow or automation), it returns `{ outcome: 'skipped', current }` with **no write** when the move would
+     lower the current tier (D-T9), or when the current team was set by the pair's latest escalation (the pair state's
+     `last_source` is an escalation). Examples: a delayed `conversation.created` intake run after an escalation, or a paused
+     `assign_team` that resumes after the pair moved to T2. Human `ticket.assign` / `canActAsAgent` holders are **not** blocked.
+     A manual move is an allowed, recorded override (routing convention, OI-16 🟡). The X-3 write guard for `assignTicket` runs
+     here too, against the locked row.
+  3. **Picks the member in the same transaction** (conversation path, or a ticket path whose patch sets a team on a
+     round-robin/balanced team). It uses `pickTierAgentInTx` (§4.2 step 4) with the target `teams` row locked, so the cursor
+     advance commits with the assignment.
+  4. **Writes both sides and the version.** It applies `buildPatch(locked, pick)` to the written side. It mirrors the team onto
+     the other side with the §4.2 fork primitive, conditional on the locked current value. The mirrored agent is untouched, and
+     `first_response_at` is never stamped by the mirror. It increments `assignment_seq` and sets `current_team_id` and
+     `last_source='assignment'`. It inserts the ledger row (`source='assignment'`, `state='applied'`, `seq`, direction from
+     the tiers, `lateral`/`intake` where untiered, pre-images). The row's `effects_pending` lists the **mirrored** side's
+     realtime publish, assigned event and (for a mirrored conversation) team system message.
+  5. Commits, and returns `{ outcome: 'applied', before: lockedPreImage, updated }`.
 
-  After commit, the mirrored side's realtime publish and assigned event run as outbox effects on that ledger row. A conversation
-  team change **before** a ticket exists writes a ledger row with `ticket_id` null and `conversation_id` set. The timeline reads
+  Upstream then runs its normal post-update tail for the written side (publish, watcher opt-in, `emit…Assigned`, activity,
+  system messages) with `before` in place of its earlier unlocked `existing`, so the event's "from" is the true pre-image. A
+  `'skipped'` outcome returns the current row the same way the no-op branch does. With tier mode off, or for an agent-only
+  patch on a ticket, the function returns `null` after one flag read, and upstream's own `UPDATE` runs unchanged.
+
+  A conversation team change **before** a ticket exists writes a ledger row with `ticket_id` null and `conversation_id` set,
+  on a pair-state row keyed by the conversation. Conversion (§4.2 step 2) binds that row to the new ticket. The timeline reads
   ledger rows by `ticket_id` **or** the pair's `conversation_id`, so pre-conversion tier history is kept without back-filling.
-- **Hook crash window.** The upstream update and the post-hook are not atomic. If the process dies between them, the pair can
-  disagree and a ledger row can be missing. The intake sweep therefore also **reconciles**: for tiered pairs whose teams differ,
-  the side with the later `updated_at` wins. The sweep mirrors it with the fork primitive and writes the missing ledger row
-  (`source='assignment'`, `reason_label='reconciled'`). The window is bounded by one sweep interval, and it is tested.
+- **No crash window, and no `updated_at` inference.** The team write, the mirror, the version bump and the ledger row commit
+  together, so a crash leaves either all of them or none. Only outbox effects can be pending, and the effects runner (§4.2
+  step 5) finishes them in `seq` order. The intake sweep also runs a **drift check**: for each tiered pair, both sides must
+  equal `fork_tier_pair_state.current_team_id` (the last recorded assignment version). General `updated_at` is never used,
+  because unrelated edits advance it. A mismatch can come only from an **unhooked** writer (a new upstream path, a manual SQL
+  fix). The sweep logs `TIER_INVARIANT_DRIFT` with the offending side, restores the recorded team with the fork primitive and a
+  new `seq` (ledger `source='assignment'`, `reason_label='drift_repair'`), and never adopts the unrecorded value. Restoring is
+  the safe choice under D-T9, because an unrecorded write may be an automated de-escalation. The grep guard (§7) is meant to
+  keep this path empty.
 - **Intake to T1 (everything starts at T1).**
   - `setTieredSupportEnabled(true)` requires one `is_intake` T1 team and **enables** the seeded workflows as part of the same
     admin action. They are seeded disabled so the admin can review them first:
     - `conversation.created` → `assign_team: <intake team>` + `apply_sla: <T1 default>`;
     - `assistant.handed_off` → the same.
 
-    The workflows carry no branches (D-T10). The T-9 post-hook mirrors the team onto the pair ticket.
+    The workflows carry no branches (D-T10). Their `assign_team` goes through T-9, so the same transaction mirrors the team onto
+    the pair ticket.
   - **Intake sweep** `fork-tier-intake` (F-8, every minute). It targets **customer** tickets that are not deleted, not closed, have
     `assignee_team_id IS NULL` and were created after `tiered_support.enabled_at`. That covers unpaired tickets and tickets created
-    manually, over REST or over MCP. The sweep assigns them to the intake team with the fork primitive and a ledger row
-    (`source='intake'`), and applies the T1 default SLA where none is active. **Back-office and tracker tickets** stay untiered
-    unless someone assigns them to a tier team, and that assignment is then hooked like any other.
+    manually, over REST or over MCP. The sweep assigns them to the intake team through the same locked transaction as
+    `forkApplyTeamAssignment`. It re-checks `assignee_team_id IS NULL` on the locked row, so a team set in the meantime wins,
+    increments `assignment_seq` and writes a ledger row (`source='intake'`). The T1 default SLA is then applied where none is
+    active, as a stateful effect. **Back-office and tracker tickets** stay untiered
+    unless someone assigns them to a tier team, and that assignment then goes through T-8/T-9 like any other.
 - **Auto-routing enforced off (D-T5).** `setTieredSupportEnabled(true)` refuses while `getConversationRouting().enabled` is true.
   The Tiers page offers "Turn off auto-routing". **Seam T-11** in `updateConversationRouting`
   (`settings.conversation-routing.ts:75`) refuses `enabled: true` while tiered support is on (`ValidationError('TIERED_SUPPORT_ON')`).
@@ -387,8 +493,8 @@ ledger. No automated path lowers a tier. Every writer that can change a team goe
 ### 4.7 Queues and reporting
 
 - **Queues:** one shared `conversation_views` row per tier team, `{rules:[{field:'team',value:teamId}]}`, named "T2 · <team>".
-- **Tier timeline:** computed from `fork_support_escalations` rows in state `applied`/`done`. In tier mode every team change is
-  there (escalation, assignment hook, mirror, intake). History from before tiered support was enabled falls back to
+- **Tier timeline:** computed from `fork_support_escalations` rows in state `applied`/`done`, ordered by the pair's `seq`
+  (not by timestamps). In tier mode every team change is there (escalation, transactional assignment, intake, drift repair). History from before tiered support was enabled falls back to
   `ticket_activity` `ticket.assigned`, then the current team. The origin tier is always T1 for new work (D-T10). Legacy work may
   start untiered.
 - **Metrics** (`routes/admin/fork-tiers.tsx`, `analytics.view`):
@@ -413,8 +519,9 @@ ledger. No automated path lowers a tier. Every writer that can change a team goe
 ### 4.9 Feature gating
 
 `fork_settings` key `tiered_support.enabled` (default false) for Phases 1–6. `tiered_support.hub_enabled` (default false) for
-Phase 7. No Labs line is needed. T-1 matches nothing while no escalations exist. With the flag off, the T-8/T-9/T-10/T-11 hooks
-return immediately after one flag read, so upstream behaviour is unchanged.
+Phase 7. No Labs line is needed. T-1 matches nothing while no escalations exist. With the flag off, the T-8/T-9/T-10/T-11 fork calls
+return immediately after one flag read (`forkApplyTeamAssignment` returns `null`, so upstream's own `UPDATE` runs), and upstream
+behaviour is unchanged. T-14's `inTx` is passed only by the fork's own conversion.
 
 ### 4.10 End-user hub (D-T11 ✅ option B)
 
@@ -581,18 +688,22 @@ Index: `(tier)`.
 | `subject_key` | `text` not null | ticket id, or conversation id for a convert-first subject; the idempotency scope |
 | `ticket_id` | `typeIdColumnNullable('ticket')` | FK CASCADE; null only for pre-conversion conversation-team rows or a `converting` op |
 | `conversation_id` | `typeIdColumnNullable('conversation')` | FK SET NULL; CHECK `ticket_id IS NOT NULL OR conversation_id IS NOT NULL` |
-| `state` | `text` CHECK in (`claimed`,`converting`,`applied`,`done`,`rejected`) | hook/intake rows are born `done` or `applied` |
+| `state` | `text` CHECK in (`claimed`,`converting`,`applied`,`done`,`rejected`) | assignment/intake rows are born `applied` (or `done` with no effects) |
 | `expected_from_team_id` | team FK SET NULL | the CAS input |
-| `from_team_id` / `to_team_id` | team FKs, SET NULL | `to_team_id` set by step 3 |
-| `from_agent_principal_id` / `chosen_agent_id` | principal FKs SET NULL | pre-image; persisted pick (never re-distributed) |
+| `from_team_id` / `to_team_id` | team FKs, SET NULL | `to_team_id` set by the apply transaction (step 4) |
+| `from_agent_principal_id` / `chosen_agent_id` | principal FKs SET NULL | pre-image; the pick committed with the cursor advance in step 4 |
 | `pre_image` | `jsonb` | both sides' team and agent before apply (for events) |
 | `from_tier` / `to_tier` | `smallint` null | snapshots |
 | `direction` | `text` CHECK in (`up`,`down`,`lateral`,`intake`) | |
 | `reason` / `reason_label` | `text` null / `text` | required for `manual`/`mcp`/`workflow`/`account_action` (CHECK) |
 | `note` | `text` null | ≤ 2,000 chars |
 | `by_principal_id` | principal FK SET NULL | null = system |
-| `source` | `text` CHECK in (`manual`,`workflow`,`mcp`,`account_action`,`assignment`,`intake`) | `workflow` from Phase 6; `account_action` from 40; `assignment` = T-8/T-9 hooks; `intake` = sweep |
+| `source` | `text` CHECK in (`manual`,`workflow`,`mcp`,`account_action`,`assignment`,`intake`) | `workflow` from Phase 6; `account_action` from 40; `assignment` = T-8/T-9 transactional assignment and drift repair; `intake` = sweep |
 | `idempotency_key` | `text` null | required for escalations (CHECK by source); UNIQUE `(subject_key, idempotency_key)` |
+| `request_hash` | `text` null | hash of the escalation inputs; a same-key replay with a different hash → `IDEMPOTENCY_KEY_REUSED` |
+| `pair_id` | uuid null, FK `fork_tier_pair_state.id` | the pair this transition belongs to; null until `applied` |
+| `seq` | `bigint` null | the pair's `assignment_seq` at this transition; set when `applied`. UNIQUE `(pair_id, seq)` |
+| `lease_owner` / `lease_until` / `lease_token` | `uuid` null / `timestamptz` null / `bigint` not null default 0 | operation lease and fencing token (§4.2 step 1a) |
 | `effects_pending` | `text[]` not null default `{}` | outbox (§4.2 step 5) |
 | `error_code` | `text` null | for `rejected` (e.g. `CONFLICT`) |
 | `created_at` / `updated_at` | timestamptz default now() | |
@@ -600,13 +711,40 @@ Index: `(tier)`.
 Indexes: partial UNIQUE `(subject_key) WHERE state IN ('claimed','converting')` (one un-applied op per subject);
 `(ticket_id, created_at)`, `(conversation_id, created_at)`, `(by_principal_id, created_at)`, `(to_team_id, created_at)`,
 `(created_at)`, partial `(updated_at) WHERE state IN ('claimed','converting') OR cardinality(effects_pending) > 0` (recovery).
-Readers (timeline, T-1, write guard, reports) consider only `state IN ('applied','done')`.
+Readers (timeline, T-1, write guard, reports) consider only `state IN ('applied','done')`, ordered by `(pair_id, seq)`.
+
+**`fork_tier_pair_state`** (one row per ticket/conversation pair: the assignment version, R2-5/R2-6)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | |
+| `ticket_id` | `typeIdColumnNullable('ticket')` UNIQUE | FK CASCADE; set at conversion for a conversation-first pair |
+| `conversation_id` | `typeIdColumnNullable('conversation')` UNIQUE | FK SET NULL; CHECK at least one of the two is set |
+| `assignment_seq` | `bigint` not null default 0 | incremented by every team transition, under this row's lock |
+| `current_team_id` | team FK SET NULL | the last **recorded** team; the drift check compares both sides with it |
+| `last_source` | `text` | source of the latest transition; the §4.6 re-check reads it ("set by an escalation") |
+| `effects_lease_owner` / `effects_lease_until` | `uuid` / `timestamptz` null | pair effects lease (§4.2 step 5) |
+| `updated_at` | timestamptz | |
+
+Rows are created lazily by the first transition (`INSERT … ON CONFLICT DO NOTHING`, then `SELECT … FOR UPDATE`). Enabling
+tiered support does not back-fill them. The first transition of an existing pair starts at `seq = 1`.
+
+**`fork_tier_effects`** (atomic dedup for once-effects, R2-5)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `ledger_id` | uuid FK `fork_support_escalations.id` CASCADE | PK part 1 |
+| `effect` | `text` | PK part 2 (`note`, `system_message`, `conversion_tail`, …) |
+| `state` | `text` CHECK in (`started`,`done`,`superseded`) | |
+| `started_at` / `done_at` | timestamptz | a `started` row is taken over only after 2 × the lease, with a marker check |
 
 - **Migration:** `drizzle-fork/000N_tiered_support.sql`, additive only, with no notify-claim columns.
 - **Principal re-point (conventions §8, F-5):** entries in `fork/principals/fork-repoint.ts`:
   - `fork_support_escalations.by_principal_id`, `.from_agent_principal_id`, `.chosen_agent_id` → **exempt**. These are staff
     references, and customer principals never appear in them.
   - `fork_team_tiers.updated_by_principal_id` → **exempt**. Also staff.
+  - `fork_support_escalations.lease_owner` and `fork_tier_pair_state.effects_lease_owner` are worker ids, not principals, so
+    nothing needs re-pointing.
 
   The hub adds no fork tables. Customer data moves through the upstream registry, which the claim service (§4.11) calls directly.
 - `fork_settings` keys: `tiered_support.enabled` (+ `tiered_support.enabled_at`, written by the enable action and read by the
@@ -637,9 +775,12 @@ Readers (timeline, T-1, write guard, reports) consider only `state IN ('applied'
 ## 7. Seams
 
 IDs follow `SEAMS.md` (X-6). T-7… is reserved there for the deferred later-phase seams, so the new seams start at T-8. The
-staff review asked for the seams that correctness needs rather than a small count. Tiered support now has **6 core seams
-(Phases 1–5: T-1, T-2, T-8…T-11)** and **3 hub seams (Phase 7: T-4, T-5, T-13)**. Before the staff review the counts were 2 and 4;
-after it, 6 and 5. The intranet revision (D-E1…D-E4) removed T-3, T-6 and T-12 and added T-13.
+staff review asked for the seams that correctness needs rather than a small count. Tiered support now has **7 core seams
+(Phases 1–5: T-1, T-2, T-8…T-11, T-14)** and **3 hub seams (Phase 7: T-4, T-5, T-13)**. Before the staff review the counts were 2 and 4;
+after it, 6 and 5. The intranet revision (D-E1…D-E4) removed T-3, T-6 and T-12 and added T-13. The second pass (R2-5, R2-6) added
+T-14 and made T-8/T-9 larger: they now route the team write into a fork transaction instead of calling two hooks around an
+upstream `UPDATE`. The reviewer asked for exactly this narrow transactional integration, rather than a two-call design kept
+only to minimize changed lines.
 
 **Core (Phases 1–5).**
 
@@ -647,9 +788,10 @@ after it, 6 and 5. The intranet revision (D-E1…D-E4) removed T-3, T-6 and T-12
 | --- | --- | --- | --- | --- | --- |
 | T-1 | `apps/web/src/lib/server/policy/tickets.ts` (1) | `OR ${forkEscalatedByMeFilter(principalId)}` in `ticketFilter` branch (3), plus an import | D-T6 (approved): visibility is a pure SQL predicate with no extension point | 2 | Re-add the OR term in branch (3). Test: `fork/tiered-support/__tests__/visibility.test.ts` |
 | T-2 | `apps/web/src/components/admin/inbox/inbox-detail-panel.tsx` (25) | Shared fork detail-panel slot (`<ForkTierPanel/>` + 40's A-2 in one component), plus an import | There is no slot in the detail panel | 2 | Place it after the `TicketWatchControl` row. The component self-hides. |
-| T-8 | `apps/web/src/lib/server/domains/tickets/ticket.service.ts` (32) | Fenced fork calls: `assignTicket` pre-hook (`forkBeforeTeamAssignment` + write guard; `'skip'` → return current DTO) and post-hook (`forkAfterTeamAssigned` when the team moved). One `await forkAssertTicketWritable(actor, existing, op)` after `loadTicketOr404` in `setTicketStatus`, `setTicketPriority`, `softDeleteTicket` | T3 (ledger + pair sync + no automated de-escalation on every ticket-assignment path: UI, bulk, REST); X-3 write guard | 2 | Re-add the calls around the `update(tickets)` in `assignTicket` and after each `loadTicketOr404`. Test: `fork/tiered-support/__tests__/assignment-hooks.test.ts` |
-| T-9 | `apps/web/src/lib/server/domains/conversation/conversation.service.ts` (51) | In `assignTeam`: pre-hook after the no-op check (`:1553`; `'skip'` → `return existing`) and post-hook after the update. `export` on `emitAssignmentSystemMessage` / `emitTeamAssignmentSystemMessage` (`:1345,1373`) | T3: workflow `assign_team`, the teams fn and inbox bulk move only the conversation, so the pair and the ledger must follow. The escalation outbox reuses the system messages. | 2 | Re-add both calls in `assignTeam` and the two `export` keywords. Same test file |
+| T-8 | `apps/web/src/lib/server/domains/tickets/ticket.service.ts` (32) | In `assignTicket` (`:744`): `existing` becomes `let`. After the patch is built (`:774`), a fenced block calls `forkApplyTeamAssignment({kind:'ticket', id, toTeamId: input.assigneeTeamId, buildPatch, actor})`, where `buildPatch` wraps upstream's patch and re-runs `firstResponseStamp` on the locked row. The result: `'skipped'` → `return ticketRowToDTO(current)`; `'applied'` → `updated = r.updated; existing = r.before`; `null` → upstream's own `UPDATE` (`:777`). The write guard runs inside the fork transaction. One `await forkAssertTicketWritable(actor, existing, op)` after `loadTicketOr404` in `setTicketStatus`, `setTicketPriority`, `softDeleteTicket`. About 12 changed lines. | R2-6/T3: the invariant check, the team write, the pair mirror, `assignment_seq` and the ledger row commit in **one** locked transaction on every ticket-assignment path (UI, bulk, REST); X-3 write guard | 2 | Re-wrap the `update(tickets)` in `assignTicket` with the fenced block (the tail below it must use the returned `before`), and re-add the guard after each `loadTicketOr404`. Tests: `fork/tiered-support/__tests__/assignment-tx.test.ts` (includes the R2-6 pause/resume test) |
+| T-9 | `apps/web/src/lib/server/domains/conversation/conversation.service.ts` (51) | In `assignTeam` (`:1542`): `existing` becomes `let`. After the no-op check (`:1553`), a fenced block calls `forkApplyTeamAssignment({kind:'conversation', id, toTeamId: teamId, buildPatch, actor})`. Its `buildPatch(locked, pick)` wraps upstream's `set({...})` expression (team, distributed agent, `shouldWakeSnoozedOnTriage` wake). A non-null result replaces `getTeam` + `distributeToTeamMember` + the `UPDATE` (`:1558-1580`): `'skipped'` → `return current`; `'applied'` → `updated`, `existing = before`, `team` and `distributedAgentId` come from the result, and the tail continues. `export` on `emitAssignmentSystemMessage` / `emitTeamAssignmentSystemMessage` (`:1345,1373`). About 15 changed lines. | R2-6/T3: workflow `assign_team`, the teams fn and inbox bulk move the conversation. The member pick (cursor), the invariant re-check, both sides and the ledger commit together. The escalation outbox reuses the system messages. | 2 | Re-wrap the distribution + `update(conversations)` section with the fenced block, and re-add the two `export` keywords. Same test file |
 | T-10 | `apps/web/src/lib/server/domains/tickets/ticket-message.service.ts` (—) | `if (opts.senderType === 'agent') await forkAssertTicketWritable(opts.actor, existing, 'message')` after `loadTicketOr404` in `insertTicketMessage` (`:263`) | X-3: reply and note are permission-only upstream | 2 | Re-add after the ticket load, before the Phase 1a redirect. Test: `write-guard.test.ts` |
+| T-14 | `apps/web/src/lib/server/domains/tickets/ticket-intake.service.ts` (—) | `createTicketCore(input, actor, opts?: { inTx?: (tx, ticket) => Promise<void> })`. One fenced line right after the ticket insert inside `db.transaction` (`:196`, after `:228-241`): `if (opts?.inTx) await opts.inTx(tx, ticket)`. Existing callers pass nothing and are unchanged. | R2-5: a convert-first escalation must record `ticket_id` on its operation row and insert the pair link **in the ticket's own creation transaction**, so at most one conversion ticket commits per operation and none is orphaned. `createTicketCore` has no `tx` input. | 2 | Re-add the optional parameter and the call after the ticket insert, before the watcher rows. Test: `fork/tiered-support/__tests__/escalation-convert.test.ts` (the R2-5 race/crash test; a throwing `inTx` leaves no ticket) |
 | T-11 | `apps/web/src/lib/server/domains/settings/settings.conversation-routing.ts` (—) | In `updateConversationRouting` (`:75`): `if (input.enabled) await forkAssertRoutingMayEnable()` before the write, plus `await forkVerifyRoutingAfterWrite()` after it | T3/D-T5: routing must be **enforced** off while tiers are on; all writers go through this domain function | 3 | Re-add around the settings write. Test: `routing-guard.test.ts` |
 
 **Shared, not counted:** `ticket.escalate` in the F-7 block; the Tiers page through F-4; MCP tool (6c) through F-3; re-point
@@ -658,8 +800,10 @@ exemptions through F-5; migrations through F-1/F-2; the recovery and intake jobs
 
 **Upgrade watch-list (review practice).** T-8 and T-9 make every upstream assignment writer a fork contract. On each upstream
 sync, grep for new writers of `tickets.assignee_team_id` / `conversations.assigned_team_id` and new callers of
-`assignTicket`/`assignTeam`. Also re-check the fork primitives against the columns they update. A new writer that skips the hooks
-breaks the invariant, and `assignment-hooks.test.ts` includes a grep-based guard that fails when one appears.
+`assignTicket`/`assignTeam`. Also re-check the fork primitives against the columns they update, `pickTierAgentInTx` against
+`distributeToTeamMember` (parity test), the fork's pair-link insert against `linkTicketToConversation`'s insert and tail, and
+the in-transaction reason write against `setConversationAttribute`. A new writer that skips `forkApplyTeamAssignment`
+breaks the invariant, and `assignment-tx.test.ts` includes a grep-based guard that fails when one appears.
 
 **Phase 7 hub (D-T11 B): 3 seams.**
 
@@ -694,7 +838,7 @@ Generated files are regenerated, never merged: `permissions.ts`, `MATRIX.md`, `p
 | --- | --- | --- |
 | 0 prereqs | Foundations (F-1…F-10). 10-rbac Phase 1a + Phase 2 (`canInTeam`). `ticket.escalate` in the F-7 block (Manager ✓). | `canInTeam` is available; a Manager holds `ticket.escalate` after `seedSystemData`. |
 | 1 Tier model | `fork_team_tiers` (tiers 1–3, one intake team) + migration; Tiers page (F-4); edge/cycle validation; `listTierMemberships` / `getEffectiveTier` / `resolveTeamForTier`; `assignTierAgent` / `removeTierAgent` (atomic membership) + MCP tools; `reconcileTierGrants` | Configure T1→T2→T3; tier 4 is rejected. An agent on T1 and T3 teams has effective tier 3. Assign then remove leaves no grants, memberships or stray workspace roles, and the MCP path is audited as the human. A concurrent upstream team save does not lose a tier membership written by the service (and reconciliation repairs grants when it drops one). Drift and journal tests are green. |
-| 2 Escalation + invariant | Ledger/operation table; `escalateTicket` (claim → convert → pick → apply → outbox) / `escalateTicketFn` / `assertCanEscalate`; recovery job (F-8); reason attribute; `ForkTierPanel` (T-2); watcher + T-1; write guard (T-8, T-10); assignment hooks (T-8, T-9); "Escalated by me" | Paired T1→T2: both sides move in one transaction; agent persisted and applied or cleared; `firstResponseAt` unchanged; each effect applied once (events at-least-once); SLA unchanged. The escalator can open the ticket until they unwatch and **cannot** reply, note, change status or assign after handoff. Convert-first works. CONFLICT and idempotency hold, **including kill/retry at every step and two competing escalations**. An ordinary assignment keeps the pair on one team and writes a ledger row. A delayed intake workflow does not pull an escalated ticket back to T1. **De-escalation:** a T2 or T3 agent may move a T2 ticket down; a T1 agent may not; a Manager may. `targetTier` resolves to the edge chain. |
+| 2 Escalation + invariant | Ledger/operation table; `escalateTicket` (claim → lease → convert (T-14) → apply with in-transaction pick → outbox) / `escalateTicketFn` / `assertCanEscalate`; `fork_tier_pair_state` + `fork_tier_effects`; recovery job (F-8); reason attribute; `ForkTierPanel` (T-2); watcher + T-1; write guard (T-8, T-10); transactional assignment (T-8, T-9); "Escalated by me" | Paired T1→T2: both sides move in one transaction; agent picked, cursor advanced and applied (or cleared) in that transaction; `firstResponseAt` unchanged; each effect applied once (events at-least-once); SLA unchanged. The escalator can open the ticket until they unwatch and **cannot** reply, note, change status or assign after handoff. Convert-first works. CONFLICT and idempotency hold, **including kill/retry at every step and two competing escalations**. **The R2-5 and R2-6 acceptance tests pass** (second-pass table). An ordinary assignment keeps the pair on one team and writes a ledger row with the next `seq` in the same transaction. A delayed intake workflow does not pull an escalated ticket back to T1. **De-escalation:** a T2 or T3 agent may move a T2 ticket down; a T1 agent may not; a Manager may. `targetTier` resolves to the edge chain. |
 | 3 T1 intake | Enable action (intake team required; seeded workflows enabled; routing refused); intake sweep (F-8); routing guard (T-11) | A new chat or a handoff → T1 team on conversation **and** ticket + T1 SLA. Tickets created in the portal, manually or over REST/MCP get the T1 intake team within one sweep. Back-office tickets stay untiered. Turning auto-routing on is refused while tiers are on, including when both are enabled at the same moment. No path lands a new item on T2/T3. |
 | 4 Queues | Seeded per-tier views | T2 agents see exactly T2 items |
 | 5 Reporting | Timeline + report from the ledger | Reconciles with a fixture that includes ordinary assignments and conversation-only moves before conversion. A carried SLA breach is attributed to the tier at breach time. |
@@ -708,23 +852,46 @@ Generated files are regenerated, never merged: `permissions.ts`, `MATRIX.md`, `p
 - **Service (DB):** paired, ticket-only and convert-first cases; round_robin, balanced and manual teams; agent replaced or
   cleared; SLA byte-identical before and after; ledger, attribute, note and watcher written; `firstResponseAt` not stamped by
   escalation; `targetTier` resolution (and 4 rejected); `source='account_action'` recorded.
-- **Escalation durability (mandatory, T2).**
-  - **Kill/retry at each step.** Inject a crash after claim, after ticket create, after link, after the agent pick, before and
-    after the apply commit, and between every outbox effect. A retry with the same key, **and** separately the recovery job,
-    converges to the same final state with exactly one ledger row, one ticket, one note (`ESC-` dedupe), one activity row, one
-    watcher row and no second distribution (round-robin cursor advanced once).
+- **Escalation durability (mandatory, T2, R2-5).**
+  - **R2-5 acceptance test (reviewer's, adapted).** Race two identical `escalateTicketFn` submits (same key) with the recovery
+    job, on a ticket-less conversation and a round-robin T2 team. Crash (a) right after the T-14 ticket commit, (b) inside the
+    apply transaction after the cursor write, and (c) between an effect's claim and its `done`. Assert: one conversion ticket
+    and no orphan; one pair link; one applied move (one ledger row, `seq` +1); the cursor advanced exactly once and equal to
+    `chosen_agent_id`; one note, one activity row, one system message; events at-least-once.
+  - **Kill/retry at each step.** Inject a crash after claim, inside and after the T-14 conversion transaction, inside and after
+    the apply transaction, and between every outbox effect. A retry with the same key, **and** separately the recovery job,
+    converges to the same final state with exactly one ledger row, one ticket, one note, one activity row, one watcher row and
+    one cursor advance.
+  - **Lease fencing.** Worker A claims, then is paused past `lease_until`. Worker B claims and applies. When A resumes, its fenced
+    transition matches 0 rows and rolls back (no second ticket, no second move). A throwing `inTx` leaves no ticket row.
+  - **Same key, different inputs** → `IDEMPOTENCY_KEY_REUSED`. A replay during another worker's lease → `ESCALATION_IN_PROGRESS`
+    carrying the same `escalationId`, and a later replay returns the final result.
+  - **Effect ordering.** T1→T2 with its effects held, then T2→T3. The T2 SLA default and reason event are `superseded`, and the
+    final SLA and reason are T3's. Effects of one pair never run concurrently (pair effects lease).
+  - **Pick parity.** `pickTierAgentInTx` matches `distributeToTeamMember` on the same roster, presence and cursor, for
+    round-robin, balanced and manual teams.
   - **Replay contract (40).** The same `idempotencyKey` returns the same `escalationId` in every state. A `rejected` operation
     returns the same `CONFLICT`.
   - **Two competing escalations.** Different keys and the same `expectedFromTeamId`, run in parallel: exactly one applies and the
     other gets `CONFLICT`. Same key in parallel: one operation, both callers get its id.
   - **Escalation vs ordinary writer.** Escalation racing `assignTicketFn`, workflow `assign_team` and REST assign: the final state
-    has the pair on one team, and the ledger holds both changes in commit order.
+    has the pair on one team. The ledger holds each committed change with consecutive `seq` values, and events carry the
+    locked pre-image as "from".
+- **R2-6 acceptance test (mandatory, reviewer's, adapted).** Pause a workflow `assign_team` (service actor, target T1) after
+  upstream's no-op check and before `forkApplyTeamAssignment` takes its locks. Escalate the pair to T2, then resume the
+  workflow. It returns the current row, and the pair stays on T2 with no ledger row for the skipped move. Repeat with the pause
+  **inside** the fork transaction while it waits on the ticket lock held by the escalation. Repeat through `assignTicket` (REST
+  as a service principal) and ticket bulk. Kill the process inside the assignment transaction (nothing is committed) and right
+  after its commit (both sides, `seq` and the ledger row are present; only effects are pending). Make an unrelated edit that
+  advances `updated_at` (ticket priority, conversation subject) before the sweep. The sweep changes nothing, and the pair
+  matches the last recorded `assignment_seq`. A deliberately unhooked SQL team write is reported as `TIER_INVARIANT_DRIFT` and
+  restored to the recorded team with a new `seq`.
 - **Assignment invariant (mandatory, T3).** After each ordinary path (UI assign, bulk, REST, `functions/teams.ts`, inbox bulk,
   workflow `assign_team`), the ticket and conversation teams match and a ledger row exists. A **delayed** `conversation.created`
   intake run executed after an escalation is skipped (the ticket stays on T2). A human manual move down is allowed and recorded.
   Pre-conversion conversation moves appear in the timeline. Intake sweep: unpaired, manual and REST/MCP tickets → intake team;
   back-office untouched; closed and deleted skipped. Routing guard: enable refused; the verify-after-write race test (both flags
-  flipped concurrently) never leaves both on. A grep guard fails on any new upstream writer of the team columns that has no hook.
+  flipped concurrently) never leaves both on. A grep guard fails on any new upstream writer of the team columns that does not go through `forkApplyTeamAssignment`.
 - **Write guard (X-3).** After handoff the escalator gets `TIER_READ_ONLY` on reply, note, status, priority, assign and delete. An
   escalator still on the holding team, the assignee, `view_all` holders and service actors are unaffected. The escalation's own
   note and watch succeed while its effects are pending.
@@ -775,6 +942,9 @@ Each 🟡 row has an adopted default that the design implements now. The owner c
 | OI-18 🟡 | How does a blocked lead stay blocked once its owner signs in and claims it? **Default: the block moves to the user (the user can read their requests but cannot reply, file or rate), and the lead stays as a block anchor for future unverified mail.** | §4.11 step 3 |
 | OI-19 🟡 | The company IdP may not release `email_verified`. May the claim trust an address when the sign-in provider owns that address's **verified** domain (`findProviderForDomainEmail`)? **Default: yes.** The IdP is authoritative for company addresses (D-E1). Without this, no claim would ever run against such an IdP. | §4.11 step 3 |
 | OI-20 🟡 | Is a `portalConfig.nav` link item enough for "Help hub"? Its label is single-language and its URL is absolute per app. **Default: yes (no seam).** Restore a built-in nav item seam only if portals need a localized label. | §4.10 |
+| OI-21 🟡 | When the sweep finds a tiered pair whose team differs from the last recorded assignment version (an unhooked writer), should it restore the recorded team or adopt the unrecorded write? **Default: restore and alert (`TIER_INVARIANT_DRIFT`),** because an unrecorded write may be an automated de-escalation (D-T9). | §4.6, R2-6 |
+| OI-22 🟡 | A human's assignment made from a stale view (the pair was escalated after the form loaded) is applied as a recorded manual override. Should human UI assigns carry an expected-from team and be refused on mismatch? **Default: no.** Human moves are overrides (OI-16). Adding the check needs `expectedTeamId` on upstream's assign input (a larger T-8/T-9). | §4.6, R2-6 |
+| OI-23 🟡 | Once-effects (the escalation note, system messages) can repeat only if a runner stalls longer than 2 × the lease in the middle of an upstream call. Events and webhooks stay at-least-once. **Default: accept, with a 30 s lease and per-effect timeouts well below it.** | §4.2 step 5, R2-5 |
 
 ## 11. Relationship to other v2 plans
 
@@ -788,10 +958,14 @@ Each 🟡 row has an adopted default that the design implements now. The owner c
     request id in `note`), **`targetTier` ∈ 1..3**, `expectedFromTeamId`, and a **required, caller-supplied `idempotencyKey`**.
     The operation row is keyed by `(subject_key, idempotency_key)`. A replay with the same subject and key always returns the
     **same** `escalationId` and **resumes** any unfinished step (conversion, apply, outbox effects). It never starts a second
-    operation. A replay of a `rejected` operation returns the same error. D-A11: the ticket moves along the edge chain to the
+    operation. A replay of a `rejected` operation returns the same error. Only one worker runs a step at a time (operation
+    lease, §4.2 step 1a). A same-key replay made while another worker holds the lease gets the retryable
+    `ESCALATION_IN_PROGRESS` error, carrying the same `escalationId`. 40 treats it like its other retryable errors (stay
+    `pending`, retry). A same-key replay with different inputs gets `IDEMPOTENCY_KEY_REUSED`. D-A11: the ticket moves along the edge chain to the
     first team at or above `targetTier`.
-  - Returns `{ escalationId, fromTeamId, toTeamId, direction, state }`. `state='applied'` means the tier change is committed and
-    only effects remain.
+  - Returns `{ escalationId, fromTeamId, toTeamId, direction, state }` only when `state` is `applied` or `done`. `applied` means
+    the tier change is committed and only effects remain. Effects are ordered per pair (`seq`), so a later escalation's SLA
+    and reason are never overwritten by an earlier one.
   - D-T2 applies: the requester is cleared and made a watcher, so T-1 gives them **read-only** access while watching.
   - Also exported: `listTierMemberships(principalId)` → `[{teamId, tier}]`, plus `getEffectiveTier(principalId)` built on it,
     `getTeamTier(teamId)` and `resolveTeamForTier(minTier, fromTeamId?)`. For `account.execute`, some membership must satisfy
