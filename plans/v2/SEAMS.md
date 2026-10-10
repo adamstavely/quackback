@@ -61,6 +61,8 @@ The fork's production image is a fork-owned `apps/web/Dockerfile.fork` layered o
 | T-4 | apps/web/src/locales/*.json (9) | `portal.forkHub.*` keys | 30 / 7b | planned |
 | T-5 | `apps/web/src/components/widget/widget-overview.tsx` | Hub section on widget Home | 30 / 7b | planned |
 | T-13 | `apps/web/src/lib/server/auth/hooks.ts` | `await forkAfterSignIn(ctx, providers, registeredOidcIds)` after `handleAutoProvisionAfter` — claims email-only leads on SSO sign-in | 30 / 7a | planned |
+| T-16 | `apps/web/src/start.ts` | Import + `portalHomeMiddleware` appended to `requestMiddleware` (after workspace resolution): a query-less `GET /` → 307 `/hub`, the portal home (D-T15). Route hooks can't do this: the router fills in the board's `?sort=trending` default before any hook runs | 30 / 7b | implemented — test: `lib/shared/fork/__tests__/portal-home.test.ts` |
+| T-17 | `apps/web/src/components/public/portal-header.tsx` | Import; logo `to={PORTAL_HOME_PATH}`; Feedback `NavTab` link gets `search={portalNavTabSearch(item.type)}` so it (and open-in-new-tab) still reaches the board | 30 / 7b | implemented — test: `lib/shared/fork/__tests__/portal-home.test.ts` |
 | T-7… | Workflow `escalate` action (~15 sites), macro action (3), `events/targets.ts` stage email | Deferred phases; see `30-…` | 30 / 6, 8 (deferred) | planned |
 | A-2 | `apps/web/src/components/admin/inbox/inbox-detail-panel.tsx` | Uses the T-2 slot (no extra edit if T-2 lands first) | 40 / 5 | planned |
 | A-4 | `apps/web/src/components/admin/settings/security/audit-log-page.tsx` | Fork event labels in the filter (optional) | 40 / 5 (optional) | planned |

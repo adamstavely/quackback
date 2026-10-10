@@ -235,3 +235,9 @@ it Quackback treats every internal email as unverified.
 | O-T26 | 30 | Should admin-written `apply_sla` steps in other workflows be guarded while tiers are on? | No — upstream behaviour; the Tiers page warns about them |
 
 Verification tasks recorded in the plans (not decisions): RDS Proxy pinning (20 V-1); MCP token lifetimes and `skip_consent` behaviour (20 V-4, V-8); AWS S3 through the registry's storage record, which today only accepts `provider: 'r2'` and static keys (20 V-7); whether `/api/widget/kb-ask` respects private-portal/help-center audience rules (30); banner stream limiter sizing (60 N-11).
+
+## Decided 2026-10-10 (hub build)
+
+| ID | Decision | Status |
+|---|---|---|
+| D-T15 | The help hub (`/hub`) is the portal's default home page. A query-less `GET /` redirects there (seam T-16) and the header logo links there (T-17); the feedback board stays at `/`, reached by the Feedback tab with its default `?sort=trending`. End users cannot create tickets (chat only), so the hub has no "Submit a request" or "Give feedback" buttons. Not yet behind a `fork_settings` flag (§9): that infrastructure does not exist yet. | ✅ (owner) |

@@ -44,6 +44,8 @@ import { removeViewerScopedPortalQueries } from '@/lib/client/queries/portal'
 import { useAuthBroadcast } from '@/lib/client/hooks/use-auth-broadcast'
 import { NotificationBell } from '@/components/notifications'
 import { useSessionContext, useWorkspaceSettings } from '@/lib/client/hooks/use-root-context'
+// FORK-SEAM(T-17): the logo links home (the help hub); the Feedback tab links the board.
+import { PORTAL_HOME_PATH, portalNavTabSearch } from '@/lib/shared/fork/portal-home'
 
 interface PortalHeaderProps {
   orgName: string
@@ -288,7 +290,8 @@ export function PortalHeader({
       <div>
         <div className="max-w-6xl mx-auto w-full px-4 sm:px-6">
           <div className="flex h-12 items-center justify-between">
-            <Link to="/" className="portal-header__logo flex items-center gap-2">
+            {/* FORK-SEAM(T-17): the logo links home, and home is the help hub. */}
+            <Link to={PORTAL_HOME_PATH} className="portal-header__logo flex items-center gap-2">
               {orgLogo ? (
                 <img
                   src={orgLogo}
@@ -412,7 +415,12 @@ const NavTab = memo(
     const intl = useIntl()
     const isActive = useRouterState({ select: (s) => isTabActive(item.to, s.location.pathname) })
     return (
-      <Link to={item.to} className={navItemClass(isActive)}>
+      <Link
+        to={item.to}
+        // FORK-SEAM(T-17): the Feedback tab links the board, since a bare `/` is now home.
+        search={portalNavTabSearch(item.type)}
+        className={navItemClass(isActive)}
+      >
         {item.label ??
           intl.formatMessage({ id: item.messageId, defaultMessage: item.defaultMessage })}
         {unread > 0 && (
