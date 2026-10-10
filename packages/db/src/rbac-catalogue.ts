@@ -16,6 +16,13 @@
  * kept identical by a drift test.
  */
 
+// FORK-SEAM(F-7): permissions the fork adds.
+import {
+  FORK_CONTRIBUTOR_PERMISSIONS,
+  FORK_PERMISSION_CATALOGUE,
+  FORK_PERMISSIONS,
+} from './fork/rbac'
+
 export const PERMISSIONS = {
   // category 'workspace' — workspace-level admin singletons (all in WORKSPACE_ADMIN_PERMISSIONS)
   SETTINGS_MANAGE: 'settings.manage', // portal, widget, developer, general (branding + moderation split out in Phase 3)
@@ -141,6 +148,8 @@ export const PERMISSIONS = {
   // post-status-taxonomy keys above (STATUS_VIEW/STATUS_MANAGE).
   STATUS_PAGE_MANAGE: 'status_page.manage', // components, groups, settings, templates (workspace-admin)
   STATUS_PAGE_PUBLISH: 'status_page.publish', // create / update / resolve incidents and maintenance
+  // FORK-SEAM(F-7): permissions the fork adds (src/fork/rbac.ts).
+  ...FORK_PERMISSIONS,
 } as const
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
@@ -590,6 +599,8 @@ export const PERMISSION_CATALOGUE: ReadonlyArray<{
     category: 'status_page',
     description: 'Create, update, and resolve status incidents and maintenance windows',
   },
+  // FORK-SEAM(F-7): permissions the fork adds (src/fork/rbac.ts).
+  ...FORK_PERMISSION_CATALOGUE,
 ]
 
 // --------------------------------------------------------------- presets ---
@@ -687,6 +698,8 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRoleKey, PermissionKey[]> = {
     // on-call responders post incident/maintenance updates; only admins
     // reshape the page (status_page.manage, above)
     PERMISSIONS.STATUS_PAGE_PUBLISH,
+    // FORK-SEAM(F-7): fork permissions Contributors hold (src/fork/rbac.ts).
+    ...FORK_CONTRIBUTOR_PERMISSIONS,
     // deliberately NOT granted (destructive / identity / config): post.edit, post.delete,
     // post.set_author, comment.edit, conversation.manage_tags, conversation.manage
   ],

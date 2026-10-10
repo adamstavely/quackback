@@ -66,6 +66,8 @@ import {
   useSessionContext,
   useWorkspaceSettings,
 } from '@/lib/client/hooks/use-root-context'
+// FORK-SEAM(F-4): fork admin areas (Announcements) join the rail.
+import { FORK_RAIL_ITEMS, withForkRailItems } from '@/components/fork/admin-rail'
 
 /** Availability toggle for the account menu (conversation routing). The label shows the
  *  state you'll switch to; the avatar dot shows the current one. */
@@ -175,7 +177,11 @@ const RAIL_ITEMS: RailItem[] = [
 
 /** The rail items a viewer sees: the products that are on. */
 export function buildRailItems(flags: Partial<FeatureFlags> | undefined): RailItem[] {
-  return RAIL_ITEMS.filter((item) => !item.product || isProductEnabled(flags, item.product))
+  // FORK-SEAM(F-4): fork admin areas (Announcements) join the rail.
+  return withForkRailItems(
+    RAIL_ITEMS.filter((item) => !item.product || isProductEnabled(flags, item.product)),
+    FORK_RAIL_ITEMS
+  )
 }
 
 /**

@@ -129,6 +129,8 @@ export const PERMISSIONS = {
   // status_page
   STATUS_PAGE_MANAGE: 'status_page.manage',
   STATUS_PAGE_PUBLISH: 'status_page.publish',
+  ANNOUNCEMENT_VIEW: 'announcement.view',
+  ANNOUNCEMENT_MANAGE: 'announcement.manage',
 } as const
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
@@ -230,6 +232,7 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRoleKey, PermissionKey[]> = {
     PERMISSIONS.SUGGESTION_VIEW,
     PERMISSIONS.SUGGESTION_MANAGE,
     PERMISSIONS.STATUS_PAGE_PUBLISH,
+    PERMISSIONS.ANNOUNCEMENT_VIEW,
   ],
 }
 
@@ -338,4 +341,6 @@ export const PERMISSION_CATALOGUE: ReadonlyArray<{
   { key: PERMISSIONS.COPILOT_USE, category: 'ai' },
   { key: PERMISSIONS.STATUS_PAGE_MANAGE, category: 'status_page' },
   { key: PERMISSIONS.STATUS_PAGE_PUBLISH, category: 'status_page' },
+  { key: PERMISSIONS.ANNOUNCEMENT_VIEW, category: 'status_page' },
+  { key: PERMISSIONS.ANNOUNCEMENT_MANAGE, category: 'status_page' },
 ]
