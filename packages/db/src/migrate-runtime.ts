@@ -82,6 +82,8 @@ import {
   type PostconditionReport,
 } from './schema-ops'
 import { MIGRATIONS_DIR } from './schema-version'
+// FORK-SEAM(F-1): the fork's own migration lineage, run after upstream's.
+import { runForkMigrations } from './fork/migrate'
 
 export { MigrationPreflightError } from './schema-ops'
 
@@ -309,6 +311,11 @@ export async function runMigrations(
     } finally {
       if (lockTimeoutMs !== undefined) await sql.unsafe(`SET lock_timeout = 0`).catch(() => {})
     }
+
+    // FORK-SEAM(F-1): the fork's own migration lineage, after upstream's and under the
+    // same lock (conventions §3). Skipped only for a staged copy of upstream's folder.
+    if (path.resolve(migrationsFolder) === path.resolve(MIGRATIONS_FOLDER))
+      await runForkMigrations(sql)
 
     if (concurrentIndexes) {
       onStep('concurrent-indexes')
