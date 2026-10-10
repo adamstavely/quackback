@@ -69,7 +69,7 @@ export function HomeActions({ flags }: { flags: Partial<FeatureFlags> | undefine
             <Fragment key={group.productId}>
               {index > 0 ? <DropdownMenuSeparator /> : null}
               <DropdownMenuGroup>
-                <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                <DropdownMenuLabel className="uppercase tracking-wide text-muted-foreground">
                   {group.label}
                 </DropdownMenuLabel>
                 {group.actions.map((item) => (
@@ -105,7 +105,8 @@ export function HomeActions({ flags }: { flags: Partial<FeatureFlags> | undefine
 }
 
 function HomeCreatePost({ onClose }: { onClose: () => void }) {
-  const { user, principal } = useRouteContext({ from: '/admin' })
+  const user = useRouteContext({ from: '/admin', select: (context) => context.user })
+  const principal = useRouteContext({ from: '/admin', select: (context) => context.principal })
   const boards = useQuery(adminQueries.boards())
   const tags = useQuery(adminQueries.tags())
   const statuses = useQuery(adminQueries.statuses())

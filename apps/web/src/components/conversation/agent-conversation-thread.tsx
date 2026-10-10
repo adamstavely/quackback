@@ -19,15 +19,19 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  memo,
   useMemo,
   useRef,
   useState,
   type ClipboardEvent,
+  type ComponentProps,
   type DragEvent,
   type ReactNode,
   type RefObject,
 } from 'react'
 import { useRouteContext } from '@tanstack/react-router'
+import type { ScrollToOptions } from '@tanstack/react-virtual'
+import { canDeleteAgentMessage, canEditAgentMessage } from '@/components/conversation/message-edit'
 import {
   PaperAirplaneIcon,
   PaperClipIcon,
@@ -50,11 +54,13 @@ import {
   ArrowDownTrayIcon,
   ArrowTopRightOnSquareIcon,
   UserPlusIcon,
+  InformationCircleIcon,
 } from '@heroicons/react/24/outline'
 import { toast } from 'sonner'
 import type {
   ConversationId,
   ConversationMessageId,
+  PrincipalId,
   TicketId,
   TicketStatusId,
 } from '@quackback/ids'
@@ -62,6 +68,7 @@ import {
   sendAgentMessageFn,
   addConversationNoteFn,
   deleteConversationMessageFn,
+  editConversationMessageFn,
   addMessageReactionFn,
   removeMessageReactionFn,
   setMessageFlagFn,
@@ -110,6 +117,10 @@ import {
   resolveResolvedStatusId,
 } from '@/lib/shared/tickets'
 import { AgentMessageBubble, UnreadDivider } from '@/components/conversation/message-bubble'
+import {
+  ConversationGalleryContext,
+  useGalleryValue,
+} from '@/components/shared/files/conversation-gallery'
 import { computeBlockStates } from '@/components/shared/conversation/conversation-rows'
 import {
   ThreadViewport,
@@ -156,6 +167,7 @@ import {
   TicketPriorityControl,
 } from '@/components/admin/inbox/ticket-controls'
 import { InboxDetailPanel } from '@/components/admin/inbox/inbox-detail-panel'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { CreateTicketDialog } from '@/components/admin/inbox/create-ticket-dialog'
 import { ConvertToPostDialog } from '@/components/admin/conversation/convert-to-post-dialog'
 import { EndConversationDialog } from '@/components/admin/conversation/end-conversation-dialog'
@@ -165,7 +177,11 @@ import { usePersonBlockStatus } from '@/components/admin/users/block-person-cont
 import { ConfirmDialog } from '@/components/shared/confirm-dialog'
 import { RequiredAttributesDialog } from '@/components/admin/conversation/required-attributes-dialog'
 import { downloadTranscriptFile } from '@/components/admin/conversation/export-transcript-button'
-import { RichTextEditor, type RichTextEditorHandle } from '@/components/ui/rich-text-editor'
+import {
+  RichTextEditor,
+  type EditorDocument,
+  type RichTextEditorHandle,
+} from '@/components/ui/rich-text-editor'
 import {
   CONVERSATION_EDITOR_FEATURES,
   CONVERSATION_NOTE_FEATURES,
@@ -173,19 +189,20 @@ import {
 import { ComposerAttachmentTray } from '@/components/shared/composer-attachment-tray'
 import { LinkPreviews } from '@/components/shared/link-preview-card'
 import { conversationInboxQueries } from '@/lib/client/queries/conversation-inbox'
+import { conversationPanelQueries } from '@/lib/client/queries/conversation-panels'
 import { inboxQueries, ticketKeys, ticketQueries } from '@/lib/client/queries/inbox'
 import { useSetTicketStatus } from '@/lib/client/mutations/inbox'
 import {
   buildAdminConversationRows,
   type AdminConversationRow,
 } from '@/lib/client/conversation/admin-conversation-rows'
+import { applyConversationReadToLists } from '@/lib/client/conversation/inbox-read'
 import type { JSONContent } from '@tiptap/core'
 import type { TiptapContent } from '@/lib/shared/db-types'
 import { isEmptyTiptapDoc } from '@/lib/shared/utils/is-empty-tiptap-doc'
 import { useConversationTyping } from '@/lib/client/hooks/use-conversation-typing'
-import { useImageUpload } from '@/lib/client/hooks/use-image-upload'
+import { useAgentFileUpload } from '@/lib/client/hooks/use-file-upload'
 import { useConversationComposerAttachments } from '@/lib/client/hooks/use-conversation-composer-attachments'
-import { useDebouncedValue } from '@/lib/client/hooks/use-debounced-value'
 import { useCopilotInsert } from '@/lib/client/hooks/use-copilot-insert'
 import { useComposerFocus } from '@/lib/client/hooks/use-composer-focus'
 import { usePermissions } from '@/lib/client/use-permissions'
@@ -197,6 +214,13 @@ import {
   appendTextToDraft,
   type ComposerDraft,
 } from './composer-draft'
+import {
+  createComposerDrafts,
+  isEmptyDraft,
+  useComposerDraftValue,
+  useDebouncedDraftText,
+  type ComposerDrafts,
+} from './composer-drafts'
 import { ComposerAiActions, type ComposerMode } from './composer-ai-actions'
 import { TypingDots } from '@/components/shared/typing-dots'
 import { EmojiPicker } from '@/components/shared/emoji-picker'
@@ -232,7 +256,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn, tomorrowAt, inHours, nextMondayAt } from '@/lib/shared/utils'
-import type { FeatureFlags } from '@/lib/shared/types/settings'
+import { useFeatureFlag, usePrincipalId } from '@/lib/client/hooks/use-root-context'
 
 // "Jump to message" tuning: how long the flash plays (must match the
 // flash-highlight keyframe duration) and how many older pages we'll auto-pull
@@ -268,8 +292,119 @@ export interface ThreadComposerHandle {
   openMacros: () => void
 }
 
-function toastImageUploadError(error: Error) {
-  toast.error(error.message)
+/** The thread's scroll seam into its message list, which owns the virtualizer. */
+interface ThreadMessagesHandle {
+  scrollToIndex: (index: number, options: ScrollToOptions) => void
+}
+
+/**
+ * The virtualized message list and its scroll-to-latest pill. The virtualizer
+ * re-renders whatever component calls it on every measurement and scroll;
+ * owning it here keeps those re-renders to the list instead of the whole
+ * thread (header, composer, detail panel).
+ */
+function ThreadMessages({
+  rows,
+  renderRow,
+  lastMessageId,
+  skipInitialScroll,
+  handleRef,
+}: {
+  rows: AdminConversationRow[]
+  renderRow: (row: AdminConversationRow) => ReactNode
+  lastMessageId: string | undefined
+  skipInitialScroll: () => boolean
+  handleRef: RefObject<ThreadMessagesHandle | null>
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // Mounted once the thread has loaded, so there is nothing left to wait for.
+  const virtualizer = useThreadVirtualizer({
+    rows,
+    scrollRef,
+    estimateSize: 72,
+    loading: false,
+    skipInitialScroll,
+  })
+  useImperativeHandle(
+    handleRef,
+    () => ({ scrollToIndex: (index, options) => virtualizer.scrollToIndex(index, options) }),
+    [virtualizer]
+  )
+
+  // Scroll-to-bottom pill state. `atEnd` reads the live virtualizer offset, which
+  // lags one frame behind a programmatic/follow scroll, so to flag "new messages
+  // below" we compare against the PREVIOUS render's at-end state (wasAtEndRef),
+  // not the live value (which momentarily reads false right after any append).
+  const atEnd = virtualizer.isAtEnd()
+  const [hasNewBelow, setHasNewBelow] = useState(false)
+  const wasAtEndRef = useRef(true)
+  const prevLastIdRef = useRef(lastMessageId)
+  // Surface the "new messages" pill when a message lands while the agent was
+  // scrolled up. Declared BEFORE the at-end effect on purpose: React runs effects
+  // in declaration order, so this reads wasAtEndRef while it still holds the
+  // PREVIOUS render's value (before the at-end effect overwrites it), which keeps
+  // the pill from flashing when followOnAppend re-pins us on a received message.
+  useEffect(() => {
+    if (lastMessageId && lastMessageId !== prevLastIdRef.current && !wasAtEndRef.current) {
+      setHasNewBelow(true)
+    }
+    prevLastIdRef.current = lastMessageId
+  }, [lastMessageId])
+  useEffect(() => {
+    if (atEnd) setHasNewBelow(false)
+    wasAtEndRef.current = atEnd
+  }, [atEnd])
+
+  // Messages: min-h-0 so this scrolls and the composer stays pinned. The
+  // wrapper is `relative` so the scroll-to-bottom pill can float over the
+  // thread.
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <ThreadViewport
+        virtualizer={virtualizer}
+        rows={rows}
+        renderRow={renderRow}
+        viewportRef={scrollRef}
+        className="min-h-0 flex-1"
+        rowClassName="px-5 py-1.5"
+      />
+
+      {/* Scroll-to-bottom pill: shown when scrolled up off the newest
+          message; highlighted (primary + dot) when a message arrived while
+          the agent was away from the bottom. */}
+      {!atEnd && (
+        <button
+          type="button"
+          onClick={() => {
+            setHasNewBelow(false)
+            virtualizer.scrollToIndex(rows.length - 1, { align: 'end', behavior: 'smooth' })
+          }}
+          className={cn(
+            'absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium shadow-md transition-colors',
+            hasNewBelow
+              ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
+              : 'border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
+          )}
+          aria-label={hasNewBelow ? 'New messages — jump to latest' : 'Jump to latest'}
+        >
+          {hasNewBelow && (
+            <>
+              <span className="size-1.5 rounded-full bg-primary-foreground" />
+              <span>New messages</span>
+            </>
+          )}
+          <ChevronDownIcon className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** The doc a composer holds before anything is written: no content, or one empty paragraph. */
+function isBlankComposerDoc(doc: JSONContent | TiptapContent | null | undefined): boolean {
+  const content = doc?.content
+  if (!content || content.length === 0) return true
+  return content.length === 1 && content[0].type === 'paragraph' && !content[0].content?.length
 }
 
 export function AgentConversationThread({
@@ -284,6 +419,9 @@ export function AgentConversationThread({
   createTicketToken,
   openCopilotToken,
   composerRef,
+  detailPanelShown = false,
+  replyFirst = false,
+  markRead = true,
 }: {
   /** The open item, discriminated by kind — drives both the data adapter and
    *  the derived `ThreadCapabilities`. */
@@ -316,18 +454,44 @@ export function AgentConversationThread({
   /** Publishes the composer seam the host's keyboard shortcuts and command
    *  palette drive. Both item kinds. */
   composerRef?: RefObject<ThreadComposerHandle | null>
+  /** Whether the viewport shows the detail panel (the host's read of
+   *  DETAIL_PANEL_MEDIA_QUERY; false in a server render). Where it shows,
+   *  the header's copies of the panel's triage controls, hidden there by CSS,
+   *  are not rendered, and the panel loads its own reads. */
+  detailPanelShown?: boolean
+  /** A first reply is the point (the Try Messenger sheet): the send button
+   *  carries a label and the primary fill, and Close steps back to outline. */
+  replyFirst?: boolean
+  /** Whether the thread is in view, so arriving messages are read. A host
+   *  that keeps it mounted but hidden (a tab on a narrow screen) passes false
+   *  until it shows it, and the thread is read then. */
+  markRead?: boolean
 }) {
   const queryClient = useQueryClient()
   const isTicket = item.kind === 'ticket'
   const conversationId = item.kind === 'conversation' ? item.id : null
   const ticketId = item.kind === 'ticket' ? item.id : null
-  const threadKey = conversationKeys.agentThread(conversationId ?? INACTIVE_CONVERSATION_ID)
-  const ticketThreadKey = ticketKeys.thread(ticketId ?? INACTIVE_TICKET_ID)
-  // The current agent's display name, for attributing optimistic reactions.
-  const { session, settings } = useRouteContext({ from: '__root__' })
-  const myName = session?.user?.name ?? 'You'
-  const flags = settings?.featureFlags as FeatureFlags | undefined
-  const showTickets = flags?.supportTickets ?? false
+  // Stable per item: the cache writers below close over these keys, and a key
+  // rebuilt on every render would rebuild them too, handing fresh callbacks to
+  // the memoized detail panel and message bubbles on every render.
+  const threadKey = useMemo(
+    () => conversationKeys.agentThread(conversationId ?? INACTIVE_CONVERSATION_ID),
+    [conversationId]
+  )
+  const ticketThreadKey = useMemo(
+    () => ticketKeys.thread(ticketId ?? INACTIVE_TICKET_ID),
+    [ticketId]
+  )
+  // Each route-context read selects the one value the thread uses, so a router
+  // update that leaves them alone does not re-render the whole thread. The
+  // current agent's display name attributes optimistic reactions.
+  const myName = useRouteContext({
+    from: '__root__',
+    select: (context) => context.session?.user?.name ?? 'You',
+  })
+  const myPrincipalId = usePrincipalId()
+  const showTickets = useFeatureFlag('supportTickets')
+  const supportInbox = useFeatureFlag('supportInbox')
   // B24: the linked-ticket affordances (the header's ticket-status pill, the
   // linked-ticket detail fetch) gate on the resolved ticket permissions, not
   // just the feature flag. `ticket.view` decides whether the ticket is fetched
@@ -338,6 +502,15 @@ export function AgentConversationThread({
   const permissions = usePermissions()
   const canViewTickets = permissions.has(PERMISSIONS.TICKET_VIEW)
   const canSetTicketStatus = permissions.has(PERMISSIONS.TICKET_SET_STATUS)
+  const [detailsSheetOpen, setDetailsSheetOpen] = useState(false)
+  const openDetailsSheet = useCallback(() => setDetailsSheetOpen(true), [])
+  const selectFromSheet = useCallback(
+    (id: Parameters<typeof onSelectItem>[0]) => {
+      setDetailsSheetOpen(false)
+      onSelectItem(id)
+    },
+    [onSelectItem]
+  )
 
   // Reply and Note each hold an independent draft (the rich doc persisted as
   // contentJson + its markdown mirror), so toggling modes preserves each mode's
@@ -353,18 +526,13 @@ export function AgentConversationThread({
   // a back-office thread is mostly working chatter, and sharing is a decision
   // about one note rather than a mode the composer stays in.
   const [shareNoteWithConversation, setShareNoteWithConversation] = useState(false)
-  const [replyDraft, setReplyDraft] = useState<ComposerDraft>(EMPTY_DRAFT)
-  const [noteDraft, setNoteDraft] = useState<ComposerDraft>(EMPTY_DRAFT)
+  // The drafts live outside React state: the editor writes one on every
+  // keystroke, which must not re-render this whole thread. What the thread
+  // draws from a draft (the send button, AI actions, link previews) subscribes
+  // to just that value; everything else reads the latest draft when it acts.
+  const [drafts] = useState(createComposerDrafts)
   const [replyKey, setReplyKey] = useState(0)
   const [noteKey, setNoteKey] = useState(0)
-  // Latest drafts for stable, pull-based composer AI actions. Reading from
-  // refs lets an async transform verify that the draft did not change without
-  // recreating its callbacks on every keystroke.
-  const replyDraftRef = useRef(replyDraft)
-  replyDraftRef.current = replyDraft
-  const noteDraftRef = useRef(noteDraft)
-  noteDraftRef.current = noteDraft
-  const scrollRef = useRef<HTMLDivElement>(null)
 
   // The one controlled convert dialog's seed, built at whichever entry point
   // opened it: a per-message "Track as feedback" pick, an AI "Track as post"
@@ -397,40 +565,36 @@ export function AgentConversationThread({
   const sendTyping = useTypingSender(isTicket ? null : conversationId)
   const { onLocalInput } = useConversationTyping(sendTyping)
 
-  const { upload } = useImageUpload({
-    endpoint: '/api/upload/image',
-    prefix: 'chat-images',
-    onError: toastImageUploadError,
-  })
+  const { upload } = useAgentFileUpload()
   const {
-    pending: pendingAttachments,
+    items: attachmentItems,
+    attachments: pendingAttachments,
     addFiles,
     remove: removeAttachment,
+    retry: retryAttachment,
     clear: clearAttachments,
     uploading,
   } = useConversationComposerAttachments(upload)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // Same as the visitor messenger: paste/drop stages the tray. The editor has
   // no onImageUpload, so it never inlines a resizableImage into the draft.
+  // Paste still works for an image from the clipboard; drop/paste now accept
+  // any file, same as the paperclip picker.
   const handleComposerPaste = useCallback(
     (e: ClipboardEvent<HTMLDivElement>) => {
-      const images = Array.from(e.clipboardData?.files ?? []).filter((f) =>
-        f.type.startsWith('image/')
-      )
-      if (images.length === 0) return
+      const files = Array.from(e.clipboardData?.files ?? [])
+      if (files.length === 0) return
       e.preventDefault()
-      void addFiles(images)
+      void addFiles(files)
     },
     [addFiles]
   )
   const handleComposerDrop = useCallback(
     (e: DragEvent<HTMLDivElement>) => {
-      const images = Array.from(e.dataTransfer?.files ?? []).filter((f) =>
-        f.type.startsWith('image/')
-      )
-      if (images.length === 0) return
+      const files = Array.from(e.dataTransfer?.files ?? [])
+      if (files.length === 0) return
       e.preventDefault()
-      void addFiles(images)
+      void addFiles(files)
     },
     [addFiles]
   )
@@ -468,9 +632,11 @@ export function AgentConversationThread({
   // its own row. Resolved in two hops — the summary tells us the id, then
   // the full DTO (same cache key as a ticket item's own `ticket` query above)
   // drives the header's ticket-status pill + the panel's Ticket card/Links.
+  // The thread request loads the link with the thread and seeds it, so it
+  // waits for the thread rather than racing it with a request of its own.
   const { data: linkedTicketSummary } = useQuery({
     ...inboxQueries.conversationTicketLink(conversationId ?? INACTIVE_CONVERSATION_ID),
-    enabled: !isTicket && !!conversationId,
+    enabled: !isTicket && !!conversationId && !!convThread,
   })
   const linkedTicketId = linkedTicketSummary?.id ?? null
   const { data: linkedTicketFull } = useQuery({
@@ -498,6 +664,7 @@ export function AgentConversationThread({
   const messages: AgentConversationMessageDTO[] = isTicket
     ? (ticketThread?.messages ?? [])
     : (convThread?.messages ?? [])
+  const gallery = useGalleryValue(messages, { includeInternal: true })
   const issuePeople = useMemo(
     () =>
       conversation?.channel === 'github' ? githubIssuePeopleFromMessages(messages) : undefined,
@@ -527,11 +694,7 @@ export function AgentConversationThread({
     if (!capabilities.reply) setNoteMode(true)
   }, [capabilities.reply])
 
-  const linkPreviewsEnabled = capabilities.linkPreviews && (flags?.supportInbox ?? false)
-  const debouncedComposerText = useDebouncedValue(
-    noteMode ? noteDraft.markdown : replyDraft.markdown,
-    500
-  )
+  const linkPreviewsEnabled = capabilities.linkPreviews && supportInbox
 
   // The unread divider sits immediately above the first message newer than the
   // agent's read watermark — i.e. the first message that "mark unread" or new
@@ -675,15 +838,11 @@ export function AgentConversationThread({
     ]
   )
 
-  // A pending `?m=` jump owns the initial scroll, so consume the one-shot
-  // without scrolling to the bottom in that case.
-  const virtualizer = useThreadVirtualizer({
-    rows,
-    scrollRef,
-    estimateSize: 72,
-    loading: isLoading,
-    skipInitialScroll: () => pendingTargetRef.current != null,
-  })
+  // The message list owns the virtualizer (see ThreadMessages); the thread
+  // scrolls it through this handle. A pending `?m=` jump owns the initial
+  // scroll, so the list consumes its one-shot without scrolling to the bottom.
+  const messagesRef = useRef<ThreadMessagesHandle | null>(null)
+  const skipInitialScroll = useCallback(() => pendingTargetRef.current != null, [])
 
   // After our own send, jump to the freshly-appended message — followOnAppend
   // only auto-follows when already at the bottom, so an agent who replied while
@@ -694,33 +853,10 @@ export function AgentConversationThread({
   useLayoutEffect(() => {
     if (!pendingOwnSendScroll.current || rows.length === 0) return
     pendingOwnSendScroll.current = false
-    virtualizer.scrollToIndex(rows.length - 1, { align: 'end' })
-  }, [rows.length, virtualizer])
+    messagesRef.current?.scrollToIndex(rows.length - 1, { align: 'end' })
+  }, [rows.length])
 
-  // Scroll-to-bottom pill state. `atEnd` reads the live virtualizer offset, which
-  // lags one frame behind a programmatic/follow scroll — so to flag "new messages
-  // below" we compare against the PREVIOUS render's at-end state (wasAtEndRef),
-  // not the live value (which momentarily reads false right after any append).
   const lastMessageId = messages.at(-1)?.id
-  const atEnd = virtualizer.isAtEnd()
-  const [hasNewBelow, setHasNewBelow] = useState(false)
-  const wasAtEndRef = useRef(true)
-  const prevLastIdRef = useRef(lastMessageId)
-  // Surface the "new messages" pill when a message lands while the agent was
-  // scrolled up. Declared BEFORE the at-end effect on purpose: React runs effects
-  // in declaration order, so this reads wasAtEndRef while it still holds the
-  // PREVIOUS render's value (before the at-end effect overwrites it) — which keeps
-  // the pill from flashing when followOnAppend re-pins us on a received message.
-  useEffect(() => {
-    if (lastMessageId && lastMessageId !== prevLastIdRef.current && !wasAtEndRef.current) {
-      setHasNewBelow(true)
-    }
-    prevLastIdRef.current = lastMessageId
-  }, [lastMessageId])
-  useEffect(() => {
-    if (atEnd) setHasNewBelow(false)
-    wasAtEndRef.current = atEnd
-  }, [atEnd])
 
   // Re-arm the jump whenever the URL target changes (e.g. clicking another
   // "Saved for later" message while this conversation is already open).
@@ -738,7 +874,7 @@ export function AgentConversationThread({
     if (!capabilities.deepLinkJump || !pendingTarget || isLoading) return
     const index = rows.findIndex((r) => r.type === 'message' && r.message.id === pendingTarget)
     if (index >= 0) {
-      virtualizer.scrollToIndex(index, { align: 'center' })
+      messagesRef.current?.scrollToIndex(index, { align: 'center' })
       setHighlightId(pendingTarget)
       setPendingTarget(null)
       return
@@ -756,7 +892,6 @@ export function AgentConversationThread({
     isLoading,
     hasMoreOlder,
     loadingOlder,
-    virtualizer,
     loadOlder,
   ])
 
@@ -770,13 +905,19 @@ export function AgentConversationThread({
   // Clear the agent-side unread badge when a thread is open and new visitor
   // messages arrive — opening + reading should mark read, not only replying.
   // Conversation adapter: the existing shared hook, no-op'd (`conversationId:
-  // null`) while a ticket is open.
+  // null`) while a ticket is open. A thread already read through its newest
+  // message writes nothing. A read moves only the row's unread badge, so the
+  // cached lists are patched in place rather than refetched with the counts.
+  const onConversationRead = useCallback(() => {
+    if (conversationId) applyConversationReadToLists(queryClient, conversationId)
+  }, [queryClient, conversationId])
   useMarkReadOnIncoming({
     conversationId: isTicket ? null : conversationId,
     messages,
     whenLastFrom: 'visitor',
-    enabled: !isLoading,
-    onMarked: onChanged,
+    enabled: !isLoading && markRead,
+    readThrough: conversation?.agentLastReadAt ?? null,
+    onMarked: onConversationRead,
   })
   // Ticket adapter: mark read once the thread has loaded, and again whenever a
   // new message lands while it's open — simpler than the conversation side's
@@ -837,7 +978,7 @@ export function AgentConversationThread({
   // never echo back over SSE, so `onChanged` → `refreshInbox` is the only
   // reconciliation for them). The reply path (`sendMutation`, below) passes
   // `false`: replying already writes straight into this cache above, AND the
-  // SSE echo of the agent's own message fires `agentEventChangesInboxList` →
+  // reply's SSE echo (its `conversation` event) fires `agentEventChangesInboxList` →
   // `refreshInboxList` (see inbox.tsx's stream handler) — so calling
   // `onChanged` here too was a redundant second broad invalidation racing the
   // SSE one (QC-3).
@@ -929,7 +1070,7 @@ export function AgentConversationThread({
             label: 'Send untranslated',
             onClick: () => {
               // Re-clear the composer we restored above, then resend.
-              setReplyDraft(EMPTY_DRAFT)
+              drafts.set('reply', EMPTY_DRAFT)
               setReplyKey((k) => k + 1)
               sendMutation.mutate({ ...vars, skipTranslation: true })
               requestAnimationFrame(() => activeEditorRef.current?.focus('end'))
@@ -947,7 +1088,7 @@ export function AgentConversationThread({
             label: 'Send untranslated',
             onClick: () => {
               // Re-clear the composer we restored above, then resend.
-              setReplyDraft(EMPTY_DRAFT)
+              drafts.set('reply', EMPTY_DRAFT)
               setReplyKey((k) => k + 1)
               sendMutation.mutate({ ...vars, skipTranslation: true })
               requestAnimationFrame(() => activeEditorRef.current?.focus('end'))
@@ -1021,10 +1162,11 @@ export function AgentConversationThread({
   // P2-D.1 inbox translation: activation banner/toggle + per-message
   // translation display, gated on the inboxTranslation capability. A no-op
   // hook (everything false/undefined) when the capability is off, so a
-  // ticket's behavior is unaffected.
+  // ticket's behavior is unaffected. It starts once the conversation has
+  // loaded: the thread request brings the agent's language preference with it.
   const inboxTranslationEnabled = capabilities.inboxTranslation
   const inboxTranslation = useInboxTranslation({
-    enabledFlag: inboxTranslationEnabled,
+    enabledFlag: inboxTranslationEnabled && !!conversation,
     conversationId: conversationId ?? INACTIVE_CONVERSATION_ID,
     translationState: conversation?.translation,
     messages,
@@ -1037,6 +1179,25 @@ export function AgentConversationThread({
     onSuccess: (_r, messageId) => removeActiveMessage(messageId),
     onError: () => toast.error('Failed to delete message'),
   })
+
+  const handleEditMessage = useCallback(
+    async (
+      messageId: ConversationMessageId,
+      draft: { content: string; contentJson: AgentConversationMessageDTO['contentJson'] }
+    ) => {
+      try {
+        const message = await editConversationMessageFn({
+          data: { messageId, content: draft.content, contentJson: draft.contentJson },
+        })
+        patchActiveMessage(message.id, () => message)
+        onChanged()
+      } catch {
+        toast.error('Failed to edit message')
+        throw new Error('Failed to edit message')
+      }
+    },
+    [onChanged, patchActiveMessage]
+  )
 
   // Toggle the caller's emoji reaction on a message (optimistic; the SSE
   // message_updated reconciles counts across agents on the conversation side —
@@ -1210,7 +1371,9 @@ export function AgentConversationThread({
   // Block / unblock the visitor (overflow menu, conversations only).
   const { blocked: visitorBlocked } = usePersonBlockStatus(conversation?.visitor.principalId)
   const [blockConfirmOpen, setBlockConfirmOpen] = useState(false)
-  const blockStatusKey = ['admin', 'person-block-status', conversation?.visitor.principalId]
+  const blockStatusKey = conversationPanelQueries.blockStatus(
+    conversation?.visitor.principalId as PrincipalId
+  ).queryKey
   const blockMutation = useMutation({
     mutationFn: () => blockPersonFn({ data: { principalId: conversation!.visitor.principalId } }),
     onSuccess: () => {
@@ -1373,19 +1536,19 @@ export function AgentConversationThread({
   // exposes no imperative insert, so every "insert at cursor" affordance (macros,
   // Copilot, the emoji picker) routes through the controlled value + remount key.
   // One seam per converter: plain text (macros/emoji — literal paragraphs) vs
-  // Copilot answer (markdown-lite → real editor nodes, citation markers
+  // Copilot answer (Markdown → real editor nodes, citation markers
   // stripped; see appendAnswerToDraft).
   const insertIntoDraft = useCallback(
     (mode: 'reply' | 'note', append: (prev: ComposerDraft) => ComposerDraft) => {
       if (mode === 'note') {
-        setNoteDraft(append)
+        drafts.set('note', append)
         setNoteKey((k) => k + 1)
       } else {
-        setReplyDraft(append)
+        drafts.set('reply', append)
         setReplyKey((k) => k + 1)
       }
     },
-    []
+    [drafts]
   )
   const insertText = useCallback(
     (mode: 'reply' | 'note', text: string) =>
@@ -1456,44 +1619,57 @@ export function AgentConversationThread({
     if (noteMode) setMacroPickerOpen(false)
   }, [noteMode])
 
-  const getComposerText = useCallback(
-    (mode: ComposerMode) =>
-      mode === 'note' ? noteDraftRef.current.markdown : replyDraftRef.current.markdown,
-    []
-  )
-  const replaceComposerText = useCallback((mode: ComposerMode, text: string) => {
-    const previous = mode === 'note' ? noteDraftRef.current : replyDraftRef.current
-    const apply = (draft: ComposerDraft) => {
-      if (mode === 'note') {
-        setNoteDraft(draft)
-        setNoteKey((k) => k + 1)
-      } else {
-        setReplyDraft(draft)
-        setReplyKey((k) => k + 1)
+  const getComposerText = useCallback((mode: ComposerMode) => drafts.get(mode).markdown, [drafts])
+  const replaceComposerText = useCallback(
+    (mode: ComposerMode, text: string) => {
+      const previous = drafts.get(mode)
+      const apply = (draft: ComposerDraft) => {
+        if (mode === 'note') {
+          drafts.set('note', draft)
+          setNoteKey((k) => k + 1)
+        } else {
+          drafts.set('reply', draft)
+          setReplyKey((k) => k + 1)
+        }
       }
-    }
-    apply(answerToDraft(text))
-    // Replacing the document remounts the editor and clears its native history.
-    // Return a full-fidelity restore for the composer's persistent inline Undo.
-    return () => apply(previous)
-  }, [])
+      apply(answerToDraft(text))
+      // Replacing the document remounts the editor and clears its native history.
+      // Return a full-fidelity restore for the composer's persistent inline Undo.
+      return () => apply(previous)
+    },
+    [drafts]
+  )
 
   // Track each mode's draft from the editor's onChange (json + markdown mirror).
   // The reply keystroke also drives the visitor-facing typing indicator (only
   // when the capability is on — a ticket reply never signals typing); a note
   // is internal, so it never signals typing either way. Both callbacks are
   // stable so the editor's extensions aren't rebuilt on every render.
+  //
+  // An editor also reports updates that change no text: mounting, and
+  // toggling editable, report the blank doc it already held. Those leave the
+  // draft as it was, so they neither re-render the thread nor tell the
+  // visitor the agent is typing; only a change to the text signals typing.
+  // The draft refs move with each accepted update so a second update in the
+  // same tick compares against the first rather than the last render.
   const onReplyChange = useCallback(
-    (json: JSONContent, _html: string, markdown: string) => {
-      setReplyDraft({ json: json as TiptapContent, markdown })
-      if (capabilities.typing) onLocalInput()
+    (document: EditorDocument) => {
+      const json = document.json()
+      const previous = drafts.get('reply')
+      if (isBlankComposerDoc(json) && isBlankComposerDoc(previous.json)) return
+      const markdown = document.markdown()
+      drafts.set('reply', { json: json as TiptapContent, markdown })
+      if (capabilities.typing && markdown !== previous.markdown) onLocalInput()
     },
-    [onLocalInput, capabilities.typing]
+    [drafts, onLocalInput, capabilities.typing]
   )
   const onNoteChange = useCallback(
-    (json: JSONContent, _html: string, markdown: string) =>
-      setNoteDraft({ json: json as TiptapContent, markdown }),
-    []
+    (document: EditorDocument) => {
+      const json = document.json()
+      if (isBlankComposerDoc(json) && isBlankComposerDoc(drafts.get('note').json)) return
+      drafts.set('note', { json: json as TiptapContent, markdown: document.markdown() })
+    },
+    [drafts]
   )
 
   // Enter-to-send routes through onSubmit, so it must be a STABLE callback — an
@@ -1508,7 +1684,7 @@ export function AgentConversationThread({
   const sendRef = useRef<() => void>(() => {})
   sendRef.current = () => {
     const useNote = noteMode || !capabilities.reply
-    const draft = useNote ? noteDraft : replyDraft
+    const draft = drafts.get(useNote ? 'note' : 'reply')
     const empty = isEmptyTiptapDoc(draft.json ?? undefined)
     const hasAttachments = pendingAttachments.length > 0
     const mutation = useNote ? noteMutation : sendMutation
@@ -1522,14 +1698,14 @@ export function AgentConversationThread({
       // failed text below it with a separator, so both survive. The merge is
       // JSON-first: the remount reads value.json, so a markdown-only merge
       // would render invisible and be dropped on the next edit.
-      const current = (useNote ? noteDraftRef : replyDraftRef).current
+      const current = drafts.get(useNote ? 'note' : 'reply')
       const failedMarkdown = snapshot.markdown
       if (isEmptyTiptapDoc(current.json ?? undefined)) {
         if (useNote) {
-          setNoteDraft(snapshot)
+          drafts.set('note', snapshot)
           setNoteKey((k) => k + 1)
         } else {
-          setReplyDraft(snapshot)
+          drafts.set('reply', snapshot)
           setReplyKey((k) => k + 1)
         }
       } else if (failedMarkdown.trim() && snapshot.json) {
@@ -1554,10 +1730,10 @@ export function AgentConversationThread({
           markdown: `${current.markdown.replace(/\s+$/, '')}\n\n--- failed to send, kept below ---\n\n${failedMarkdown}`,
         }
         if (useNote) {
-          setNoteDraft(merged)
+          drafts.set('note', merged)
           setNoteKey((k) => k + 1)
         } else {
-          setReplyDraft(merged)
+          drafts.set('reply', merged)
           setReplyKey((k) => k + 1)
         }
         toast.error('Failed to send message — kept below your new typing')
@@ -1573,25 +1749,25 @@ export function AgentConversationThread({
       restoreDraft,
     })
     // Clear in place (no key bump): remounting would destroy the focused node
-    // and drop focus to <body>. The view clears imperatively, the state mirrors
+    // and drop focus to <body>. The view clears imperatively, the draft mirrors
     // it, and focus never leaves the editing surface.
     activeEditorRef.current?.clear()
     if (useNote) {
-      setNoteDraft(EMPTY_DRAFT)
+      drafts.set('note', EMPTY_DRAFT)
     } else {
-      setReplyDraft(EMPTY_DRAFT)
+      drafts.set('reply', EMPTY_DRAFT)
     }
     activeEditorRef.current?.focus('end')
   }
   const onSend = useCallback(() => sendRef.current(), [])
 
-  const activeDraft = noteMode || !capabilities.reply ? noteDraft : replyDraft
+  const activeMode: ComposerMode = noteMode || !capabilities.reply ? 'note' : 'reply'
+  // Re-renders the thread only when the active draft turns empty or not.
+  const activeDraftEmpty = useComposerDraftValue(drafts, activeMode, isEmptyDraft)
   const activePending =
     noteMode || !capabilities.reply ? noteMutation.isPending : sendMutation.isPending
   const sendDisabled =
-    (isEmptyTiptapDoc(activeDraft.json ?? undefined) && pendingAttachments.length === 0) ||
-    activePending ||
-    uploading
+    (activeDraftEmpty && pendingAttachments.length === 0) || activePending || uploading
 
   // Render one virtualized row. AgentMessageBubble keeps all the agent-view
   // behaviors (and its data-message-id root) for every kind.
@@ -1620,6 +1796,9 @@ export function AgentConversationThread({
             highlighted={m.id === highlightId}
             onOpenPost={onOpenPost}
             onDelete={deleteMutation.mutate}
+            canEdit={canEditAgentMessage(m, myPrincipalId, permissions)}
+            canDelete={canDeleteAgentMessage(m, myPrincipalId, permissions)}
+            onEdit={handleEditMessage}
             onToggleReaction={handleToggleReaction}
             onToggleFlag={handleToggleFlag}
             onMarkUnread={markUnreadMutation.mutate}
@@ -1707,7 +1886,7 @@ export function AgentConversationThread({
   // (§2.7, M5): a ticket-status pill when the item is or links a ticket, an
   // icon cluster (create ticket / save for later / snooze / overflow), then
   // the primary Close (conversations) / Resolve (tickets) button. Priority/
-  // assignee move to the detail panel's Properties row; an xl:hidden fallback
+  // assignee move to the detail panel's Properties row; a below-1680px fallback
   // keeps them reachable below that breakpoint (the panel is xl-only).
   const backButton = (
     <button
@@ -1725,7 +1904,15 @@ export function AgentConversationThread({
   // The unified action bar's icon cluster + overflow + primary button —
   // identical JSX for both kinds, gated internally by `isTicket`/capabilities.
   const headerActions = (
-    <div className="flex shrink-0 items-center gap-1">
+    <div className="ml-auto flex shrink-0 items-center gap-1">
+      {/* Below the inline panel width the details open in a sheet. */}
+      {!detailPanelShown && (conversation || ticket) && (
+        <DetailsSheetTrigger
+          open={detailsSheetOpen}
+          onOpen={openDetailsSheet}
+          className={headerIconButtonClass}
+        />
+      )}
       {/* B24: the ticket-status pill's interactivity follows the resolved
           permissions — the full dropdown with `ticket.set_status`, an inert
           read-only chip with view-only, and nothing at all without
@@ -1890,7 +2077,13 @@ export function AgentConversationThread({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <Button type="button" size="sm" onClick={runPrimaryAction} disabled={primaryActionPending}>
+      <Button
+        type="button"
+        size="sm"
+        variant={replyFirst ? 'outline' : 'default'}
+        onClick={runPrimaryAction}
+        disabled={primaryActionPending}
+      >
         <CheckIcon className="h-4 w-4" />
         {isTicket
           ? 'Resolve'
@@ -1901,8 +2094,8 @@ export function AgentConversationThread({
 
   const header: ReactNode =
     isTicket && ticket ? (
-      <div className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 sm:px-5">
-        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border/50 px-4 py-3 sm:px-5">
+        <div className="flex min-w-[6rem] flex-1 items-center gap-2.5">
           {backButton}
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">{ticket.title}</p>
@@ -1914,16 +2107,13 @@ export function AgentConversationThread({
           </div>
         </div>
         {/* Narrow-viewport fallback: Properties live in the detail panel at
-            xl+; below that, priority/assignee stay reachable here. */}
-        <div className="flex shrink-0 items-center gap-1.5 xl:hidden">
-          <TicketPriorityControl ticket={ticket} onChanged={onChanged} />
-          <TicketAssigneeControl ticket={ticket} onChanged={onChanged} />
-        </div>
+            1680px+; below that, priority/assignee stay reachable here. */}
+        {!detailPanelShown && <TicketTriageFallback ticket={ticket} onChanged={onChanged} />}
         {headerActions}
       </div>
     ) : (
-      <div className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 sm:px-5">
-        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border/50 px-4 py-3 sm:px-5">
+        <div className="flex min-w-[6rem] flex-1 items-center gap-2.5">
           {backButton}
           <Avatar
             src={conversation?.visitor.avatarUrl ?? null}
@@ -1955,27 +2145,17 @@ export function AgentConversationThread({
             </p>
           </div>
         </div>
-        {/* Triage controls live in the detail panel at xl+; below that
+        {/* Triage controls live in the detail panel at 1680px+; below that
             (panel hidden) they stay in the header. */}
-        {conversation && (
-          <div className="flex shrink-0 items-center gap-1.5 xl:hidden">
-            <PriorityControl
-              conversationId={conversationId ?? INACTIVE_CONVERSATION_ID}
-              value={conversation.priority}
-              onChanged={refreshThread}
-            />
-            <AssigneeControl
-              conversationId={conversationId ?? INACTIVE_CONVERSATION_ID}
-              assignedAgent={conversation.assignedAgent}
-              onChanged={refreshThread}
-            />
-            <StatusControl
-              conversationId={conversationId ?? INACTIVE_CONVERSATION_ID}
-              status={conversation.status}
-              snoozedUntil={conversation.snoozedUntil}
-              onChanged={refreshThread}
-            />
-          </div>
+        {conversation && !detailPanelShown && (
+          <ConversationTriageFallback
+            conversationId={conversationId ?? INACTIVE_CONVERSATION_ID}
+            priority={conversation.priority}
+            assignedAgent={conversation.assignedAgent}
+            status={conversation.status}
+            snoozedUntil={conversation.snoozedUntil}
+            onChanged={refreshThread}
+          />
         )}
         {headerActions}
       </div>
@@ -1986,56 +2166,25 @@ export function AgentConversationThread({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {header}
 
-        {/* Conversation labels — xl+ shows them in the detail panel. Tickets
-            have no tags surface (§2.5's capability matrix — "tags,
+        {/* Conversation labels: 1680px+ shows them in the detail panel. Tickets
+            have no tags surface (§2.5's capability matrix: "tags,
             conversations only"). */}
-        {!isTicket && conversation && conversationId && (
-          <div className="flex items-center gap-1.5 border-b border-border/50 px-4 py-2 sm:px-5 xl:hidden">
-            <ConversationTagsEditor conversationId={conversationId} tags={conversation.tags} />
-          </div>
+        {!isTicket && conversation && conversationId && !detailPanelShown && (
+          <ThreadTagsFallback conversationId={conversationId} tags={conversation.tags} />
         )}
 
-        {/* Messages — min-h-0 so this scrolls and the composer stays pinned. The
-            wrapper is `relative` so the scroll-to-bottom pill can float over the
-            thread. */}
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          <ThreadViewport
-            virtualizer={virtualizer}
+        {/* Every attachment in the loaded thread, in message order, so a
+            card's click opens the viewer on the whole conversation. Agents
+            see internal notes' attachments too — includeInternal. */}
+        <ConversationGalleryContext.Provider value={gallery}>
+          <ThreadMessages
             rows={rows}
             renderRow={renderRow}
-            viewportRef={scrollRef}
-            className="min-h-0 flex-1"
-            rowClassName="px-5 py-1.5"
+            lastMessageId={lastMessageId}
+            skipInitialScroll={skipInitialScroll}
+            handleRef={messagesRef}
           />
-
-          {/* Scroll-to-bottom pill: shown when scrolled up off the newest
-              message; highlighted (primary + dot) when a message arrived while
-              the agent was away from the bottom. */}
-          {!atEnd && (
-            <button
-              type="button"
-              onClick={() => {
-                setHasNewBelow(false)
-                virtualizer.scrollToIndex(rows.length - 1, { align: 'end', behavior: 'smooth' })
-              }}
-              className={cn(
-                'absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium shadow-md transition-colors',
-                hasNewBelow
-                  ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
-                  : 'border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
-              )}
-              aria-label={hasNewBelow ? 'New messages — jump to latest' : 'Jump to latest'}
-            >
-              {hasNewBelow && (
-                <>
-                  <span className="size-1.5 rounded-full bg-primary-foreground" />
-                  <span>New messages</span>
-                </>
-              )}
-              <ChevronDownIcon className="h-4 w-4" />
-            </button>
-          )}
-        </div>
+        </ConversationGalleryContext.Provider>
 
         {/* P2-D.1 inbox translation: dismissible auto-suggest banner, shown
             above the composer when the customer's detected language differs
@@ -2067,6 +2216,18 @@ export function AgentConversationThread({
           </div>
         )}
 
+        {/* Inbox translation past the AI allowance: it keeps running (and
+            counting), so this is a quiet one-line notice, not a block. */}
+        {inboxTranslation.overAllowanceNotice && (
+          <p
+            role="status"
+            className="flex items-center gap-2 border-t border-border/50 px-4 py-1.5 text-xs text-muted-foreground sm:px-5"
+          >
+            <LanguageIcon className="h-3.5 w-3.5 shrink-0" />
+            {inboxTranslation.overAllowanceNotice}
+          </p>
+        )}
+
         {/* Composer — no top border: the composer should feel like a
             continuation of the thread, not a separate panel. Horizontal
             padding matches the message rows' `px-5` so the composer and the
@@ -2085,8 +2246,8 @@ export function AgentConversationThread({
             className={cn(
               'rounded-lg border px-3 py-2 transition-colors',
               noteMode || !capabilities.reply
-                ? 'border-amber-400/50 bg-amber-400/5 focus-within:border-amber-400'
-                : 'border-border bg-background focus-within:border-primary/60'
+                ? 'border-amber-400/50 bg-amber-400/5 focus-within:ring-1 focus-within:ring-ring'
+                : 'border-border bg-background focus-within:border-ring/60'
             )}
             onPaste={handleComposerPaste}
             onDrop={handleComposerDrop}
@@ -2127,7 +2288,6 @@ export function AgentConversationThread({
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
               multiple
               className="hidden"
               onChange={(e) => {
@@ -2141,28 +2301,30 @@ export function AgentConversationThread({
             {/* Reply and Note share the unified RichTextEditor; reply keeps
                 @-mentions on (agent surface), note is the team-internal preset.
                 Enter sends, Shift+Enter breaks; formatting comes from the editor's
-                own bubble/slash/`:` surfaces. Images stay tray-only (paste/drop
+                own bubble/slash/`:` surfaces. Files stay tray-only (paste/drop
                 and the paperclip stage files below) — the editor has no
-                onImageUpload, so it never inlines a resizableImage. */}
+                onImageUpload, so it never inlines a resizableImage. A mounted
+                editor owns its text; `value` seeds each (re)mount, so it reads
+                the latest draft rather than subscribing to every keystroke. */}
             {noteMode || !capabilities.reply ? (
               <RichTextEditor
                 key={`note-${noteKey}`}
                 editorRef={activeEditorRef}
-                value={noteDraft.json ?? ''}
+                value={drafts.get('note').json ?? ''}
                 features={CONVERSATION_NOTE_FEATURES}
                 borderless
                 minHeight="4.5rem"
                 autofocus={noteKey > 0 ? 'end' : false}
                 placeholder="Add an internal note for your team…"
                 className="max-h-64 overflow-y-auto"
-                onChange={onNoteChange}
+                onDocumentChange={onNoteChange}
                 onSubmit={onSend}
               />
             ) : (
               <RichTextEditor
                 key={`reply-${replyKey}`}
                 editorRef={activeEditorRef}
-                value={replyDraft.json ?? ''}
+                value={drafts.get('reply').json ?? ''}
                 features={CONVERSATION_EDITOR_FEATURES}
                 borderless
                 minHeight="4.5rem"
@@ -2172,22 +2334,27 @@ export function AgentConversationThread({
                   isTicket,
                 })}
                 className="max-h-64 overflow-y-auto"
-                onChange={onReplyChange}
+                onDocumentChange={onReplyChange}
                 onSubmit={onSend}
               />
             )}
-            <ComposerAttachmentTray attachments={pendingAttachments} onRemove={removeAttachment} />
+            <ComposerAttachmentTray
+              items={attachmentItems}
+              onRemove={removeAttachment}
+              onRetry={retryAttachment}
+            />
             {/* Live link unfurl while composing (Slack-style) — part of the
                 preview tray, gated by the flag + capability. */}
-            {linkPreviewsEnabled && <LinkPreviews content={debouncedComposerText} />}
+            {linkPreviewsEnabled && (
+              <ComposerLinkPreviews drafts={drafts} mode={noteMode ? 'note' : 'reply'} />
+            )}
             <div className="flex flex-wrap items-center gap-0.5 pt-1">
               {/* Attach is available in both reply and note mode, for both kinds. */}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
                 className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted disabled:opacity-40 transition-colors"
-                aria-label="Attach image"
+                aria-label="Attach files"
               >
                 <PaperClipIcon className="h-4 w-4" />
               </button>
@@ -2237,8 +2404,8 @@ export function AgentConversationThread({
               )}
               <ComposerAiActions
                 item={item}
-                activeMode={noteMode || !capabilities.reply ? 'note' : 'reply'}
-                activeDraftText={activeDraft.markdown}
+                activeMode={activeMode}
+                subscribeDraft={drafts.subscribe}
                 getDraftText={getComposerText}
                 onReplaceDraftText={replaceComposerText}
               />
@@ -2248,13 +2415,18 @@ export function AgentConversationThread({
                 onClick={onSend}
                 disabled={sendDisabled}
                 className={cn(
-                  'flex size-8 shrink-0 items-center justify-center rounded-md text-primary-foreground disabled:opacity-40 transition-opacity',
-                  noteMode || !capabilities.reply ? 'bg-amber-500 text-white' : 'bg-primary'
+                  'flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md text-primary-foreground disabled:opacity-40 transition-opacity',
+                  noteMode || !capabilities.reply ? 'bg-amber-500 text-white' : 'bg-primary',
+                  replyFirst && !noteMode && capabilities.reply
+                    ? 'rounded-full px-4 text-[13px] font-medium'
+                    : 'w-8'
                 )}
                 aria-label={noteMode || !capabilities.reply ? 'Add note' : 'Send reply'}
               >
                 {noteMode || !capabilities.reply ? (
                   <PencilSquareIcon className="h-4 w-4" />
+                ) : replyFirst ? (
+                  'Send'
                 ) : (
                   <PaperAirplaneIcon className="h-4 w-4" />
                 )}
@@ -2430,8 +2602,139 @@ export function AgentConversationThread({
           onInsertFromCopilot={insertFromCopilot}
           openCopilotToken={openCopilotToken}
           issuePeople={issuePeople}
+          visible={detailPanelShown}
+        />
+      )}
+      {!detailPanelShown && ((!isTicket && conversation) || (isTicket && ticket)) && (
+        <DetailsSheet
+          open={detailsSheetOpen}
+          onOpenChange={setDetailsSheetOpen}
+          item={item}
+          conversation={conversation}
+          ticket={panelTicket}
+          onChanged={refreshThread}
+          onSelectItem={selectFromSheet}
+          onTrackAsFeedback={handleTrackAsFeedback}
+          onCreateTicket={handleCreateTicketFromPanel}
+          onInsertFromCopilot={insertFromCopilot}
+          issuePeople={issuePeople}
         />
       )}
     </div>
   )
+}
+
+// The header's narrow-viewport fallbacks. Each is memoised on plain props, so
+// the render a keystroke causes (the reply turning sendable or empty) leaves
+// them, and the menus inside them, alone.
+const ConversationTriageFallback = memo(function ConversationTriageFallback({
+  conversationId,
+  priority,
+  assignedAgent,
+  status,
+  snoozedUntil,
+  onChanged,
+}: {
+  conversationId: ConversationId
+  priority: ConversationDTO['priority']
+  assignedAgent: ConversationDTO['assignedAgent']
+  status: ConversationDTO['status']
+  snoozedUntil: ConversationDTO['snoozedUntil']
+  onChanged: () => void
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1.5 min-[1680px]:hidden">
+      <PriorityControl conversationId={conversationId} value={priority} onChanged={onChanged} />
+      <AssigneeControl
+        conversationId={conversationId}
+        assignedAgent={assignedAgent}
+        onChanged={onChanged}
+      />
+      <StatusControl
+        conversationId={conversationId}
+        status={status}
+        snoozedUntil={snoozedUntil}
+        onChanged={onChanged}
+      />
+    </div>
+  )
+})
+
+const TicketTriageFallback = memo(function TicketTriageFallback({
+  ticket,
+  onChanged,
+}: {
+  ticket: ComponentProps<typeof TicketPriorityControl>['ticket']
+  onChanged: () => void
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1.5 min-[1680px]:hidden">
+      <TicketPriorityControl ticket={ticket} onChanged={onChanged} />
+      <TicketAssigneeControl ticket={ticket} onChanged={onChanged} />
+    </div>
+  )
+})
+
+const ThreadTagsFallback = memo(function ThreadTagsFallback({
+  conversationId,
+  tags,
+}: ComponentProps<typeof ConversationTagsEditor>) {
+  return (
+    <div className="flex items-center gap-1.5 border-b border-border/50 px-4 py-2 sm:px-5 min-[1680px]:hidden">
+      <ConversationTagsEditor conversationId={conversationId} tags={tags} />
+    </div>
+  )
+})
+
+// The sheet the Details button opens below the inline panel width. Memoised
+// with its props stable, so a keystroke does not re-render the closed sheet.
+const DetailsSheet = memo(function DetailsSheet({
+  open,
+  onOpenChange,
+  ...panelProps
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+} & Omit<ComponentProps<typeof InboxDetailPanel>, 'visible' | 'overlay' | 'openCopilotToken'>) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-[22rem] max-w-[90vw] gap-0 p-0 sm:max-w-[22rem]">
+        <SheetTitle className="sr-only">Details</SheetTitle>
+        <InboxDetailPanel {...panelProps} visible={open} overlay />
+      </SheetContent>
+    </Sheet>
+  )
+})
+
+const DetailsSheetTrigger = memo(function DetailsSheetTrigger({
+  open,
+  onOpen,
+  className,
+}: {
+  open: boolean
+  onOpen: () => void
+  className: string
+}) {
+  return (
+    <button
+      type="button"
+      title="Details"
+      aria-label="Details"
+      aria-expanded={open}
+      onClick={onOpen}
+      className={cn(className, 'min-[1680px]:hidden')}
+    >
+      <InformationCircleIcon className="h-4 w-4" />
+    </button>
+  )
+})
+
+/**
+ * Link previews for the draft being written, from its text once typing
+ * pauses. It follows the draft itself, so a keystroke re-renders neither the
+ * thread nor the previews.
+ */
+function ComposerLinkPreviews({ drafts, mode }: { drafts: ComposerDrafts; mode: ComposerMode }) {
+  const content = useDebouncedDraftText(drafts, mode, 500)
+  return <LinkPreviews content={content} />
 }

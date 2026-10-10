@@ -15,15 +15,14 @@
  * offers Enable sign-in there, so setup has a clear completion point.
  */
 import { useState } from 'react'
-import { Link, useNavigate, useRouteContext } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { BackLink } from '@/components/ui/back-link'
-import { PageHeader } from '@/components/shared/page-header'
+import { SettingsPage } from '@/components/admin/settings/settings-page'
 import { SettingsCard } from '@/components/admin/settings/settings-card'
 import { setProviderCredentialsFn, upsertIdentityProviderFn } from '@/lib/server/functions/sso'
 import { IDP_KIND_NAMES } from '../idp-shortcuts'
@@ -38,7 +37,9 @@ import {
   newRegistrationId,
   reportMissingIdpFields,
   SIGN_IN_TAB,
+  SSO_CRUMBS,
 } from './provider-shared'
+import { useBaseUrl } from '@/lib/client/hooks/use-root-context'
 
 export function ProviderCreatePage({
   registrationId: initialRegistrationId,
@@ -51,7 +52,7 @@ export function ProviderCreatePage({
   const queryClient = useQueryClient()
   const upsert = useServerFn(upsertIdentityProviderFn)
   const setCreds = useServerFn(setProviderCredentialsFn)
-  const { baseUrl } = useRouteContext({ from: '__root__' })
+  const baseUrl = useBaseUrl()
 
   // Fixed for the life of the form so the redirect URI shown below is the
   // exact value that gets saved (and registered at the IdP), even if the
@@ -104,19 +105,17 @@ export function ProviderCreatePage({
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
-      <BackLink {...SIGN_IN_TAB}>Sign-in</BackLink>
-
-      <PageHeader
-        title="Connect single sign-on"
-        description="Connect an OpenID Connect provider, test it, then enable sign-in."
-      />
-
+    <SettingsPage
+      title="Connect single sign-on"
+      description="Connect an OpenID Connect provider, test it, then enable sign-in."
+      crumbs={SSO_CRUMBS}
+    >
       <SettingsCard contentClassName="space-y-6">
         <ConnectionFields
           draft={draft}
           onChange={setDraft}
           registrationId={registrationId}
+          redirectStyle="current"
           baseUrl={baseUrl}
           disabled={saving}
           existing={false}
@@ -146,6 +145,6 @@ export function ProviderCreatePage({
           </Button>
         </div>
       </SettingsCard>
-    </div>
+    </SettingsPage>
   )
 }

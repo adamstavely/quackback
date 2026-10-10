@@ -2,38 +2,54 @@ import * as React from 'react'
 import { Popover as PopoverPrimitive } from '@base-ui/react/popover'
 
 import { asChildRender, overlayTriggerProps } from '@/components/ui/as-child'
+import {
+  OverlayOpenedContext,
+  useOverlayOpened,
+  useOverlayOpenedRoot,
+} from '@/components/ui/overlay-opened'
 import { cn } from '@/lib/shared/utils'
 
 /**
  * When a Popover is inside a Dialog, we portal to the dialog content element
  * instead of document.body. This keeps the popover inside react-remove-scroll's
  * boundary so wheel events work on scrollable content inside the popover.
+ *
+ * The container is a ref, read by the portal when the popover opens: finding
+ * it as state rendered every popover in a dialog a second time on mount.
  */
 const PortalContainerContext = React.createContext<{
-  container: HTMLElement | null
+  containerRef: React.RefObject<HTMLElement | null>
   setTriggerEl: (el: HTMLElement | null) => void
   anchor: HTMLElement | null
   setAnchor: (el: HTMLElement | null) => void
-}>({ container: null, setTriggerEl: () => {}, anchor: null, setAnchor: () => {} })
+}>({ containerRef: { current: null }, setTriggerEl: () => {}, anchor: null, setAnchor: () => {} })
 
-function Popover({ ...props }: PopoverPrimitive.Root.Props) {
-  const [container, setContainer] = React.useState<HTMLElement | null>(null)
+function Popover({ open, defaultOpen, onOpenChange, ...props }: PopoverPrimitive.Root.Props) {
+  const containerRef = React.useRef<HTMLElement | null>(null)
   const [anchor, setAnchor] = React.useState<HTMLElement | null>(null)
+  const opened = useOverlayOpenedRoot(open, defaultOpen, onOpenChange)
 
   const setTriggerEl = React.useCallback((el: HTMLElement | null) => {
     if (!el) return
-    const dialog = el.closest<HTMLElement>('[data-slot="dialog-content"]')
-    setContainer(dialog)
+    containerRef.current = el.closest<HTMLElement>('[data-slot="dialog-content"]')
   }, [])
 
   const ctx = React.useMemo(
-    () => ({ container, setTriggerEl, anchor, setAnchor }),
-    [container, setTriggerEl, anchor]
+    () => ({ containerRef, setTriggerEl, anchor, setAnchor }),
+    [setTriggerEl, anchor]
   )
 
   return (
     <PortalContainerContext.Provider value={ctx}>
-      <PopoverPrimitive.Root data-slot="popover" {...props} />
+      <OverlayOpenedContext.Provider value={opened.value}>
+        <PopoverPrimitive.Root
+          data-slot="popover"
+          open={open}
+          defaultOpen={defaultOpen}
+          onOpenChange={opened.onOpenChange}
+          {...props}
+        />
+      </OverlayOpenedContext.Provider>
     </PortalContainerContext.Provider>
   )
 }
@@ -117,9 +133,12 @@ function PopoverContent({
   Pick<PopoverPrimitive.Positioner.Props, 'align' | 'alignOffset' | 'side' | 'sideOffset'> & {
     container?: HTMLElement | null
   }) {
-  const { container: dialogContainer, anchor } = React.useContext(PortalContainerContext)
-  const portalContainer = containerProp ?? dialogContainer ?? undefined
+  const { containerRef, anchor } = React.useContext(PortalContainerContext)
+  const portalContainer = containerProp ?? containerRef
 
+  // Nothing to portal until the popover first opens.
+  const opened = useOverlayOpened()
+  if (!opened) return null
   return (
     <PopoverPrimitive.Portal container={portalContainer}>
       <PopoverPrimitive.Positioner
@@ -133,7 +152,7 @@ function PopoverContent({
         <PopoverPrimitive.Popup
           data-slot="popover-content"
           className={cn(
-            'bg-popover text-popover-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-72 origin-(--transform-origin) [border-radius:calc(var(--radius)*0.8)] border p-4 shadow-md outline-hidden',
+            'bg-popover text-popover-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-72 origin-(--transform-origin) rounded-panel border border-border p-4 shadow-md outline-hidden',
             className
           )}
           {...props}

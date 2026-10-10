@@ -33,17 +33,30 @@ const mockUpdate = vi.fn()
 const mockSet = vi.fn()
 const mockWhere = vi.fn()
 const mockReturning = vi.fn()
-const mockSelectLabsRows = vi.fn()
 
 type SettingsTx = {
   query: { settings: { findFirst: (...args: unknown[]) => unknown } }
   update: (...args: unknown[]) => unknown
+  select: () => unknown
 }
 
 vi.mock('@/lib/server/db', async (importOriginal) => {
   const tx: SettingsTx = {
     query: { settings: { findFirst: (...args: unknown[]) => mockFindFirst(...args) } },
     update: (...args: unknown[]) => mockUpdate(...args),
+    // The read a read-modify-write takes under the row lock: the same stored
+    // row. Only the locking form is faked, so an unlocked read fails here.
+    select: () => ({
+      from: () => ({
+        limit: () => ({
+          for: async (strength: string) => {
+            if (strength !== 'update') throw new Error(`unexpected lock: ${strength}`)
+            const row = await mockFindFirst()
+            return row ? [row] : []
+          },
+        }),
+      }),
+    }),
   }
   return {
     // Spread the real db module so tables/operators stay current; override only what this suite drives.
@@ -57,7 +70,7 @@ vi.mock('@/lib/server/db', async (importOriginal) => {
       update: (...args: unknown[]) => mockUpdate(...args),
       select: () => ({
         from: () => ({
-          where: () => Promise.resolve(mockSelectLabsRows()),
+          where: () => Promise.resolve([]),
           limit: () => Promise.resolve([]),
           orderBy: () => Promise.resolve([]),
         }),
@@ -154,7 +167,6 @@ beforeEach(() => {
   mockCacheGet.mockResolvedValue(null)
   mockCacheSet.mockResolvedValue(undefined)
   mockCacheDel.mockResolvedValue(undefined)
-  mockSelectLabsRows.mockReturnValue([])
   // Chain: db.update().set().where().returning()
   mockReturning.mockResolvedValue([makeSettingsRow()])
   mockWhere.mockReturnValue({ returning: mockReturning })
@@ -171,7 +183,6 @@ describe('getWorkspaceSettings', () => {
     const cached = {
       name: 'Cached Workspace',
       slug: 'cached',
-      visualTheme: 'legacy' as const,
       settings: makeSettingsRow({
         name: 'Cached Workspace',
         setupState: JSON.stringify({
@@ -204,7 +215,6 @@ describe('getWorkspaceSettings', () => {
     const cached = {
       name: 'Cached Workspace',
       slug: 'cached',
-      visualTheme: 'legacy' as const,
       settings: makeSettingsRow({
         name: 'Cached Workspace',
         setupState: JSON.stringify({
@@ -280,46 +290,13 @@ describe('getWorkspaceSettings', () => {
     const result = await getWorkspaceSettings()
 
     expect(result).not.toBeNull()
-    expect(result?.visualTheme).toBe('legacy')
+    expect(result).not.toHaveProperty('visualTheme')
     expect(mockFindFirst).toHaveBeenCalled()
     expect(mockCacheSet).toHaveBeenCalledWith(
       'settings:workspace',
-      expect.objectContaining({ name: 'Test Workspace', visualTheme: 'legacy' }),
+      expect.objectContaining({ name: 'Test Workspace' }),
       3600
     )
-  })
-
-  it('repairs a cache hit that predates visualTheme so an enabled experiment is not hidden', async () => {
-    mockSelectLabsRows.mockReturnValue([
-      { experimentId: 'refined-visual-theme', visible: false, enabled: true },
-    ])
-    const cached = {
-      name: 'Cached Workspace',
-      slug: 'cached',
-      settings: makeSettingsRow({
-        name: 'Cached Workspace',
-        setupState: JSON.stringify({
-          version: 2,
-          steps: {
-            core: true,
-            workspace: true,
-            startingPoint: {
-              outcome: 'product_feedback',
-              resourceType: 'none',
-              source: 'managed',
-              resolution: 'configured',
-              completedAt: '2026-08-13T00:00:00.000Z',
-            },
-          },
-        }),
-      }),
-    }
-    mockCacheGet.mockResolvedValue(cached)
-
-    const result = await getWorkspaceSettings()
-
-    expect(result?.visualTheme).toBe('refined')
-    expect(mockFindFirst).not.toHaveBeenCalled()
   })
 
   it('returns null when no settings exist (does not cache null)', async () => {

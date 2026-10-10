@@ -21,7 +21,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type Ref,
 } from 'react'
-import { useRouteContext } from '@tanstack/react-router'
 import {
   ArrowPathIcon,
   BoltIcon,
@@ -90,6 +89,7 @@ import {
 } from '@/lib/client/copilot-events'
 import type { AssistantActivityStatus } from '@/lib/shared/conversation/types'
 import type { InboxItemRef } from '@/lib/shared/inbox/items'
+import { usePrincipalId } from '@/lib/client/hooks/use-root-context'
 
 const MAX_QUESTION_CHARS = 4000
 
@@ -298,13 +298,13 @@ export function CopilotPanel({
    *  (e.g. an inbox keyboard shortcut). */
   askInputRef?: Ref<HTMLTextAreaElement>
 }) {
-  const { principal } = useRouteContext({ from: '/admin' }) as { principal?: { id: string } | null }
+  const principalId = usePrincipalId()
   const assistantName = 'Copilot'
   const headerLabel = 'Copilot'
 
   const sourceOptions = useMemo(() => visibleSourceOptions(), [])
   const visibleTypes = useMemo(() => sourceOptions.map((o) => o.type), [sourceOptions])
-  const { checked, toggle } = useSourceFilter(principal?.id, visibleTypes)
+  const { checked, toggle } = useSourceFilter(principalId, visibleTypes)
   const sourceTypesParam = checked.size === visibleTypes.length ? undefined : Array.from(checked)
 
   const [turns, setTurns] = useState<CopilotTurn[]>([])
@@ -709,7 +709,7 @@ function CopilotTurnView({
           <div className="space-y-2">
             <p className="text-sm text-destructive">{turn.errorMessage ?? GENERIC_ERROR}</p>
             <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-              Retry
+              Try again
             </Button>
           </div>
         ) : turn.suppressed ? (
@@ -946,7 +946,6 @@ function CopilotAskInput({
               type="button"
               variant="outline"
               size="sm"
-              shape="pill"
               onClick={() => onQuickAction(action.question)}
               disabled={busy}
               className="text-muted-foreground hover:text-foreground"
@@ -957,7 +956,7 @@ function CopilotAskInput({
           ))}
         </div>
       )}
-      <div className="relative rounded-lg border border-border bg-background focus-within:ring-2 focus-within:ring-primary/20">
+      <div className="relative rounded-lg border border-border bg-background focus-within:ring-2 focus-within:ring-ring/20">
         <Textarea
           ref={inputRef}
           value={value}
@@ -966,7 +965,7 @@ function CopilotAskInput({
           rows={2}
           maxLength={MAX_QUESTION_CHARS}
           disabled={busy}
-          className="resize-none border-0 pe-16 shadow-none focus-visible:ring-0"
+          className="resize-none border-0 pe-16 focus-visible:ring-0"
           onKeyDown={(e) => {
             if (e.key !== 'Enter') return
             // Cmd/Ctrl+Enter with a drafted question SUBMITS it (the chat-app

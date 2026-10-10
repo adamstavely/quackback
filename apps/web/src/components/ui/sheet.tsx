@@ -1,12 +1,29 @@
 import * as React from 'react'
+import { useOptionalIntl } from './use-optional-intl'
 import { Dialog as SheetPrimitive } from '@base-ui/react/dialog'
 import { XMarkIcon } from '@heroicons/react/24/solid'
 
 import { asChildRender, overlayTriggerProps } from '@/components/ui/as-child'
+import {
+  OverlayOpenedContext,
+  useOverlayOpened,
+  useOverlayOpenedRoot,
+} from '@/components/ui/overlay-opened'
 import { cn } from '@/lib/shared/utils'
 
-function Sheet(props: SheetPrimitive.Root.Props) {
-  return <SheetPrimitive.Root data-slot="sheet" {...props} />
+function Sheet({ open, defaultOpen, onOpenChange, ...props }: SheetPrimitive.Root.Props) {
+  const opened = useOverlayOpenedRoot(open, defaultOpen, onOpenChange)
+  return (
+    <OverlayOpenedContext.Provider value={opened.value}>
+      <SheetPrimitive.Root
+        data-slot="sheet"
+        open={open}
+        defaultOpen={defaultOpen}
+        onOpenChange={opened.onOpenChange}
+        {...props}
+      />
+    </OverlayOpenedContext.Provider>
+  )
 }
 
 function SheetTrigger({
@@ -29,16 +46,12 @@ function SheetTrigger({
   )
 }
 
-function SheetPortal(props: SheetPrimitive.Portal.Props) {
-  return <SheetPrimitive.Portal data-slot="sheet-portal" {...props} />
-}
-
 function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   return (
     <SheetPrimitive.Backdrop
       data-slot="sheet-overlay"
       className={cn(
-        'fixed inset-0 z-50 bg-black/50',
+        'fixed inset-0 z-50 bg-black/60',
         'data-open:animate-in data-closed:animate-out',
         'data-closed:fade-out-0 data-open:fade-in-0',
         className
@@ -56,13 +69,17 @@ function SheetContent({
 }: SheetPrimitive.Popup.Props & {
   side?: 'top' | 'right' | 'bottom' | 'left'
 }) {
+  // Nothing to portal until the sheet first opens.
+  const opened = useOverlayOpened()
+  const intl = useOptionalIntl()
+  if (!opened) return null
   return (
-    <SheetPortal>
+    <SheetPrimitive.Portal data-slot="sheet-portal">
       <SheetOverlay />
       <SheetPrimitive.Popup
         data-slot="sheet-content"
         className={cn(
-          'fixed z-50 flex flex-col gap-4 bg-background shadow-lg',
+          'fixed z-50 flex flex-col gap-4 rounded-panel border-border bg-background shadow-md',
           'transition-transform ease-out data-closed:duration-200 data-open:duration-300',
           'data-open:animate-in data-closed:animate-out',
           side === 'right' &&
@@ -87,10 +104,12 @@ function SheetContent({
           )}
         >
           <XMarkIcon className="size-4" />
-          <span className="sr-only">Close</span>
+          <span className="sr-only">
+            {intl.formatMessage({ id: 'ui.close', defaultMessage: 'Close' })}
+          </span>
         </SheetPrimitive.Close>
       </SheetPrimitive.Popup>
-    </SheetPortal>
+    </SheetPrimitive.Portal>
   )
 }
 
@@ -118,7 +137,7 @@ function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn('text-foreground font-semibold', className)}
+      className={cn('text-foreground font-semibold tracking-[-0.02em]', className)}
       {...props}
     />
   )

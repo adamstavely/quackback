@@ -2,8 +2,7 @@ import { createFileRoute, Navigate, redirect } from '@tanstack/react-router'
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { ChatBubbleLeftRightIcon, ChevronDownIcon, TicketIcon } from '@heroicons/react/24/solid'
-import { BuildingOffice2Icon } from '@heroicons/react/24/outline'
+import { ChatBubbleLeftRightIcon, TicketIcon } from '@heroicons/react/24/solid'
 import { isValidTypeId } from '@quackback/ids'
 import type {
   ConversationId,
@@ -29,6 +28,7 @@ import type { ComposerMode } from '@/components/conversation/composer-ai-actions
 import {
   agentEventChangesInboxCounts,
   agentEventChangesInboxList,
+  companionRefreshFallback,
   applyAgentThreadEvent,
   applyTicketThreadEvent,
   type AgentThreadCache,
@@ -43,7 +43,7 @@ import {
 import { BulkActionBar, type BulkMenuId } from '@/components/admin/conversation/bulk-action-bar'
 import { InboxCommandBar } from '@/components/admin/conversation/inbox-command-bar'
 import { ShortcutHelpPanel } from '@/components/admin/conversation/shortcut-help-panel'
-import { DETAIL_PANEL_MEDIA_QUERY } from '@/components/admin/inbox/inbox-detail-panel'
+import { DETAIL_PANEL_MEDIA_QUERY } from '@/lib/client/conversation/detail-panel'
 import { useInboxKeyboard } from '@/components/admin/conversation/use-inbox-keyboard'
 import {
   useBulkConversationUpdate,
@@ -68,7 +68,6 @@ import {
 } from '@/lib/client/mutations/inbox'
 import {
   InboxNavSidebar,
-  isInboxView,
   isTicketInboxView as isTicketNavView,
   scopeLabelFor,
   useConversationTagsWithCounts,
@@ -76,13 +75,17 @@ import {
   useInboxTeams,
   useConversationViews,
 } from '@/components/admin/conversation/inbox-nav-sidebar'
+import { conversationAttributeQueries } from '@/lib/client/queries/conversation-attributes'
 import { ConversationViewDialog } from '@/components/admin/conversation/conversation-view-dialog'
 import { RequiredAttributesDialog } from '@/components/admin/conversation/required-attributes-dialog'
 import { CreateTicketDialog } from '@/components/admin/inbox/create-ticket-dialog'
 import { isMissingRequiredAttributesMessage } from '@/lib/shared/conversation/attribute-values'
 import { resolveDefaultClosedStatusId } from '@/lib/shared/tickets'
+import { inboxTeamsQueryOptions } from '@/lib/client/queries/inbox-teams'
 import {
   inboxNavKey,
+  inboxScopeHasRefinements,
+  isInboxView,
   navFromSearch,
   normalizeTriageFacet,
   normalizeInboxChannel,
@@ -95,6 +98,7 @@ import {
   type InboxSearch,
 } from '@/lib/client/conversation/inbox-scope'
 import { reconcileCachedThread } from '@/lib/client/conversation/reconcile-cached-thread'
+import { applyConversationReadToLists } from '@/lib/client/conversation/inbox-read'
 import type { Channel } from '@/lib/shared/channels'
 import { conversationInboxQueries } from '@/lib/client/queries/conversation-inbox'
 import { inboxQueries, inboxKeys, ticketQueries, ticketKeys } from '@/lib/client/queries/inbox'
@@ -112,68 +116,15 @@ import { useInboxListSource } from '@/lib/client/hooks/use-inbox-list-source'
 import { useMediaQuery } from '@/lib/client/hooks/use-media-query'
 import { useCopilotTabGate } from '@/lib/client/hooks/use-copilot-tab-gate'
 import { EmptyState } from '@/components/shared/empty-state'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/shared/utils'
 import {
   getFirstEnabledAdminProductPath,
   isProductEnabled,
   type FeatureFlags,
 } from '@/lib/shared/types/settings'
-
-/** Quinn-view outcome sub-filter. */
-const QUINN_BUCKETS: {
-  value: 'resolved' | 'escalated' | 'pending' | undefined
-  label: string
-}[] = [
-  { value: undefined, label: 'All' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'escalated', label: 'Escalated' },
-  { value: 'resolved', label: 'Resolved' },
-]
-
-function QuinnBucketChips({
-  value,
-  counts,
-  onChange,
-}: {
-  value?: 'resolved' | 'escalated' | 'pending'
-  counts?: { resolved: number; escalated: number; pending: number }
-  onChange: (value?: 'resolved' | 'escalated' | 'pending') => void
-}) {
-  const countFor = (v?: 'resolved' | 'escalated' | 'pending'): number | undefined => {
-    if (!counts) return undefined
-    return v ? counts[v] : counts.resolved + counts.escalated + counts.pending
-  }
-  return (
-    <div className="flex flex-wrap gap-1.5 px-3 pb-2 pt-1">
-      {QUINN_BUCKETS.map((b) => {
-        const active = value === b.value
-        const n = countFor(b.value)
-        return (
-          <button
-            key={b.label}
-            type="button"
-            onClick={() => onChange(b.value)}
-            className={cn(
-              'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-medium transition-colors',
-              active
-                ? 'bg-primary/15 text-primary'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-            )}
-          >
-            {b.label}
-            {n != null && <span className="tabular-nums opacity-70">{n}</span>}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
+import { useFeatureFlag, useWorkspaceSettings } from '@/lib/client/hooks/use-root-context'
+import { QuinnViewHeader } from '@/components/admin/conversation/quinn-view-header'
+import { TestViewHeader } from '@/components/admin/conversation/test-view-header'
 
 // URL is the source of truth for open item + filters (refresh-safe, shareable).
 // `?c=` is the legacy alias for `?i=`, accepted forever.
@@ -340,11 +291,34 @@ export const Route = createFileRoute('/admin/inbox')({
         )
       )
     }
+    // Nav badges, the company and ticket-type pickers, the team roster and
+    // the attribute definitions are read on every load whatever is selected.
+    // Prefetched here, they arrive with the document rather than as one
+    // client round trip (and one more session resolution) each.
+    const showTickets = !!flags?.supportTickets
     await Promise.all([
       listPrefetch,
       warm(queryClient.ensureQueryData(conversationInboxQueries.tagCounts())),
       warm(queryClient.ensureQueryData(conversationInboxQueries.segmentCounts())),
       warm(queryClient.ensureQueryData(conversationInboxQueries.views())),
+      warm(queryClient.ensureQueryData(inboxQueries.counts())),
+      warm(queryClient.ensureQueryData(inboxTeamsQueryOptions())),
+      warm(
+        queryClient.ensureQueryData({
+          queryKey: ['admin', 'companies'],
+          queryFn: () => listCompaniesFn(),
+        })
+      ),
+      warm(queryClient.ensureQueryData(conversationAttributeQueries.live())),
+      // The status catalogue backs every ticket-kind row's badge, not just a
+      // tickets-scoped view, so it's warmed whenever tickets are on at all.
+      showTickets ? warm(queryClient.ensureQueryData(ticketQueries.statuses())) : undefined,
+      // The type registry looks scoped to the tickets filter dropdown, but the
+      // standalone create-ticket dialog (mounted the whole time the page is,
+      // just hidden) reads it unconditionally too. Match that, not the
+      // dropdown's narrower gate, or the dialog's own fetch keeps this a
+      // separate round trip.
+      showTickets ? warm(queryClient.ensureQueryData(ticketQueries.types())) : undefined,
       // Ticket thread prefetch arrives with M3 (ticket SSE); the loader only
       // warms the conversation thread cache for now.
       ref?.kind === 'conversation'
@@ -363,7 +337,7 @@ export const Route = createFileRoute('/admin/inbox')({
  * flag check above the inbox's hooks so they aren't conditionally called.
  */
 function InboxRoute() {
-  const { settings } = Route.useRouteContext()
+  const settings = useWorkspaceSettings()
   const flags = settings?.featureFlags as FeatureFlags | undefined
   if (!flags?.supportInbox && !flags?.supportTickets) {
     return <Navigate to={getFirstEnabledAdminProductPath(flags)} />
@@ -506,6 +480,9 @@ function InboxPage() {
         segment: item.kind === 'segment' ? item.segmentId : undefined,
         team: item.kind === 'team' ? item.teamId : undefined,
         viewId: item.kind === 'custom' ? item.viewId : undefined,
+        // A scope without refinements has no company control, so the filter
+        // does not follow the agent into it.
+        ...(!inboxScopeHasRefinements(item) && { company: undefined }),
         i: scopeMemory.current.get(inboxNavKey(item)),
         m: undefined,
       }),
@@ -594,12 +571,7 @@ function InboxPage() {
   // as they are for the self-contained Mentions/Spam/Created-by-me feeds.
   const activeView: ConversationViewDTO | undefined =
     nav.kind === 'custom' ? navViews?.find((v) => v.id === nav.viewId) : undefined
-  const showRefinements =
-    nav.kind !== 'custom' &&
-    !(
-      nav.kind === 'view' &&
-      (nav.view === 'mentions' || nav.view === 'spam' || nav.view === 'created_by_me')
-    )
+  const showRefinements = inboxScopeHasRefinements(nav)
   // Ordering: URL sort wins; else a custom view's saved sort; else the list's
   // implicit default (relevance while searching, most-recent otherwise).
   const sort: ConversationSort = urlSort ?? activeView?.sort ?? defaultConversationSort(!!search)
@@ -629,6 +601,10 @@ function InboxPage() {
     queryFn: () => listCompaniesFn(),
     staleTime: 60_000,
   })
+  // A deep link can carry `?company=` into a scope that cannot filter by it.
+  useEffect(() => {
+    if (urlCompany && !showRefinements) updateSearch({ company: undefined })
+  }, [urlCompany, showRefinements, updateSearch])
   // Drop a stale `?company=` (deleted / no longer visible) so the filter never
   // strands the list on an unselectable company — mirrors the tag/segment
   // scope-cleanup effect.
@@ -655,6 +631,12 @@ function InboxPage() {
     void queryClient.invalidateQueries({ queryKey: conversationKeys.agentConversations() })
     void queryClient.invalidateQueries({ queryKey: inboxKeys.items() })
   }, [queryClient])
+  // Refreshes the list should a new message's companion conversation event
+  // never arrive (see companionRefreshFallback).
+  const refreshIfCompanionLost = useMemo(
+    () => companionRefreshFallback(refreshInboxList),
+    [refreshInboxList]
+  )
   const refreshInboxCounts = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: inboxKeys.counts() })
   }, [queryClient])
@@ -702,6 +684,7 @@ function InboxPage() {
     buildUrl: async () => '/api/chat/stream?scope=inbox',
     onReconnect: refreshInboxAfterReconnect,
     onEvent: (evt) => {
+      refreshIfCompanionLost(evt)
       // A ticket's live properties (status/assignee/priority/stage/type) name
       // their own cache keys precisely, so this patches them directly instead
       // of invalidating anything: the detail cache any open thread/panel
@@ -721,6 +704,11 @@ function InboxPage() {
           () => evt.ticket
         )
         patchTicketInInboxLists(queryClient, evt.ticket)
+      } else if (evt.kind === 'read' && evt.side === 'agent') {
+        // An agent-side read moves only the row's unread badge, so the row is
+        // patched in each cached list; a list the patch cannot be sure of
+        // (a watermark moved back, or a fetch in flight) is refetched.
+        applyConversationReadToLists(queryClient, evt.conversationId, evt.at)
       } else if (agentEventChangesInboxList(evt)) {
         // Every membership/order/preview-changing event (a new message, a
         // conversation's status/assignee/tags, an agent-side read move) —
@@ -766,12 +754,24 @@ function InboxPage() {
           conversationKeys.agentThread(conversationId),
           (prev) => applyAgentThreadEvent(prev, evt, conversationId)
         )
-      } else if (evt.kind === 'ticket_message') {
+        // A new message with files invalidates the detail panel's Files
+        // section — same event, no separate read.
+        if (evt.kind === 'message' && evt.message.attachments.length > 0) {
+          void queryClient.invalidateQueries({
+            queryKey: conversationKeys.agentConversationFiles(conversationId),
+          })
+        }
+      } else if (evt.kind === 'ticket_message' || evt.kind === 'ticket_message_updated') {
         reconcileCachedThread<TicketThreadCache>(
           queryClient,
           ticketKeys.thread(evt.ticketId),
           (prev) => applyTicketThreadEvent(prev, evt, evt.ticketId)
         )
+        if (evt.kind === 'ticket_message' && evt.message.attachments.length > 0) {
+          void queryClient.invalidateQueries({
+            queryKey: conversationKeys.agentConversationFiles(evt.ticketId),
+          })
+        }
       }
     },
   })
@@ -800,6 +800,7 @@ function InboxPage() {
 
   // Quinn-view sub-filter counts (only fetched while that view is open).
   const isQuinnView = nav.kind === 'view' && nav.view === 'quinn'
+  const isTestView = nav.kind === 'view' && nav.view === 'test'
   const { data: assistantCounts } = useQuery({
     ...conversationInboxQueries.assistantCounts(),
     enabled: isQuinnView,
@@ -809,9 +810,7 @@ function InboxPage() {
   // closed-category status for a ticket target (§3.4). Gated on the same flag
   // as the Tickets nav section — mirrors TicketDetail's existing assumption
   // that any agent who can reach a ticket item holds ticket.view.
-  const { settings: routeSettings } = Route.useRouteContext()
-  const showTickets =
-    (routeSettings?.featureFlags as FeatureFlags | undefined)?.supportTickets ?? false
+  const showTickets = useFeatureFlag('supportTickets')
   const { data: ticketStatusList } = useQuery({
     ...ticketQueries.statuses(),
     enabled: showTickets,
@@ -1461,6 +1460,43 @@ function InboxPage() {
     onOpenHelp: () => setHelpOpen(true),
   })
 
+  // The list header's slot: the Quinn view's outcome sub-filter chips
+  // (Resolved/Escalated/Pending). Memoized so opening an item leaves the
+  // (memoized) list header as it was.
+  const listHeaderSlot = useMemo(
+    () =>
+      isQuinnView ? (
+        <QuinnViewHeader
+          value={urlAi}
+          counts={assistantCounts}
+          onChange={(ai) => updateSearch({ ai, i: undefined, m: undefined })}
+        />
+      ) : isTestView ? (
+        <TestViewHeader
+          onDeleted={() => {
+            refreshInbox()
+            setNav({ kind: 'view', view: 'all' })
+          }}
+        />
+      ) : undefined,
+    [isQuinnView, isTestView, urlAi, assistantCounts, updateSearch, refreshInbox, setNav]
+  )
+
+  // The company refinement, offered only when the workspace has companies.
+  // Memoized for the same reason as the header slot.
+  const companyFilter = useMemo(
+    () =>
+      companies && companies.length > 0
+        ? {
+            companies,
+            value: urlCompany,
+            onChange: (id: string | undefined) =>
+              updateSearch({ company: id, i: undefined, m: undefined }),
+          }
+        : undefined,
+    [companies, urlCompany, updateSearch]
+  )
+
   // The floating bar shows for a real multi-selection, or when a value menu was
   // popped for the single open item.
   const bulkBarVisible = hasSelection || (bulkMenu !== null && hasActiveConversation)
@@ -1470,8 +1506,6 @@ function InboxPage() {
       <InboxNavSidebar
         nav={nav}
         onSelect={setNav}
-        search={searchInput}
-        onSearch={setSearchInput}
         onCreateView={openCreateView}
         onEditView={openEditView}
       />
@@ -1499,24 +1533,8 @@ function InboxPage() {
           onSelectNav={setNav}
           scopeLabel={scopeLabel}
           showRefinements={showRefinements}
-          // Quinn view: the outcome sub-filter chips (Resolved/Escalated/
-          // Pending). Otherwise the company picker, shown only when the workspace
-          // has companies to filter by.
-          headerSlot={
-            isQuinnView ? (
-              <QuinnBucketChips
-                value={urlAi}
-                counts={assistantCounts}
-                onChange={(ai) => updateSearch({ ai, i: undefined, m: undefined })}
-              />
-            ) : companies && companies.length > 0 ? (
-              <CompanyInboxFilter
-                companies={companies}
-                value={urlCompany}
-                onChange={(id) => updateSearch({ company: id, i: undefined, m: undefined })}
-              />
-            ) : undefined
-          }
+          headerSlot={listHeaderSlot}
+          companyFilter={companyFilter}
           searchInput={searchInput}
           onSearchInput={setSearchInput}
           facet={facet}
@@ -1553,6 +1571,7 @@ function InboxPage() {
             isOtherAgentTyping={false}
             openCopilotToken={openCopilotToken}
             composerRef={composerHandleRef}
+            detailPanelShown={isDetailPanelViewport}
           />
         ) : selectedRef?.kind === 'conversation' ? (
           <AgentConversationThread
@@ -1568,6 +1587,7 @@ function InboxPage() {
             createTicketToken={createTicketToken}
             openCopilotToken={openCopilotToken}
             composerRef={composerHandleRef}
+            detailPanelShown={isDetailPanelViewport}
           />
         ) : (
           <div className="hidden h-full items-center justify-center md:flex">
@@ -1624,50 +1644,6 @@ function InboxPage() {
         onOpenChange={setHelpOpen}
         copilotAvailable={copilotAvailable}
       />
-    </div>
-  )
-}
-
-/**
- * Compact company filter for the inbox list header: a dropdown over the
- * workspace companies. "All companies" clears the refinement.
- */
-function CompanyInboxFilter({
-  companies,
-  value,
-  onChange,
-}: {
-  companies: { id: string; name: string }[]
-  value: string | undefined
-  onChange: (companyId: string | undefined) => void
-}) {
-  const active = companies.find((co) => co.id === value)
-  return (
-    <div className="flex items-center gap-1.5 border-b border-border/50 px-3 py-2">
-      <BuildingOffice2Icon className="size-3.5 shrink-0 text-muted-foreground" />
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label="Filter by company"
-            className={cn(
-              'inline-flex min-w-0 shrink items-center gap-1 rounded-md px-2 py-1 text-[13px] font-medium transition-colors',
-              value ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'
-            )}
-          >
-            <span className="truncate">{active?.name ?? 'All companies'}</span>
-            <ChevronDownIcon className="size-3.5 shrink-0" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
-          <DropdownMenuItem onClick={() => onChange(undefined)}>All companies</DropdownMenuItem>
-          {companies.map((co) => (
-            <DropdownMenuItem key={co.id} onClick={() => onChange(co.id)}>
-              {co.name}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
     </div>
   )
 }

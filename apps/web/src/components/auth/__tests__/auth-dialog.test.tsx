@@ -14,6 +14,7 @@ vi.mock('@/lib/client/hooks/use-auth-broadcast', () => ({ useAuthBroadcast: vi.f
 // dialog's formContext without the real sign-in flow, and record the props the
 // dialog hands it (mode / onModeSwitch) for the collapse-signup assertions.
 let stepToReport = 'credentials'
+let reportedStep: string | null = null
 let lastFormProps: { mode?: string; onModeSwitch?: unknown } = {}
 vi.mock('../portal-auth-form-inline', () => ({
   PortalAuthFormInline: ({
@@ -28,6 +29,7 @@ vi.mock('../portal-auth-form-inline', () => ({
     lastFormProps = { mode, onModeSwitch }
     useEffect(() => {
       onContextChange?.({ step: stepToReport, email: '' })
+      reportedStep = stepToReport
     }, [onContextChange])
     return <div>FORM_BODY</div>
   },
@@ -36,23 +38,31 @@ vi.mock('../portal-auth-form-inline', () => ({
 const { AuthDialog } = await import('../auth-dialog')
 const { AuthPopoverProvider, useAuthPopover } = await import('../auth-popover-context')
 
-function Opener({ mode = 'login' as 'login' | 'signup' }) {
+function Opener({
+  mode = 'login' as 'login' | 'signup',
+  callbackUrl,
+}: {
+  mode?: 'login' | 'signup'
+  callbackUrl?: string
+}) {
   const { openAuthPopover } = useAuthPopover()
   useEffect(() => {
-    openAuthPopover({ mode })
-  }, [openAuthPopover, mode])
+    openAuthPopover({ mode, callbackUrl })
+  }, [openAuthPopover, mode, callbackUrl])
   return null
 }
 
 function renderDialog(opts?: {
   mode?: 'login' | 'signup'
   authConfig?: React.ComponentProps<typeof AuthDialog>['authConfig']
+  callbackUrl?: string
+  workspaceName?: string
 }) {
   return render(
     <IntlProvider locale="en">
       <AuthPopoverProvider>
-        <Opener mode={opts?.mode ?? 'login'} />
-        <AuthDialog authConfig={opts?.authConfig} />
+        <Opener mode={opts?.mode ?? 'login'} callbackUrl={opts?.callbackUrl} />
+        <AuthDialog authConfig={opts?.authConfig} workspaceName={opts?.workspaceName} />
       </AuthPopoverProvider>
     </IntlProvider>
   )
@@ -61,6 +71,7 @@ function renderDialog(opts?: {
 beforeEach(() => {
   vi.clearAllMocks()
   stepToReport = 'credentials'
+  reportedStep = null
   lastFormProps = {}
   mockSignOut.mockResolvedValue(undefined) // the abandon path calls .catch()
 })
@@ -70,6 +81,8 @@ describe('AuthDialog — abandon during required 2FA', () => {
     stepToReport = 'two-factor-enroll'
     renderDialog()
     await screen.findByText('FORM_BODY')
+    // The form loads on open; close only once it has reported its step.
+    await waitFor(() => expect(reportedStep).toBe('two-factor-enroll'))
 
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
 
@@ -80,6 +93,7 @@ describe('AuthDialog — abandon during required 2FA', () => {
     stepToReport = 'credentials'
     renderDialog()
     await screen.findByText('FORM_BODY')
+    await waitFor(() => expect(reportedStep).toBe('credentials'))
 
     fireEvent.click(screen.getByRole('button', { name: /close/i }))
 
@@ -121,5 +135,27 @@ describe('AuthDialog — collapses sign-up when there is no distinct flow', () =
 
     expect(lastFormProps.mode).toBe('login')
     expect(lastFormProps.onModeSwitch).toBeUndefined()
+  })
+})
+
+describe('AuthDialog: team sign-in', () => {
+  it('speaks to the team when the destination is an admin page', async () => {
+    renderDialog({ callbackUrl: '/admin/inbox?c=conv_1', workspaceName: 'Acme' })
+    await screen.findByText('FORM_BODY')
+
+    expect(screen.getByRole('heading', { name: 'Sign in to Acme admin' })).toBeTruthy()
+    expect(screen.getByText(/For the Acme team/)).toBeTruthy()
+    expect(screen.queryByText(/vote and comment/)).toBeNull()
+    expect(screen.getByRole('link', { name: /Go to the Acme portal/ }).getAttribute('href')).toBe(
+      '/'
+    )
+  })
+
+  it('keeps the customer copy for a portal destination', async () => {
+    renderDialog({ callbackUrl: '/b/roadmap', workspaceName: 'Acme' })
+    await screen.findByText('FORM_BODY')
+
+    expect(screen.getByText('Sign in to vote and comment on feedback.')).toBeTruthy()
+    expect(screen.queryByText(/Acme admin/)).toBeNull()
   })
 })

@@ -22,6 +22,7 @@
  * - tickets.ts       list_tickets, get_ticket, create_ticket,
  *                    reply_to_ticket, add_ticket_note, link_ticket,
  *                    unlink_ticket
+ * - files.ts         upload_file
  * - widget.ts        widget_install_status
  */
 
@@ -35,7 +36,10 @@ import { registerSuggestionTools } from './suggestions'
 import { registerHelpCenterTools } from './help-center'
 import { registerConversationTools } from './conversations'
 import { registerTicketTools } from './tickets'
+import { registerFileTools } from './files'
 import { registerWidgetTools } from './widget'
+import { registerSettingsTools } from './settings'
+import { registerNavigationTools } from './navigation'
 
 export function registerTools(server: McpServer, auth: McpAuthContext) {
   registerSearchTools(server, auth)
@@ -46,5 +50,8 @@ export function registerTools(server: McpServer, auth: McpAuthContext) {
   registerHelpCenterTools(server, auth)
   registerConversationTools(server, auth)
   registerTicketTools(server, auth)
+  registerFileTools(server, auth)
   registerWidgetTools(server, auth)
+  registerSettingsTools(server, auth)
+  registerNavigationTools(server, auth)
 }

@@ -9,9 +9,8 @@ import type { CreatePostInput } from '@/lib/shared/types'
 import { useSimilarPosts } from '@/lib/client/hooks/use-similar-posts'
 import { usePostMediaUpload } from '@/lib/client/hooks/use-image-upload'
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
 import { FolderIcon, TagIcon, UserIcon } from '@heroicons/react/24/outline'
-import { PencilSquareIcon } from '@heroicons/react/24/solid'
+import { NewButton } from '@/components/shared/new-button'
 import { LazyRichTextEditor } from '@/components/ui/lazy-rich-text-editor'
 import { Skeleton } from '@/components/ui/skeleton'
 // Defer framer-motion via the public similar-posts-card lazy boundary so the
@@ -34,6 +33,7 @@ import { AuthorSelector, type NewAuthor } from '@/components/shared/author-selec
 import { useCreatePortalUser, useUpdatePortalUser } from '@/lib/client/mutations'
 import { cn } from '@/lib/shared/utils'
 import type { JSONContent } from '@tiptap/react'
+import type { EditorDocument } from '@/components/ui/rich-text-editor'
 import type { Board, PostTag, PostStatusEntity } from '@/lib/shared/db-types'
 import type { CurrentUser } from '@/lib/shared/types/inbox'
 import { Form } from '@/components/ui/form'
@@ -101,9 +101,9 @@ export function CreatePostDialog({
   })
 
   const handleContentChange = useCallback(
-    (json: JSONContent, _html: string, markdown: string) => {
-      setContentJson(json)
-      form.setValue('content', markdown, { shouldValidate: false, shouldDirty: true })
+    (document: EditorDocument) => {
+      setContentJson(document.json())
+      form.setValue('content', document.markdown(), { shouldValidate: false, shouldDirty: true })
     },
     [form]
   )
@@ -116,7 +116,8 @@ export function CreatePostDialog({
         boardId: data.boardId,
         statusId: data.statusId,
         tagIds: data.tagIds,
-        contentJson,
+        // No details written means no document: the post carries its title alone.
+        ...(contentJson ? { contentJson } : {}),
         authorPrincipalId,
       } as CreatePostInput & { authorPrincipalId?: string },
       {
@@ -158,13 +159,7 @@ export function CreatePostDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       {(!isControlled || trigger) && (
-        <DialogTrigger asChild>
-          {trigger ?? (
-            <Button variant="ghost" size="icon" title="Create new post">
-              <PencilSquareIcon className="h-4 w-4" />
-            </Button>
-          )}
-        </DialogTrigger>
+        <DialogTrigger asChild>{trigger ?? <NewButton noun="post" />}</DialogTrigger>
       )}
       <DialogContent
         className="w-[95vw] max-w-5xl p-0 gap-0 overflow-hidden"
@@ -207,7 +202,7 @@ export function CreatePostDialog({
                           >
                             <LazyRichTextEditor
                               value={contentJson || ''}
-                              onChange={handleContentChange}
+                              onDocumentChange={handleContentChange}
                               placeholder="Add more details... Type / for commands"
                               minHeight="200px"
                               borderless
@@ -369,7 +364,7 @@ export function CreatePostDialog({
                                     key={tag.id}
                                     variant="secondary"
                                     className={cn(
-                                      'cursor-pointer text-[11px] font-normal transition-colors',
+                                      'cursor-pointer text-[11px] transition-colors',
                                       isSelected
                                         ? 'bg-foreground text-background hover:bg-foreground/90'
                                         : 'hover:bg-muted/80'
@@ -488,7 +483,7 @@ export function CreatePostDialog({
                                 key={tag.id}
                                 variant="secondary"
                                 className={cn(
-                                  'cursor-pointer text-[11px] font-normal transition-colors',
+                                  'cursor-pointer text-[11px] transition-colors',
                                   isSelected
                                     ? 'bg-foreground text-background hover:bg-foreground/90'
                                     : 'hover:bg-muted/80'

@@ -36,6 +36,10 @@ vi.mock('@/lib/server/audit/log', () => ({
 vi.mock('@/lib/server/domains/principals/bootstrap-admin', () => ({
   findHumanAdmin: vi.fn(),
   isOpenToBootstrapClaim: vi.fn(),
+  isSetupOpenToClaim: vi.fn(async () => true),
+  // Nobody has claimed setup by creating an account; that claim is covered
+  // against real Postgres.
+  findSetupClaimant: async () => undefined,
 }))
 
 vi.mock('@/lib/server/domains/settings/identity-providers.service', () => ({
@@ -137,6 +141,46 @@ describe('handleWidgetAccountMutationGate', () => {
         ctx({ path: '/one-time-token/generate', token: 'widget-tok', scope: 'widget' })
       )
     ).resolves.toBeUndefined()
+  })
+
+  it.each([
+    '/get-session',
+    '/sign-in/anonymous',
+    '/one-time-token/generate',
+    '/one-time-token/verify',
+  ])('refuses test credentials on %s before any cookie-setting hook', async (path) => {
+    const c = ctx({
+      path,
+      token: 'customer-session-00000000-0000-0000-0000-000000000000',
+      scope: 'widget',
+    })
+    await expect(handleWidgetAccountMutationGate(c)).rejects.toThrow(/test session/i)
+    expect(c.context.internalAdapter.findSession).not.toHaveBeenCalled()
+  })
+
+  it('skips the session lookup on allowlisted paths, whatever the credential', async () => {
+    // `/get-session` runs on every authenticated request; the allowlist
+    // decides the outcome there, so reading the session first is wasted work.
+    for (const path of ['/get-session', '/sign-in/anonymous', '/one-time-token/verify']) {
+      for (const creds of [
+        { token: 'widget-tok', scope: 'widget' },
+        { cookie: 'better-auth.session_token=dash-tok.sig', scope: 'dashboard' },
+      ]) {
+        const c = ctx({ path, ...creds })
+        await expect(handleWidgetAccountMutationGate(c)).resolves.toBeUndefined()
+        expect(c.context.internalAdapter.findSession).not.toHaveBeenCalled()
+      }
+    }
+  })
+
+  it('still looks the session up on a gated path', async () => {
+    const c = ctx({
+      path: '/update-user',
+      cookie: 'better-auth.session_token=dash-tok.sig',
+      scope: 'dashboard',
+    })
+    await expect(handleWidgetAccountMutationGate(c)).resolves.toBeUndefined()
+    expect(c.context.internalAdapter.findSession).toHaveBeenCalledWith('dash-tok')
   })
 
   it('rejects a widget Bearer on any other Better Auth path', async () => {

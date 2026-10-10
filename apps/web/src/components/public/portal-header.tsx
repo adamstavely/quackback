@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react'
+import { nameInitial } from '@/lib/shared/utils/initial'
+import { memo, useEffect, useState } from 'react'
 import { Link, useRouter, useRouterState, useRouteContext } from '@tanstack/react-router'
 import { useTheme } from 'next-themes'
-import { resolvePortalNavItems } from './portal-header-nav'
-import { usePreviewDraft } from './preview-draft-context'
-import { isProductEnabled } from '@/lib/shared/types/settings'
-import { isStatusPagePublished } from '@/lib/shared/status-settings'
+import type { PortalNavItem } from './portal-header-nav'
+import { usePortalNavItems } from './use-portal-nav-items'
 import { isPortalSupportSurfaceEnabled } from '@/lib/shared/support-surfaces'
 import { useIntl, FormattedMessage } from 'react-intl'
 import { cn } from '@/lib/shared/utils'
@@ -44,6 +43,7 @@ import { PORTAL_MY_CONVERSATIONS_QUERY_KEY } from '@/lib/client/queries/portal-s
 import { removeViewerScopedPortalQueries } from '@/lib/client/queries/portal'
 import { useAuthBroadcast } from '@/lib/client/hooks/use-auth-broadcast'
 import { NotificationBell } from '@/components/notifications'
+import { useSessionContext, useWorkspaceSettings } from '@/lib/client/hooks/use-root-context'
 
 interface PortalHeaderProps {
   orgName: string
@@ -70,42 +70,20 @@ export function PortalHeader({
   const intl = useIntl()
   const router = useRouter()
   const queryClient = useQueryClient()
-  const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const { session, settings, registeredAuthProviders } = useRouteContext({ from: '__root__' })
+  // Each part is selected: the route context is a new object after every
+  // navigation, while these stay the same until the viewer or workspace
+  // changes. The location is read by the tabs that highlight it.
+  const session = useSessionContext()
+  const settings = useWorkspaceSettings()
+  const registeredAuthProviders = useRouteContext({
+    from: '__root__',
+    select: (context) => context.registeredAuthProviders,
+  })
 
-  const flags = settings?.featureFlags
-  const feedbackEnabled = isProductEnabled(flags, 'feedback')
-  const helpCenterEnabled = isProductEnabled(flags, 'helpCenter')
-  const supportEnabled = isPortalSupportSurfaceEnabled(flags, settings?.portalConfig)
-  const changelogEnabled = isProductEnabled(flags, 'changelog')
-  // Status tab: product flag + published. A non-public audience still needs
-  // a signed-in viewer to bother showing the tab; the route enforces the
-  // real per-viewer segment gate (settings here are workspace-global, not
-  // per-viewer). Hide or reorder the tab in Portal → Navigation.
-  const statusAudience = settings?.statusConfig?.audience ?? 'public'
-  const statusLoggedIn = !!session?.user && session.user.principalType !== 'anonymous'
-  const statusEnabled =
-    isStatusPagePublished(flags, settings?.statusConfig) &&
-    (statusAudience === 'public' || statusLoggedIn)
-  const onHelpPages = pathname === '/hc' || pathname.startsWith('/hc/')
-  // Admin-configured help center links render beside the built-in nav on help
-  // pages only. External URLs open in a new tab; root-relative paths stay
-  // in-tab. Legacy configs predate the field, hence the `?? []`.
-  const helpHeaderLinks = onHelpPages
-    ? (settings?.helpCenterConfig?.headerLinks ?? []).slice(0, 3)
-    : []
-  // Unsaved drafts from the admin branding preview (null outside preview mode).
-  const previewDraft = usePreviewDraft()
-  const navItems = resolvePortalNavItems(
-    {
-      feedback: feedbackEnabled,
-      roadmap: feedbackEnabled,
-      changelog: changelogEnabled,
-      help: helpCenterEnabled,
-      support: supportEnabled,
-      status: statusEnabled,
-    },
-    previewDraft?.nav ?? settings?.portalConfig?.nav
+  const navItems = usePortalNavItems()
+  const supportEnabled = isPortalSupportSurfaceEnabled(
+    settings?.featureFlags,
+    settings?.portalConfig
   )
 
   // Hide Log in / Sign up when no portal sign-in surface is usable.
@@ -136,14 +114,6 @@ export function PortalHeader({
 
   const authPopover = useAuthPopoverSafe()
   const openAuthPopover = authPopover?.openAuthPopover
-
-  const { theme, setTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
-
-  // Avoid hydration mismatch for theme toggle
-  useEffect(() => {
-    setMounted(true)
-  }, [])
 
   // Listen for auth success to refetch session and role via router invalidation
   useAuthBroadcast({
@@ -190,6 +160,7 @@ export function PortalHeader({
   // account_not_linked) instead of Better-Auth's bare error page.
   const redirectToSoleProvider = () => {
     if (!soleOidcProviderId) return
+    const pathname = router.state.location.pathname
     stashSsoAttempt({
       providerId: soleOidcProviderId,
       providerType: 'oidc',
@@ -212,136 +183,13 @@ export function PortalHeader({
     router.navigate({ to: '/' })
   }
 
-  // Navigation component
-  const navItemClass = (isActive: boolean) =>
-    cn(
-      'portal-nav__item px-3 py-2 text-sm font-medium transition-colors [border-radius:calc(var(--radius)*0.8)]',
-      isActive
-        ? 'portal-nav__item--active bg-[var(--nav-active-background)] text-[var(--nav-active-foreground)]'
-        : 'text-[var(--nav-inactive-color)] hover:text-[var(--nav-active-foreground)] hover:bg-[var(--nav-active-background)]/50'
-    )
-
-  const Navigation = () => (
-    <nav className="portal-nav flex items-center gap-1 whitespace-nowrap">
-      {navItems.map((item) => {
-        if (item.kind === 'link') {
-          return (
-            <a
-              key={item.id}
-              href={item.href}
-              target={item.newTab ? '_blank' : undefined}
-              rel="noopener noreferrer"
-              className={navItemClass(false)}
-            >
-              {item.label}
-            </a>
-          )
-        }
-
-        const isActive =
-          item.to === '/'
-            ? pathname === '/' || /^\/[^/]+\/posts\//.test(pathname)
-            : item.to === '/hc'
-              ? onHelpPages
-              : pathname.startsWith(item.to)
-
-        return (
-          <Link key={item.id} to={item.to} className={navItemClass(isActive)}>
-            {item.label ??
-              intl.formatMessage({ id: item.messageId, defaultMessage: item.defaultMessage })}
-            {item.type === 'support' && supportUnreadTotal > 0 && (
-              <span
-                className="ms-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold leading-[18px] text-primary-foreground"
-                aria-label={intl.formatMessage(
-                  {
-                    id: 'portal.support.unreadBadge',
-                    defaultMessage: '{count} unread',
-                  },
-                  { count: supportUnreadTotal }
-                )}
-              >
-                {supportUnreadTotal > 99 ? '99+' : supportUnreadTotal}
-              </span>
-            )}
-          </Link>
-        )
-      })}
-      {helpHeaderLinks.map((link) => {
-        const external = !link.url.startsWith('/')
-        return (
-          <a
-            key={link.url}
-            href={link.url}
-            target={external ? '_blank' : undefined}
-            rel={external ? 'noopener noreferrer' : undefined}
-            className={navItemClass(false)}
-          >
-            {link.label}
-          </a>
-        )
-      })}
-    </nav>
-  )
-
-  // Compact theme toggle dropdown for the header
-  const ThemeToggle = () => {
-    if (!showThemeToggle || !mounted) return null
-
-    const themeOptions = [
-      {
-        value: 'system',
-        label: intl.formatMessage({ id: 'portal.header.theme.system', defaultMessage: 'System' }),
-        icon: ComputerDesktopIcon,
-      },
-      {
-        value: 'light',
-        label: intl.formatMessage({ id: 'portal.header.theme.light', defaultMessage: 'Light' }),
-        icon: SunIcon,
-      },
-      {
-        value: 'dark',
-        label: intl.formatMessage({ id: 'portal.header.theme.dark', defaultMessage: 'Dark' }),
-        icon: MoonIcon,
-      },
-    ] as const
-
-    const currentTheme = themeOptions.find((t) => t.value === theme) ?? themeOptions[0]
-    const CurrentIcon = currentTheme.icon
-
-    return (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-9 w-9">
-            <CurrentIcon className="h-4 w-4" />
-            <span className="sr-only">
-              {intl.formatMessage({
-                id: 'portal.header.theme.toggleLabel',
-                defaultMessage: 'Toggle theme',
-              })}
-            </span>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {themeOptions.map((t) => (
-            <DropdownMenuItem
-              key={t.value}
-              onClick={() => setTheme(t.value)}
-              className={cn(theme === t.value && 'bg-accent')}
-            >
-              <t.icon className="me-2 h-4 w-4" />
-              {t.label}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    )
-  }
-
-  // Auth/admin buttons component (reused in both layouts)
-  const AuthButtons = () => (
+  // Auth/admin buttons. Plain elements rather than a component declared in
+  // here: a component declared in render is a new type each time, so every
+  // render of the header would tear these menus down and build them again.
+  const authButtons = (
     <div className="flex items-center">
       {/* Theme Toggle (when admin allows user choice) */}
-      <ThemeToggle />
+      {showThemeToggle && <ThemeToggle />}
 
       {/* Admin Button (visible for team members) */}
       {canAccessAdmin && (
@@ -373,7 +221,7 @@ export function PortalHeader({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel className="font-normal">
+            <DropdownMenuLabel>
               <div className="flex flex-col space-y-1">
                 <p className="text-sm font-medium">{name}</p>
                 <p className="text-xs text-muted-foreground">{email}</p>
@@ -449,14 +297,17 @@ export function PortalHeader({
                 />
               ) : (
                 <div className="h-8 w-8 [border-radius:calc(var(--radius)*0.6)] bg-primary flex items-center justify-center text-primary-foreground font-semibold">
-                  {orgName.charAt(0).toUpperCase()}
+                  {nameInitial(orgName)}
                 </div>
               )}
-              <span className="portal-header__name font-semibold hidden sm:block max-w-[18ch] line-clamp-2 text-[var(--header-foreground)]">
+              <span
+                title={orgName}
+                className="portal-header__name font-semibold hidden sm:block max-w-[18ch] truncate text-[var(--header-foreground)]"
+              >
                 {orgName}
               </span>
             </Link>
-            <AuthButtons />
+            {authButtons}
           </div>
         </div>
       </div>
@@ -464,9 +315,190 @@ export function PortalHeader({
       {/* Row 2: Navigation */}
       <div className="mt-2 overflow-x-auto scrollbar-none">
         <div className="max-w-6xl mx-auto w-full px-4 sm:px-6">
-          <Navigation />
+          <Navigation
+            navItems={navItems}
+            helpHeaderLinks={settings?.helpCenterConfig?.headerLinks}
+            supportUnreadTotal={supportUnreadTotal}
+          />
         </div>
       </div>
     </div>
+  )
+}
+
+const isHelpPath = (pathname: string) => pathname === '/hc' || pathname.startsWith('/hc/')
+
+function isTabActive(to: string, pathname: string): boolean {
+  if (to === '/') return pathname === '/' || /^\/[^/]+\/posts\//.test(pathname)
+  if (to === '/hc') return isHelpPath(pathname)
+  return pathname.startsWith(to)
+}
+
+const navItemClass = (isActive: boolean) =>
+  cn(
+    'portal-nav__item px-3 py-2 text-sm font-medium transition-colors [border-radius:calc(var(--radius)*0.8)]',
+    isActive
+      ? 'portal-nav__item--active bg-[var(--nav-active-background)] text-[var(--nav-active-foreground)]'
+      : 'text-[var(--nav-inactive-color)] hover:text-[var(--nav-active-foreground)] hover:bg-[var(--nav-active-background)]/50'
+  )
+
+function Navigation({
+  navItems,
+  helpHeaderLinks,
+  supportUnreadTotal,
+}: {
+  navItems: PortalNavItem[]
+  helpHeaderLinks: { label: string; url: string }[] | undefined
+  supportUnreadTotal: number
+}) {
+  // Admin-configured help center links render beside the built-in nav on help
+  // pages only. External URLs open in a new tab; root-relative paths stay
+  // in-tab. Legacy configs predate the field, hence the `?? []`.
+  const onHelpPages = useRouterState({ select: (s) => isHelpPath(s.location.pathname) })
+  const helpLinks = onHelpPages ? (helpHeaderLinks ?? []).slice(0, 3) : []
+
+  return (
+    <nav className="portal-nav flex items-center gap-1 whitespace-nowrap">
+      {navItems.map((item) => {
+        if (item.kind === 'link') {
+          return (
+            <a
+              key={item.id}
+              href={item.href}
+              target={item.newTab ? '_blank' : undefined}
+              rel="noopener noreferrer"
+              className={navItemClass(false)}
+            >
+              {item.label}
+            </a>
+          )
+        }
+        return (
+          <NavTab
+            key={item.id}
+            item={item}
+            unread={item.type === 'support' ? supportUnreadTotal : 0}
+          />
+        )
+      })}
+      {helpLinks.map((link) => {
+        const external = !link.url.startsWith('/')
+        return (
+          <a
+            key={link.url}
+            href={link.url}
+            target={external ? '_blank' : undefined}
+            rel={external ? 'noopener noreferrer' : undefined}
+            className={navItemClass(false)}
+          >
+            {link.label}
+          </a>
+        )
+      })}
+    </nav>
+  )
+}
+
+type BuiltInNavItem = Extract<PortalNavItem, { kind: 'builtin' }>
+
+/**
+ * A tab. It follows the location on its own, so a navigation renders only the
+ * tabs it highlights, and is memoized on what it shows, so the header
+ * rendering again (a navigation draft in the branding preview, a new unread
+ * count) renders only the tabs that changed.
+ */
+const NavTab = memo(
+  function NavTab({ item, unread }: { item: BuiltInNavItem; unread: number }) {
+    const intl = useIntl()
+    const isActive = useRouterState({ select: (s) => isTabActive(item.to, s.location.pathname) })
+    return (
+      <Link to={item.to} className={navItemClass(isActive)}>
+        {item.label ??
+          intl.formatMessage({ id: item.messageId, defaultMessage: item.defaultMessage })}
+        {unread > 0 && (
+          <span
+            className="ms-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold leading-[18px] text-primary-foreground"
+            aria-label={intl.formatMessage(
+              {
+                id: 'portal.support.unreadBadge',
+                defaultMessage: '{count} unread',
+              },
+              { count: unread }
+            )}
+          >
+            {unread > 99 ? '99+' : unread}
+          </span>
+        )}
+      </Link>
+    )
+  },
+  (prev, next) =>
+    prev.unread === next.unread &&
+    prev.item.to === next.item.to &&
+    prev.item.label === next.item.label &&
+    prev.item.messageId === next.item.messageId &&
+    prev.item.defaultMessage === next.item.defaultMessage
+)
+
+/** Compact theme toggle dropdown for the header. */
+function ThemeToggle() {
+  const intl = useIntl()
+  const { theme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+
+  // Avoid hydration mismatch for theme toggle
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted) return null
+
+  const themeOptions = [
+    {
+      value: 'system',
+      label: intl.formatMessage({ id: 'portal.header.theme.system', defaultMessage: 'System' }),
+      icon: ComputerDesktopIcon,
+    },
+    {
+      value: 'light',
+      label: intl.formatMessage({ id: 'portal.header.theme.light', defaultMessage: 'Light' }),
+      icon: SunIcon,
+    },
+    {
+      value: 'dark',
+      label: intl.formatMessage({ id: 'portal.header.theme.dark', defaultMessage: 'Dark' }),
+      icon: MoonIcon,
+    },
+  ] as const
+
+  const currentTheme = themeOptions.find((t) => t.value === theme) ?? themeOptions[0]
+  const CurrentIcon = currentTheme.icon
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-9 w-9">
+          <CurrentIcon className="h-4 w-4" />
+          <span className="sr-only">
+            {intl.formatMessage({
+              id: 'portal.header.theme.toggleLabel',
+              defaultMessage: 'Toggle theme',
+            })}
+          </span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {themeOptions.map((t) => (
+          <DropdownMenuItem
+            key={t.value}
+            onClick={() => setTheme(t.value)}
+            className={cn(theme === t.value && 'bg-accent')}
+          >
+            <t.icon className="me-2 h-4 w-4" />
+            {t.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

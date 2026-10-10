@@ -1,7 +1,7 @@
 import { createFileRoute, getRouteApi, notFound, redirect } from '@tanstack/react-router'
-import { formatDistanceToNow } from 'date-fns'
+import { FormattedMessage, useIntl } from 'react-intl'
 import { getPublicArticlePageFn } from '@/lib/server/functions/help-center'
-import { RichTextContent, isRichTextContent } from '@/components/ui/rich-text-editor'
+import { RichTextContent, isRichTextContent } from '@/components/ui/rich-text-content'
 import { EmbedHydration } from '@/components/shared/embed-hydration'
 import { HelpCenterBreadcrumbs } from '@/components/help-center/help-center-breadcrumbs'
 import { HelpCenterPrevNext } from '@/components/help-center/help-center-prev-next'
@@ -14,12 +14,14 @@ import {
   computePrevNext,
 } from '@/components/help-center/help-center-article-utils'
 import { Avatar } from '@/components/ui/avatar'
+import { TimeAgo } from '@/components/ui/time-ago'
 import { JsonLd } from '@/components/json-ld'
 import { buildArticleJsonLd, buildBreadcrumbJsonLd } from '@/lib/shared/json-ld'
 import { stripMarkdownPreview } from '@/lib/shared/utils'
 import { isPortalSupportSurfaceEnabled } from '@/lib/shared/support-surfaces'
 import { hcArticlePath, hcCollectionPath } from '@/lib/shared/help-center-url'
 import type { JSONContent } from '@tiptap/react'
+import { useBaseUrl, useWorkspaceSettings } from '@/lib/client/hooks/use-root-context'
 
 const helpCenterApi = getRouteApi('/_portal/hc')
 
@@ -85,10 +87,12 @@ export const Route = createFileRoute('/_portal/hc/$locale/articles/$idSlug/')({
 })
 
 function ArticleDetailPage() {
+  const intl = useIntl()
   const { article, related, category, articles, allCategories } = Route.useLoaderData()
   const { locale } = Route.useParams()
   const { helpCenterConfig } = helpCenterApi.useLoaderData()
-  const { baseUrl, settings } = Route.useRouteContext()
+  const baseUrl = useBaseUrl()
+  const settings = useWorkspaceSettings()
   const supportEnabled = isPortalSupportSurfaceEnabled(
     settings?.featureFlags,
     settings?.portalConfig
@@ -99,6 +103,10 @@ function ArticleDetailPage() {
     categoryId: category.id,
     articleTitle: article.title,
     locale,
+    rootLabel: intl.formatMessage({
+      id: 'portal.hc.breadcrumbs.root',
+      defaultMessage: 'Help Center',
+    }),
   })
 
   const headings = extractHeadings(article.contentJson)
@@ -174,16 +182,33 @@ function ArticleDetailPage() {
                 <div className="flex flex-col gap-0.5">
                   {article.author && (
                     <span className="text-sm text-muted-foreground">
-                      Written By{' '}
-                      <span className="font-semibold text-foreground">{article.author.name}</span>
+                      <FormattedMessage
+                        id="portal.hc.article.writtenBy"
+                        defaultMessage="Written By {name}"
+                        values={{
+                          name: (
+                            <span className="font-semibold text-foreground">
+                              {article.author.name}
+                            </span>
+                          ),
+                        }}
+                      />
                     </span>
                   )}
                   {article.updatedAt && (
                     <span className="text-sm text-muted-foreground">
-                      Last updated{' '}
-                      <span className="font-semibold text-foreground">
-                        {formatDistanceToNow(new Date(article.updatedAt), { addSuffix: true })}
-                      </span>
+                      <FormattedMessage
+                        id="portal.hc.article.lastUpdated"
+                        defaultMessage="Last updated {time}"
+                        values={{
+                          time: (
+                            <TimeAgo
+                              date={article.updatedAt}
+                              className="font-semibold text-foreground"
+                            />
+                          ),
+                        }}
+                      />
                     </span>
                   )}
                 </div>

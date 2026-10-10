@@ -10,19 +10,27 @@ Quackback validates required runtime configuration before it starts workers or a
 
 Production Compose supplies `DATABASE_URL` from its bundled service. You must set `BASE_URL` and `SECRET_KEY` in `.env`.
 
-| Operational variable  |                Default | Description                                                                                 |
-| --------------------- | ---------------------: | ------------------------------------------------------------------------------------------- |
-| `QUACKBACK_ROLE`      |                  `all` | `web`, `worker`, or `all`; split roles when scaling replicas.                               |
-| `DB_POOL_MAX`         | `10` web / `20` worker | Maximum PostgreSQL connections per process. Keep the replica total below the server budget. |
-| `DB_IDLE_TIMEOUT`     |                   `20` | Seconds before an idle database connection is closed.                                       |
-| `TRUSTED_PROXY_HOPS`  |                    `0` | Proxy hops permitted to supply client-IP headers. Keep `0` when directly exposed.           |
-| `CHAT_TRANSPORT_MODE` |                 `live` | Set `poll` only behind proxies that buffer SSE.                                             |
+| Operational variable       |                Default | Description                                                                                 |
+| -------------------------- | ---------------------: | ------------------------------------------------------------------------------------------- |
+| `QUACKBACK_ROLE`           |                  `all` | `web`, `worker`, or `all`; split roles when scaling replicas.                               |
+| `DB_POOL_MAX`              | `10` web / `20` worker | Maximum PostgreSQL connections per process. Keep the replica total below the server budget. |
+| `DB_IDLE_TIMEOUT`          |                   `20` | Seconds before an idle database connection is closed.                                       |
+| `TRUSTED_PROXY_HOPS`       |                    `0` | Proxy hops permitted to supply client-IP headers. Keep `0` when directly exposed.           |
+| `TRUSTED_CLIENT_IP_HEADER` |                  unset | Header your proxy sets to the client IP, e.g. `X-Real-IP`. Wins over `TRUSTED_PROXY_HOPS`.  |
+| `CHAT_TRANSPORT_MODE`      |                 `live` | Set `poll` only behind proxies that buffer SSE.                                             |
+| `SETUP_OWNER_EMAIL`        |                  unset | Hands an unfinished setup to this address. See [Recovering setup](#recovering-setup).       |
 
 With `TRUSTED_PROXY_HOPS=0` (the default), rate limiting and IP-based checks never trust client-supplied headers; they use the actual TCP peer address instead, so distinct clients still get distinct buckets even directly exposed. That resolution depends on the platform reporting the socket peer, which the production build (`bun run start`) always has; a dev runtime that doesn't expose it falls back to a single shared bucket rather than trusting a spoofable header. When you do run behind reverse proxies, set this to the number of hops so client IP is read from the correct `X-Forwarded-For` position instead.
+
+If your proxy sets one authoritative client-IP header, such as nginx with `proxy_set_header X-Real-IP $remote_addr;` or Cloudflare's `CF-Connecting-IP`, you can set `TRUSTED_CLIENT_IP_HEADER` to that header's name instead of counting hops. This is the better choice when requests pass through several proxies whose number you don't control. The header is used only when it holds exactly one valid IP address; otherwise the app falls back to `TRUSTED_PROXY_HOPS` and logs a warning at most once a minute. Only set it when your proxy always sets or overwrites the header and the app port is not reachable directly, otherwise any client can spoof its IP. `X-Forwarded-For` is refused here; use `TRUSTED_PROXY_HOPS` for it.
 
 Use `/api/health/live` for process liveness and `/api/health/ready` for traffic readiness. Readiness checks PostgreSQL, the exact bundled migration ledger, and whether a worker-role process is actually running the job worker.
 
 For optional email, storage, AI, authentication, and integration settings, see [`.env.example`](../.env.example).
+
+## Recovering setup
+
+The first account created on a new install owns its setup until setup is finished, and nobody else can create an account before then. If that account belongs to someone else, such as a smoke test or a stray visitor, or you can't sign in to it and have no mail configured to reset its password, set `SETUP_OWNER_EMAIL` to the address that should set the install up and restart. Setup then belongs to the account at that address, and that address can create its account if it has none. Every other address still can't create one until setup is finished. Until that account exists, whoever signs up with the address gets it, as on a brand-new install, so create it right away. The variable has no effect once setup is finished.
 
 ## Database sizing and audit indexes
 

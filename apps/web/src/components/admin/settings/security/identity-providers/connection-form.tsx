@@ -15,12 +15,15 @@ import { Label } from '@/components/ui/label'
 import { IdpLogo } from '@/components/icons/idp-provider-icons'
 import { effectiveScopes, normalizeScopesInput } from '@/lib/shared/oidc-scopes'
 import {
+  DEFAULT_ID_TOKEN_NONCE,
   DEFAULT_OIDC_PROMPT,
   DEFAULT_TOKEN_AUTH_METHOD,
+  normalizeIdTokenNonceInput,
   normalizePromptInput,
   normalizeTokenAuthInput,
 } from '@/lib/shared/oidc-request'
 import type { IdentityProvider } from '@/lib/server/domains/settings/identity-providers.service'
+import type { OidcRedirectStyle } from '@/lib/shared/oidc-redirect'
 import { IDP_KIND_NAMES, inferIdpKind, type IdpKind } from '../idp-shortcuts'
 import { ConnectionOptions } from './connection-options'
 import {
@@ -42,6 +45,7 @@ export type ConnectionDraft = {
   scopes: string[]
   prompt: string
   tokenAuth: string
+  idTokenNonce: string
   manual: ManualEndpoints
 }
 
@@ -54,6 +58,7 @@ export function emptyConnectionDraft(): ConnectionDraft {
     scopes: effectiveScopes({ scopes: null }),
     prompt: DEFAULT_OIDC_PROMPT,
     tokenAuth: DEFAULT_TOKEN_AUTH_METHOD,
+    idTokenNonce: DEFAULT_ID_TOKEN_NONCE,
     manual: { ...EMPTY_MANUAL_ENDPOINTS },
   }
 }
@@ -71,6 +76,7 @@ export function connectionDraftFrom(provider: IdentityProvider): ConnectionDraft
     scopes: effectiveScopes({ scopes: provider.scopes ?? null }),
     prompt: provider.prompt ?? DEFAULT_OIDC_PROMPT,
     tokenAuth: provider.tokenEndpointAuthMethod ?? DEFAULT_TOKEN_AUTH_METHOD,
+    idTokenNonce: provider.idTokenNonce ?? DEFAULT_ID_TOKEN_NONCE,
     manual: {
       authorizationUrl: provider.authorizationUrl ?? '',
       tokenUrl: provider.tokenUrl ?? '',
@@ -96,6 +102,7 @@ export function connectionPatchFrom(draft: ConnectionDraft): ConnectionPatch {
     scopes: normalizeScopesInput(draft.scopes),
     prompt: normalizePromptInput(draft.prompt),
     tokenEndpointAuthMethod: normalizeTokenAuthInput(draft.tokenAuth),
+    idTokenNonce: normalizeIdTokenNonceInput(draft.idTokenNonce),
     authorizationUrl: manual ? orNull(draft.manual.authorizationUrl) : null,
     tokenUrl: manual ? orNull(draft.manual.tokenUrl) : null,
     userInfoUrl: manual ? orNull(draft.manual.userInfoUrl) : null,
@@ -108,6 +115,8 @@ export function ConnectionFields({
   draft,
   onChange,
   registrationId,
+  redirectStyle,
+  redirectAction,
   baseUrl,
   disabled,
   existing,
@@ -116,6 +125,10 @@ export function ConnectionFields({
   draft: ConnectionDraft
   onChange: (next: ConnectionDraft) => void
   registrationId: string
+  /** Which callback URL this provider sends; the callout shows exactly that. */
+  redirectStyle: OidcRedirectStyle
+  /** Shown under the redirect URI, e.g. the switch off the legacy URL. */
+  redirectAction?: React.ReactNode
   baseUrl: string | undefined
   disabled: boolean
   /** True on the detail page: the provider is shown as a summary with a Change
@@ -169,7 +182,9 @@ export function ConnectionFields({
 
       {/* Register this first, then read the credentials the IdP hands back
           into the two fields below it. */}
-      <RedirectUriCallout uri={redirectUriFor(baseUrl, registrationId)} />
+      <RedirectUriCallout uri={redirectUriFor(baseUrl, registrationId, redirectStyle)}>
+        {redirectAction}
+      </RedirectUriCallout>
 
       <div className="space-y-2">
         <Label htmlFor="idp-client-id">Client ID</Label>
@@ -200,12 +215,14 @@ export function ConnectionFields({
         scopes={draft.scopes}
         prompt={draft.prompt}
         tokenAuth={draft.tokenAuth}
+        idTokenNonce={draft.idTokenNonce}
         discoveryUrl={draft.discoveryUrl}
         manual={draft.manual}
         disabled={disabled}
         onScopesChange={(scopes) => patch({ scopes })}
         onPromptChange={(prompt) => patch({ prompt })}
         onTokenAuthChange={(tokenAuth) => patch({ tokenAuth })}
+        onIdTokenNonceChange={(idTokenNonce) => patch({ idTokenNonce })}
         onManualChange={(m) => patch({ manual: { ...draft.manual, ...m } })}
       >
         {optionsChildren}

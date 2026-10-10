@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { createServerFn, createServerOnlyFn } from '@tanstack/react-start'
+import { getRequestHeaders } from '@tanstack/react-start/server'
 import {
   type PostId,
   type PrincipalId,
@@ -11,6 +12,9 @@ import {
   type UserId,
 } from '@quackback/ids'
 import type { BoardSettings, BoardAccess } from '@/lib/server/db'
+// Pure helper + its type, imported through the client-safe re-export so suites
+// that mock '@/lib/server/db' don't have to stub them.
+import { resolveReplyPolicy, type ReplyPolicy } from '@/lib/shared/db-types'
 import type { Actor } from '@/lib/server/policy'
 import {
   getOptionalAuth,
@@ -30,6 +34,7 @@ import {
 import { db, principal as principalTable, user as userTable, eq, inArray } from '@/lib/server/db'
 import { getPublicUrlOrNull } from '@/lib/server/storage/s3'
 import { resolveUserAvatarUrl } from '@/lib/server/domains/principals/principal-display'
+import { getRequestSession } from '@/lib/server/auth/request-session'
 import {
   listPublicBoardsWithStats,
   getPublicBoardBySlug,
@@ -37,7 +42,7 @@ import {
 import {
   listPublicPosts,
   listPublicPostsWithVotesAndAvatars,
-  getVotedPostIdsByUserId,
+  getAllUserVotedPostIds,
 } from '@/lib/server/domains/posts/post.public'
 import { getPublicPostDetail } from '@/lib/server/domains/posts/post.public.detail'
 import { getPostMergeInfo, getMergedPosts } from '@/lib/server/domains/posts/post.merge'
@@ -45,8 +50,11 @@ import { listPublicStatuses } from '@/lib/server/domains/statuses/status.service
 import { listPublicPostTags } from '@/lib/server/domains/post-tags/post-tag.service'
 import { getSubscriptionStatus } from '@/lib/server/domains/subscriptions/subscription.service'
 import { listPublicRoadmaps } from '@/lib/server/domains/roadmaps/roadmap.service'
-import { getPublicRoadmapPosts } from '@/lib/server/domains/roadmaps/roadmap.query'
-import { getPublicRoadmapDateBuckets } from '@/lib/server/domains/roadmaps/roadmap.query'
+import {
+  getPublicRoadmapPosts,
+  getPublicRoadmapColumnsPosts,
+  getPublicRoadmapDateBuckets,
+} from '@/lib/server/domains/roadmaps/roadmap.query'
 import { roadmapIdSchema, postStatusIdSchema } from '@quackback/ids/zod'
 import {
   boardIdInputSchema,
@@ -74,7 +82,6 @@ const fetchPortalDataSchema = z.object({
   sort: sortSchema,
   statusSlugs: z.array(z.string()).optional(),
   tagIds: z.array(z.string()).optional(),
-  userId: z.string().optional(),
   minVotes: z.number().int().min(1).optional(),
   dateFrom: z
     .string()
@@ -119,9 +126,9 @@ async function buildBoardPermissions(
  * migration 0084.
  */
 async function loadAllowAnonymous(): Promise<boolean> {
-  const { getSettings } = await import('./workspace')
+  const { findSettingsCached } = await import('@/lib/server/domains/settings/settings.helpers')
   const { workspaceAllowsAnonymous } = await import('@/lib/server/domains/settings/settings.types')
-  const settings = await getSettings()
+  const settings = await findSettingsCached()
   return workspaceAllowsAnonymous(settings?.portalConfig)
 }
 
@@ -177,18 +184,15 @@ export const fetchPortalData = createServerFn({ method: 'GET' })
     const segmentIds =
       canViewPrivate && data.segmentIds?.length ? (data.segmentIds as SegmentId[]) : undefined
 
+    // The viewer's votes come from the session's principal, never from the
+    // request: a caller must not be able to name whose votes to read.
+    const principalId = auth?.principal.id ?? null
+
     // Run ALL queries in parallel for maximum performance — including the
     // (fail-closed) anonymous-ceiling read so buildBoardPermissions doesn't
     // serialize an extra round-trip onto this (highest-traffic) loader.
-    const [memberResult, boardsRaw, postsResult, statuses, tags, allVotedPosts, allowAnonymous] =
+    const [boardsRaw, postsResult, statuses, tags, allVotedPosts, allowAnonymous] =
       await Promise.all([
-        // Principal lookup (needed for principalId in response)
-        data.userId
-          ? db.query.principal.findFirst({
-              where: eq(principalTable.userId, data.userId as UserId),
-              columns: { id: true },
-            })
-          : null,
         listPublicBoardsWithStats(actor),
         // Posts WITHOUT embedded vote check (we get votes separately for parallelism)
         listPublicPostsWithVotesAndAvatars({
@@ -209,13 +213,10 @@ export const fetchPortalData = createServerFn({ method: 'GET' })
         listPublicStatuses(),
         // Actor-scoped: internal tags are only listed for team viewers.
         listPublicPostTags(actor),
-        // Get ALL voted post IDs for this user (runs in parallel, we'll filter to displayed posts)
-        data.userId
-          ? getVotedPostIdsByUserId(data.userId as UserId)
-          : Promise.resolve(new Set<PostId>()),
+        // Every post the viewer has voted on, so later feed pages highlight too.
+        principalId ? getAllUserVotedPostIds(principalId) : Promise.resolve(new Set<PostId>()),
         loadAllowAnonymous(),
       ])
-    const principalId = memberResult?.id ?? null
 
     // Per-board submit/vote capability for THIS viewer, composed with the
     // workspace anonymous switch. The UI uses these booleans to decide whether
@@ -248,14 +249,7 @@ export const fetchPortalData = createServerFn({ method: 'GET' })
     }
 
     return {
-      // Strip the internal access matrix (segment ids, per-action tiers,
-      // moderation rules) from the client payload — the UI gates via
-      // boardPermissions / boardCapabilitiesForActor and never reads
-      // board.access, so shipping it would leak segmentation structure (#191).
-      boards: boardsRaw.map(({ access: _access, ...b }) => ({
-        ...b,
-        settings: (b.settings ?? {}) as BoardSettings,
-      })),
+      boards: boardsRaw.map(serializePublicBoard),
       posts,
       statuses,
       tags,
@@ -277,12 +271,7 @@ export const fetchPublicBoards = createServerFn({ method: 'GET' }).handler(async
   const auth = await getOptionalAuth()
   const actor = await policyActorFromAuth(auth)
   const boards = await listPublicBoardsWithStats(actor)
-  // Strip the internal access matrix (see fetchPortalData) — clients never
-  // read board.access, so it must not reach the public payload (#191).
-  return boards.map(({ access: _access, ...b }) => ({
-    ...b,
-    settings: (b.settings ?? {}) as BoardSettings,
-  }))
+  return boards.map(serializePublicBoard)
 })
 
 export const fetchPublicBoardBySlug = createServerFn({ method: 'GET' })
@@ -305,9 +294,7 @@ export const fetchPublicBoardBySlug = createServerFn({ method: 'GET' })
     const actor = await policyActorFromAuth(auth)
     const board = await getPublicBoardBySlug(data.slug, actor)
     if (!board) return null
-    // Strip the internal access matrix (see fetchPortalData) before serializing.
-    const { access: _access, ...rest } = board
-    return { ...rest, settings: (rest.settings ?? {}) as BoardSettings }
+    return serializePublicBoard(board)
   })
 
 export const runFetchPublicPostDetail = createServerOnlyFn(async function runFetchPublicPostDetail(
@@ -368,9 +355,17 @@ export const runFetchPublicPostDetail = createServerOnlyFn(async function runFet
   // per-board tier + the workspace anonymous ceiling (non-user actors only),
   // so the UI never advertises a vote/comment CTA the board's tier rejects
   // (#191). canSubmit is unused on the detail view.
-  const { boardCapabilitiesForActor } = await import('@/lib/server/policy')
-  const { canVote, canComment } = boardCapabilitiesForActor(
+  const { boardCapabilitiesForActor, canCommentOnPost } = await import('@/lib/server/policy')
+  const { canVote } = boardCapabilitiesForActor(actor, result.boardAccess, allowAnonymous)
+  // canComment is per-POST: on an author-only board the reply right turns on
+  // this post's own author, which the board-level capability can't see. View
+  // is already proven (getPublicPostDetail returned a row for this actor), so
+  // moderationState='published' keeps the inner view check a no-op and the
+  // decision reflects the comment gates — same convention as the vote gate in
+  // public-posts.ts.
+  const canComment = canCommentOnPost(
     actor,
+    { moderationState: 'published', principalId: result.principalId },
     result.boardAccess,
     allowAnonymous
   )
@@ -393,6 +388,11 @@ export const runFetchPublicPostDetail = createServerOnlyFn(async function runFet
     mergedPostCount: mergedPostsList.length > 0 ? mergedPostsList.length : undefined,
     canVote,
     canComment,
+    // The board's reply rule, so a denied viewer can be told WHY the composer
+    // is closed ("only the author and the team can reply") instead of getting
+    // the generic no-access notice. Safe to expose: it is a public property of
+    // the board, unlike the access matrix stripped above.
+    replyPolicy: resolveReplyPolicy(result.boardAccess),
   }
 })
 
@@ -457,14 +457,32 @@ export const fetchPublicTags = createServerFn({ method: 'GET' }).handler(async (
   return await listPublicPostTags(actor)
 })
 
+/**
+ * The signed-in viewer's own image columns, when this request has already
+ * read them. A document render has: the root bootstrap resolved the session,
+ * user row included, before any loader asks for an avatar. A server-function
+ * call from the browser has resolved nothing yet, and a session lookup costs
+ * two reads where the row costs one, so it gets null and reads the row.
+ */
+async function resolvedViewerImage(
+  userId: string
+): Promise<{ image: string | null; imageKey: string | null } | null> {
+  if (getRequestHeaders().get('x-tsr-serverFn')) return null
+  const session = await getRequestSession().catch(() => null)
+  if (session?.user.id !== userId) return null
+  return { image: session.user.image ?? null, imageKey: session.user.imageKey ?? null }
+}
+
 export const fetchUserAvatar = createServerFn({ method: 'GET' })
   .validator(z.object({ userId: z.string(), fallbackImageUrl: z.string().nullable().optional() }))
   .handler(async ({ data }) => {
     log.debug({ user_id: data.userId }, 'fetch user avatar')
-    const user = await db.query.user.findFirst({
-      where: eq(userTable.id, data.userId as UserId),
-      columns: { imageKey: true, image: true },
-    })
+    const user =
+      (await resolvedViewerImage(data.userId)) ??
+      (await db.query.user.findFirst({
+        where: eq(userTable.id, data.userId as UserId),
+        columns: { imageKey: true, image: true },
+      }))
 
     if (!user) return { avatarUrl: data.fallbackImageUrl ?? null, hasCustomAvatar: false }
 
@@ -542,19 +560,21 @@ export const fetchSubscriptionStatus = createServerFn({ method: 'GET' })
     return await getSubscriptionStatus(requestedPrincipalId, data.postId as PostId)
   })
 
-export const fetchPublicRoadmaps = createServerFn({ method: 'GET' }).handler(async () => {
-  log.debug('fetch public roadmaps')
-  // Outer gate: private portal + unauthorized caller → no roadmaps.
-  const access = await resolvePortalAccessForRequest()
-  if (!access.granted) {
-    log.debug('portal access denied, returning empty')
-    return []
-  }
+/**
+ * A board as every public payload carries it. The internal access matrix
+ * (segment ids, per-action tiers, moderation rules) is stripped: the UI gates through
+ * boardPermissions / boardCapabilitiesForActor and never reads board.access,
+ * so shipping it would leak segmentation structure (#191).
+ */
+function serializePublicBoard<B extends { access: unknown; settings: unknown }>({
+  access: _access,
+  ...board
+}: B) {
+  return { ...board, settings: (board.settings ?? {}) as BoardSettings }
+}
 
-  const auth = hasAuthCredentials() ? await getOptionalAuth() : null
-  const actor = await policyActorFromAuth(auth)
-  const roadmaps = await listPublicRoadmaps(actor)
-  return roadmaps.map((r) => ({
+function serializePublicRoadmap(r: Awaited<ReturnType<typeof listPublicRoadmaps>>[number]) {
+  return {
     id: r.id,
     name: r.name,
     slug: r.slug,
@@ -577,77 +597,115 @@ export const fetchPublicRoadmaps = createServerFn({ method: 'GET' }).handler(asy
     })),
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
-  }))
+  }
+}
+
+export const fetchPublicRoadmaps = createServerFn({ method: 'GET' }).handler(async () => {
+  log.debug('fetch public roadmaps')
+  // Outer gate: private portal + unauthorized caller → no roadmaps.
+  const access = await resolvePortalAccessForRequest()
+  if (!access.granted) {
+    log.debug('portal access denied, returning empty')
+    return []
+  }
+
+  const auth = hasAuthCredentials() ? await getOptionalAuth() : null
+  const actor = await policyActorFromAuth(auth)
+  const roadmaps = await listPublicRoadmaps(actor)
+  return roadmaps.map(serializePublicRoadmap)
 })
 
+const getPublicRoadmapPostsSchema = z.object({
+  roadmapId: roadmapIdSchema,
+  statusId: postStatusIdSchema.optional(),
+  bucketId: z.string().max(20).optional(),
+  limit: PageLimitMinOneSchema,
+  offset: z.number().int().min(0).optional(),
+  search: z.string().optional(),
+  boardIds: z.array(boardIdInputSchema).optional(),
+  tagIds: z.array(tagIdInputSchema).optional(),
+  segmentIds: z.array(segmentIdInputSchema).optional(),
+  sort: z.enum(['votes', 'newest', 'oldest']).optional(),
+})
+
+type PublicRoadmapFilterInput = Omit<
+  z.infer<typeof getPublicRoadmapPostsSchema>,
+  'statusId' | 'bucketId' | 'offset'
+>
+
+/**
+ * The actor and filters a public roadmap post list runs under, or null when
+ * the portal is private and the caller unauthorized. Auth is resolved once,
+ * for both the segment-filter gate and the per-board audience filter.
+ */
+async function resolvePublicRoadmapQuery(data: PublicRoadmapFilterInput) {
+  // Outer gate: private portal + unauthorized caller → no roadmap posts.
+  const access = await resolvePortalAccessForRequest()
+  if (!access.granted) {
+    log.debug('portal access denied, returning empty')
+    return null
+  }
+
+  const auth = hasAuthCredentials() ? await getOptionalAuth() : null
+
+  // Segment filtering requires admin/member role; non-team callers silently
+  // ignore segmentIds.
+  let segmentIds: SegmentId[] | undefined
+  if (data.segmentIds?.length && auth && isTeamMember(auth.principal.role)) {
+    segmentIds = data.segmentIds as SegmentId[]
+  }
+
+  const actor = await policyActorFromAuth(auth)
+  const filters = {
+    limit: data.limit ?? 20,
+    search: data.search,
+    boardIds: data.boardIds as BoardId[] | undefined,
+    tagIds: data.tagIds as PostTagId[] | undefined,
+    segmentIds,
+    sort: data.sort,
+  }
+  return { actor, filters }
+}
+
+/** Shared by fetchPublicRoadmapPosts and fetchPublicRoadmapColumns so both serialize a page the same way. */
+function serializePublicRoadmapPostsPage(
+  result: Awaited<ReturnType<typeof getPublicRoadmapPosts>>
+) {
+  return {
+    ...result,
+    items: result.items.map((item) => ({
+      id: String(item.id),
+      title: item.title,
+      voteCount: item.voteCount,
+      commentCount: item.commentCount,
+      statusId: item.statusId ? String(item.statusId) : null,
+      eta: toIsoStringOrNull(item.eta),
+      board: { id: String(item.board.id), name: item.board.name, slug: item.board.slug },
+    })),
+  }
+}
+
 export const fetchPublicRoadmapPosts = createServerFn({ method: 'GET' })
-  .validator(
-    z.object({
-      roadmapId: roadmapIdSchema,
-      statusId: postStatusIdSchema.optional(),
-      bucketId: z.string().max(20).optional(),
-      limit: PageLimitMinOneSchema,
-      offset: z.number().int().min(0).optional(),
-      search: z.string().optional(),
-      boardIds: z.array(boardIdInputSchema).optional(),
-      tagIds: z.array(tagIdInputSchema).optional(),
-      segmentIds: z.array(segmentIdInputSchema).optional(),
-      sort: z.enum(['votes', 'newest', 'oldest']).optional(),
-    })
-  )
+  .validator(getPublicRoadmapPostsSchema)
   .handler(async ({ data }) => {
     log.debug(
       { roadmap_id: data.roadmapId, limit: data.limit, offset: data.offset },
       'fetch public roadmap posts'
     )
-    // Outer gate: private portal + unauthorized caller → no roadmap posts.
-    const access = await resolvePortalAccessForRequest()
-    if (!access.granted) {
-      log.debug('portal access denied, returning empty')
-      return { items: [], hasMore: false, total: 0 }
-    }
-
-    // Resolve auth once — used for both the segment-filter gate and
-    // the per-board audience filter on getPublicRoadmapPosts.
-    const auth = hasAuthCredentials() ? await getOptionalAuth() : null
-
-    // Segment filtering requires admin/member role
-    let segmentIds: SegmentId[] | undefined
-    if (data.segmentIds?.length && auth && isTeamMember(auth.principal.role)) {
-      segmentIds = data.segmentIds as SegmentId[]
-      // Non-team callers silently ignore segmentIds
-    }
-
-    const actor = await policyActorFromAuth(auth)
+    const query = await resolvePublicRoadmapQuery(data)
+    if (!query) return { items: [], hasMore: false, total: 0 }
 
     const result = await getPublicRoadmapPosts(
       data.roadmapId as RoadmapId,
       {
+        ...query.filters,
         statusId: data.statusId as PostStatusId | undefined,
         bucketId: data.bucketId,
-        limit: data.limit ?? 20,
         offset: data.offset ?? 0,
-        search: data.search,
-        boardIds: data.boardIds as BoardId[] | undefined,
-        tagIds: data.tagIds as PostTagId[] | undefined,
-        segmentIds,
-        sort: data.sort,
       },
-      actor
+      query.actor
     )
-
-    return {
-      ...result,
-      items: result.items.map((item) => ({
-        id: String(item.id),
-        title: item.title,
-        voteCount: item.voteCount,
-        commentCount: item.commentCount,
-        statusId: item.statusId ? String(item.statusId) : null,
-        eta: toIsoStringOrNull(item.eta),
-        board: { id: String(item.board.id), name: item.board.name, slug: item.board.slug },
-      })),
-    }
+    return serializePublicRoadmapPostsPage(result)
   })
 
 export const fetchPublicRoadmapDateBuckets = createServerFn({ method: 'GET' })
@@ -666,7 +724,15 @@ export const getCommentsSectionDataFn = createServerFn({ method: 'GET' })
   .validator(getCommentsSectionDataSchema)
   .handler(async ({ data }) => {
     log.debug({ post_id: data.postId }, 'get comments section data')
-    const denied = { isMember: false, isTeamMember: false, canComment: false, user: undefined }
+    // replyPolicy rides the denied shape too, so the response type stays one
+    // object rather than a union the client has to narrow before reading it.
+    const denied = {
+      isMember: false,
+      isTeamMember: false,
+      canComment: false,
+      user: undefined,
+      replyPolicy: 'anyone' as ReplyPolicy,
+    }
     const postId = data.postId as PostId
 
     // Portal-visibility gate: a caller who can't see the portal must not
@@ -687,16 +753,17 @@ export const getCommentsSectionDataFn = createServerFn({ method: 'GET' })
       throw err
     }
 
-    // Per-board comment capability for the real actor, composed with the
-    // workspace anonymous ceiling. boardCapabilitiesForActor is the single
-    // source of truth the portal + widget UIs share, so the CTA can't desync
-    // from the server-side canCreateComment gate (it passes a published,
-    // unlocked post internally — assertPostViewable already proved view, and
-    // comments-locked is handled by the component's lockedMessage).
-    const { loadBoardAccessForPost } = await import('@/lib/server/domains/posts/post.access')
-    const { boardCapabilitiesForActor } = await import('@/lib/server/policy')
-    const boardAccess = await loadBoardAccessForPost(postId)
-    if (!boardAccess) return denied
+    // Per-POST comment capability for the real actor, composed with the
+    // workspace anonymous ceiling. canCommentOnPost is the single source of
+    // truth the portal + widget UIs share, so the CTA can't desync from the
+    // server-side canCreateComment gate. It needs the post's own author (an
+    // author-only board decides the reply right against it) alongside the
+    // board matrix, so the row carries all three; comments-locked stays out
+    // and is handled by the component's lockedMessage.
+    const { loadCommentContextForPost } = await import('@/lib/server/domains/posts/post.access')
+    const { canCommentOnPost } = await import('@/lib/server/policy')
+    const commentContext = await loadCommentContextForPost(postId)
+    if (!commentContext) return denied
 
     // The workspace anonymous ceiling only applies to non-user actors, so
     // only real anonymous / no-session viewers need the (uncached) config
@@ -707,7 +774,15 @@ export const getCommentsSectionDataFn = createServerFn({ method: 'GET' })
     if (actor.principalType !== 'user') {
       allowAnonymous = await loadAllowAnonymous()
     }
-    const canComment = boardCapabilitiesForActor(actor, boardAccess, allowAnonymous).canComment
+    const canComment = canCommentOnPost(
+      actor,
+      {
+        moderationState: commentContext.moderationState,
+        principalId: commentContext.principalId,
+      },
+      commentContext.access,
+      allowAnonymous
+    )
 
     const isMember = !!(ctx?.user && ctx?.principal)
     const isTeamMember =
@@ -720,6 +795,10 @@ export const getCommentsSectionDataFn = createServerFn({ method: 'GET' })
       user: isMember
         ? { name: ctx.user.name, email: ctx.user.email, principalId: ctx.principal.id }
         : undefined,
+      // Why the composer is closed, when it is: an author-only board tells the
+      // signed-in non-author that the thread is the author's, instead of the
+      // generic "you can't comment here" notice.
+      replyPolicy: resolveReplyPolicy(commentContext.access),
     }
   })
 
@@ -770,3 +849,50 @@ export const fetchBoardCapabilitiesFn = createServerFn({ method: 'GET' }).handle
 })
 
 export type WidgetVisibleBoard = { id: string; name: string; slug: string }
+
+// The first page of several columns of one board, under the same filters.
+const getPublicRoadmapColumnsSchema = getPublicRoadmapPostsSchema
+  .omit({ statusId: true, bucketId: true, offset: true })
+  .extend({
+    columns: z
+      .array(
+        z.object({
+          statusId: postStatusIdSchema.optional(),
+          bucketId: z.string().max(20).optional(),
+        })
+      )
+      .min(1)
+      .max(50),
+  })
+
+/**
+ * The first page of every column of one public roadmap board, under the same
+ * filters, in one request rather than one per column: what the board asks
+ * for on open or after a filter change. A column loading a later page still
+ * calls fetchPublicRoadmapPosts for itself alone.
+ *
+ * Declared at the end of the module on purpose: the gate test maps portal
+ * handlers by declaration order, so new server fns append here to avoid
+ * shifting existing indices.
+ */
+export const fetchPublicRoadmapColumns = createServerFn({ method: 'GET' })
+  .validator(getPublicRoadmapColumnsSchema)
+  .handler(async ({ data }) => {
+    log.debug(
+      { roadmap_id: data.roadmapId, columns: data.columns.length },
+      'fetch public roadmap columns'
+    )
+    const query = await resolvePublicRoadmapQuery(data)
+    if (!query) return data.columns.map(() => ({ items: [], hasMore: false, total: 0 }))
+
+    const results = await getPublicRoadmapColumnsPosts(
+      data.roadmapId as RoadmapId,
+      data.columns.map((column) => ({
+        statusId: column.statusId as PostStatusId | undefined,
+        bucketId: column.bucketId,
+      })),
+      query.filters,
+      query.actor
+    )
+    return results.map(serializePublicRoadmapPostsPage)
+  })

@@ -7,7 +7,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import { RichTextEditor, type EditorDocument } from '@/components/ui/rich-text-editor'
 import { FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form'
 import { FormError } from '@/components/shared/form-error'
 import { TitleInput } from '@/components/shared/title-input'
@@ -22,7 +22,7 @@ interface PostFormFieldsProps {
   statuses: PostStatusEntity[]
   tags: PostTag[]
   contentJson: JSONContent | null
-  onContentChange: (json: JSONContent, html: string, markdown: string) => void
+  onContentChange: (document: EditorDocument) => void
   error?: string
   richMediaEnabled?: boolean
   videoEmbedsEnabled?: boolean
@@ -57,7 +57,7 @@ export function PostFormFields({
                 <FormControl>
                   <SelectTrigger
                     size="xs"
-                    className="border-0 bg-transparent shadow-none font-medium text-foreground hover:text-foreground/80 focus-visible:ring-0"
+                    className="border-0 font-medium text-foreground hover:text-foreground/80 focus-visible:ring-0"
                   >
                     <SelectValue placeholder="Select board">
                       {selectedBoard?.name || 'Select board'}
@@ -66,7 +66,7 @@ export function PostFormFields({
                 </FormControl>
                 <SelectContent align="start">
                   {boards.map((board) => (
-                    <SelectItem key={board.id} value={board.id} className="py-1">
+                    <SelectItem key={board.id} value={board.id}>
                       {board.name}
                     </SelectItem>
                   ))}
@@ -87,7 +87,7 @@ export function PostFormFields({
                 <FormControl>
                   <SelectTrigger
                     size="xs"
-                    className="border-0 bg-transparent shadow-none font-medium text-foreground hover:text-foreground/80 focus-visible:ring-0"
+                    className="border-0 font-medium text-foreground hover:text-foreground/80 focus-visible:ring-0"
                   >
                     <SelectValue>
                       {selectedStatus && (
@@ -104,7 +104,7 @@ export function PostFormFields({
                 </FormControl>
                 <SelectContent align="start">
                   {statuses.map((status) => (
-                    <SelectItem key={status.id} value={status.id} className="py-1">
+                    <SelectItem key={status.id} value={status.id}>
                       <div className="flex items-center gap-1.5">
                         <span
                           className="h-2 w-2 rounded-full"
@@ -135,7 +135,7 @@ export function PostFormFields({
               <FormControl>
                 <RichTextEditor
                   value={contentJson || ''}
-                  onChange={onContentChange}
+                  onDocumentChange={onContentChange}
                   placeholder="Add more details... Type / for commands"
                   minHeight="200px"
                   borderless
@@ -178,11 +178,7 @@ export function PostFormFields({
                       <Badge
                         key={tag.id}
                         variant="secondary"
-                        className={`cursor-pointer text-xs font-normal transition-colors ${
-                          isSelected
-                            ? 'bg-foreground text-background hover:bg-foreground/90'
-                            : 'hover:bg-muted/80'
-                        }`}
+                        className={`cursor-pointer text-xs transition-colors ${isSelected ? 'bg-foreground text-background hover:bg-foreground/90' : 'hover:bg-muted/80'}`}
                         onClick={() => {
                           if (isSelected) {
                             field.onChange(selectedIds.filter((id) => id !== tag.id))

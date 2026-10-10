@@ -26,6 +26,8 @@ import {
 } from '@/lib/shared/assistant/config'
 import { isWidgetMessengerEnabled } from '@/lib/shared/support-surfaces'
 
+import { logSettingsReadError } from './settings-log'
+
 const log = logger.child({ component: 'settings-widget' })
 export const WIDGET_OBSERVATION_THROTTLE_MS = 15 * 60 * 1000
 
@@ -167,28 +169,36 @@ export function publicMessengerConfig(
 }
 import {
   requireSettings,
+  type SettingsWriteOptions,
   requireSettingsCached,
+  readSettingsRow,
+  type SettingsFreshness,
   wrapDbError,
   parseWidgetConfig,
   deepMerge,
   invalidateSettingsCache,
 } from './settings.helpers'
 
-export async function getWidgetConfig(): Promise<WidgetConfig> {
+export async function getWidgetConfig(
+  freshness: SettingsFreshness = 'cached'
+): Promise<WidgetConfig> {
   try {
-    // Read-only + on public hot paths (sdk.js, identify): cached row.
-    const org = await requireSettingsCached()
+    // Public hot paths (sdk.js, identify) read the cached row.
+    const org = await readSettingsRow(freshness)
     return parseWidgetConfig(org.widgetConfig)
   } catch (error) {
-    log.error({ err: error }, 'get widget config failed')
+    logSettingsReadError(log, error, 'get widget config failed')
     wrapDbError('fetch widget config', error)
   }
 }
 
-export async function updateWidgetConfig(input: UpdateWidgetConfigInput): Promise<WidgetConfig> {
+export async function updateWidgetConfig(
+  input: UpdateWidgetConfigInput,
+  options: SettingsWriteOptions = {}
+): Promise<WidgetConfig> {
   log.info('update widget config')
   try {
-    const org = await requireSettings()
+    const org = await requireSettings(options.executor)
     const existing = parseWidgetConfig(org.widgetConfig)
     const incoming = { ...input } as Partial<WidgetConfig>
     if (incoming.messenger && 'routing' in incoming.messenger) {
@@ -199,11 +209,11 @@ export async function updateWidgetConfig(input: UpdateWidgetConfigInput): Promis
     // The translations map replaces wholesale — deepMerge would union locale
     // keys, so a removed locale or a cleared field could never disappear.
     if (input.translations !== undefined) updated.translations = input.translations
-    await db
+    await (options.executor ?? db)
       .update(settings)
       .set({ widgetConfig: JSON.stringify(updated) })
       .where(eq(settings.id, org.id))
-    await invalidateSettingsCache()
+    if (!options.executor) await invalidateSettingsCache()
     return updated
   } catch (error) {
     log.error({ err: error }, 'update widget config failed')
@@ -344,7 +354,7 @@ export async function getPublicWidgetConfig(): Promise<PublicWidgetConfig> {
     const flags = resolveFeatureFlags(org.featureFlags)
     return projectPublicWidgetConfig(config, flags, identity)
   } catch (error) {
-    log.error({ err: error }, 'get public widget config failed')
+    logSettingsReadError(log, error, 'get public widget config failed')
     wrapDbError('fetch public widget config', error)
   }
 }
@@ -381,7 +391,7 @@ export async function isMessengerEnabled(): Promise<boolean> {
 export async function saveWidgetHeroImageKey(key: string): Promise<void> {
   log.info('save widget hero image key')
   try {
-    const config = await getWidgetConfig()
+    const config = await getWidgetConfig('fresh')
     const oldKey = config.home?.heroImageKey
     if (oldKey && oldKey !== key) {
       try {
@@ -401,7 +411,7 @@ export async function saveWidgetHeroImageKey(key: string): Promise<void> {
 export async function deleteWidgetHeroImage(): Promise<void> {
   log.info('delete widget hero image')
   try {
-    const config = await getWidgetConfig()
+    const config = await getWidgetConfig('fresh')
     const oldKey = config.home?.heroImageKey
     if (oldKey) {
       try {

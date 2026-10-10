@@ -3,6 +3,7 @@
  */
 
 export { cn } from './cn'
+export { nameInitial } from './initial'
 export {
   getInitials,
   stripHtml,
@@ -13,7 +14,6 @@ export {
   normalizeStrength,
   strengthTier,
   formatBadgeCount,
-  slugify,
 } from './string'
 export {
   escapeHtmlAttr,
@@ -27,6 +27,8 @@ export {
   toIsoStringOrNull,
   toIsoDateOnly,
   formatMonthYear,
+  parseCalendarDate,
+  formatCalendarDate,
   tomorrowAt,
   startOfUtcMonth,
   inHours,

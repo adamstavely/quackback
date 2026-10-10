@@ -123,6 +123,16 @@ describe('buildGenericOAuthConfigs', () => {
     expect(cfgs[0].prompt).toBe('login')
   })
 
+  it('keeps ID token nonce binding on for a provider that has not opted out', async () => {
+    const cfg = await buildOne()
+    expect(cfg.disableIdTokenNonceBinding).toBeUndefined()
+  })
+
+  it('turns nonce binding off for a provider set to not use a nonce', async () => {
+    const cfg = await buildOne({ idTokenNonce: 'off' })
+    expect(cfg.disableIdTokenNonceBinding).toBe(true)
+  })
+
   it('skips disabled providers and providers without credentials', async () => {
     const cfgs = await buildConfigs(
       [
@@ -588,6 +598,33 @@ describe('production profile mapping adapter', () => {
     expect(info?.emailVerified).toBe(false)
     expect(info?.email_verified).toBe(false)
     expect(mapProfileClaims(info).emailVerified).toBe(false)
+  })
+
+  // The enforcing-provider vouch must only ever see an address the provider
+  // itself released: a placeholder or a stored address standing in for one
+  // would let a provider vouch for an account it never named.
+  it('hands only a provider-released address to onProviderEmail', async () => {
+    const onProviderEmail = vi.fn(async () => {})
+    const build = (claimMapping: unknown) =>
+      buildGenericOAuthConfigs({
+        providers: [row({ claimMapping })] as never,
+        creds: async () => ({ clientId: 'c', clientSecret: 's' }),
+        tierAllowsOidc: true,
+        placeholderEmailFor: async () => 'sso-oidc-abc-deadbeef@anon.quackback.io',
+        onProviderEmail,
+      })
+
+    const [withEmail] = await build({})
+    await withEmail.getUserInfo?.({
+      idToken: idToken({ sub: 's1', email: 'sam@acme.com', name: 'Sam' }),
+      accessToken: undefined,
+    })
+    expect(onProviderEmail).toHaveBeenCalledWith('oidc_abc', 's1', 'sam@acme.com')
+
+    onProviderEmail.mockClear()
+    const [placeholder] = await build({ profile: { allowMissingEmail: true } })
+    await placeholder.getUserInfo?.({ idToken: idToken({ sub: 's2' }), accessToken: undefined })
+    expect(onProviderEmail).not.toHaveBeenCalled()
   })
 
   it('does not mint a placeholder when the mapped email is missing and opt-in is off', async () => {

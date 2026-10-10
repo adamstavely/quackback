@@ -26,6 +26,7 @@
  * deleteAnonymousIdentity.
  */
 import { toUuid, type PrincipalId } from '@quackback/ids'
+import { forgetRequestSegmentIds } from '@/lib/server/auth/request-session'
 import {
   slackUserLinks,
   postVotes,
@@ -37,6 +38,7 @@ import {
   postActivity,
   conversations,
   conversationMessages,
+  files,
   conversationParticipants,
   conversationSummaries,
   postSubscriptions,
@@ -291,6 +293,12 @@ export const REPOINT_STEPS: RepointStep[] = [
     'principal_id',
     'Message authorship. ON DELETE RESTRICT, same as conversations.'
   ),
+  simpleRepoint(
+    'files',
+    files,
+    'uploaded_by_id',
+    'File uploader. A visitor who identifies mid-compose can still send the files they uploaded anonymously, and sent files keep their sender.'
+  ),
   collisionRepoint(
     'conversation_participants',
     conversationParticipants,
@@ -354,6 +362,7 @@ export const REPOINT_STEPS: RepointStep[] = [
         .set({ principalId: to })
         .where(and(eq(userSegments.principalId, from), ne(userSegments.addedBy, 'dynamic')))
       await tx.delete(userSegments).where(eq(userSegments.principalId, from))
+      forgetRequestSegmentIds()
     },
   },
   collisionRepoint(
@@ -453,6 +462,12 @@ export const REPOINT_STEPS: RepointStep[] = [
  * merge source.
  */
 export const REPOINT_EXEMPTIONS: Record<string, string> = {
+  'workspace_assistant_threads.owner_principal_id':
+    'Private Copilot threads belong to authenticated team users with copilot.use; anonymous visitor merges cannot own them.',
+  'integration_sync_actions.principal_id':
+    'Integration recovery requires INTEGRATION_MANAGE; anonymous principals cannot own these immutable action receipts.',
+  'onboarding_emails.principal_id':
+    'Setup emails go only to teammates; an anonymous merge source never received one.',
   // Team/agent actor columns (anonymous principals can never occupy them)
   'tickets.assignee_principal_id':
     'ticket assignees are team members; the merge source is anonymous',

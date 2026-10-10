@@ -11,7 +11,7 @@ import {
   useRef,
   type ReactNode,
 } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
+import { LazyMotion, domAnimation, m, useReducedMotion } from 'framer-motion'
 import { FormattedMessage, useIntl } from 'react-intl'
 import { CheckCircleIcon } from '@heroicons/react/24/solid'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
@@ -62,12 +62,14 @@ import {
 } from '@/components/widget/widget-skeletons'
 import { conversationSummaryKey } from '@/components/widget/use-messenger-summary'
 import { useTicketStageBadge } from '@/components/widget/use-ticket-stage-badge'
+import { useWarmLazyViews } from '@/components/widget/use-warm-lazy-views'
 
 // Secondary views load behind lazy() boundaries so the iframe's first paint
 // only needs the shell + Home/feedback — the detail views carry the
 // rich-text editor (tiptap) and the messenger carries the conversation thread.
-// The shared import thunks below also feed an idle-time prefetch after mount,
-// so by the time a visitor clicks a tab the chunk is already cached.
+// The shared import thunks below also feed an idle-time warm-up of the enabled
+// tabs' views once the widget is shown (useWarmLazyViews), so by the time a
+// visitor clicks a tab the chunk is already cached.
 const loadPostDetail = () => import('@/components/widget/widget-post-detail')
 const loadChangelog = () => import('@/components/widget/widget-changelog')
 const loadChangelogDetail = () => import('@/components/widget/widget-changelog-detail')
@@ -92,17 +94,23 @@ const WidgetMessenger = lazy(() => loadMessenger().then((m) => ({ default: m.Wid
 const WidgetMessages = lazy(() => loadMessagesView().then((m) => ({ default: m.WidgetMessages })))
 const WidgetTickets = lazy(() => loadTicketsView().then((m) => ({ default: m.WidgetTickets })))
 
-const LAZY_VIEW_LOADERS = [
-  loadPostDetail,
-  loadChangelog,
-  loadChangelogDetail,
-  loadHelp,
-  loadHelpCategory,
-  loadHelpDetail,
-  loadMessenger,
-  loadMessagesView,
-  loadTicketsView,
-]
+/** The lazy views a visitor can reach from the enabled tabs. */
+function lazyViewLoadersFor(tabs: {
+  feedback?: boolean
+  changelog?: boolean
+  help?: boolean
+  messages?: boolean
+  tickets?: boolean
+}): (() => Promise<unknown>)[] {
+  const loaders: (() => Promise<unknown>)[] = []
+  if (tabs.feedback) loaders.push(loadPostDetail)
+  if (tabs.changelog) loaders.push(loadChangelog, loadChangelogDetail)
+  if (tabs.help) loaders.push(loadHelp, loadHelpCategory, loadHelpDetail)
+  if (tabs.messages) loaders.push(loadMessagesView)
+  if (tabs.tickets) loaders.push(loadTicketsView)
+  if (tabs.messages || tabs.tickets) loaders.push(loadMessenger)
+  return loaders
+}
 
 const searchSchema = z.object({
   board: z.string().optional(),
@@ -150,6 +158,7 @@ export const Route = createFileRoute('/widget/')({
     // Teammate-avatar cluster for the Home header. Workspace-global and public-safe
     // (name + image only), so the anonymous SSR baseline is correct for everyone.
     let team: { name: string; avatarUrl: string | null }[] = []
+    let showPoweredBy = true
     const [portalData, { getBaseUrl }] = await Promise.all([
       feedbackProductEnabled
         ? queryClient.ensureQueryData(
@@ -217,14 +226,17 @@ export const Route = createFileRoute('/widget/')({
             })
             .catch(() => {})
         : Promise.resolve(),
+      // Independent of every branch above, so it runs in the same batch
+      // rather than adding its own round trip after it.
+      getShowPoweredByFn().then((value) => {
+        showPoweredBy = value
+      }),
     ])
 
     queryClient.setQueryData(
       widgetQueryKeys.votedPosts.bySession(INITIAL_SESSION_VERSION),
       new Set(portalData.votedPostIds)
     )
-
-    const showPoweredBy = await getShowPoweredByFn()
 
     return {
       posts: portalData.posts.items.map((p) => ({
@@ -286,12 +298,10 @@ export const Route = createFileRoute('/widget/')({
       assistant:
         messengerTabEnabled && settings?.publicWidgetConfig?.messenger?.assistant?.enabled
           ? {
-              name: settings.publicWidgetConfig.messenger.assistant.name?.trim() || 'Quinn',
+              name: settings.publicWidgetConfig.messenger.assistant.name?.trim() || 'Quackback AI',
               avatarUrl: settings.publicWidgetConfig.messenger.assistant.avatarUrl || null,
             }
           : null,
-      linkPreviews:
-        (settings?.featureFlags as { supportInbox?: boolean } | undefined)?.supportInbox ?? false,
       defaultBoard: settings?.publicWidgetConfig?.defaultBoard,
       portalAccess: {
         isPrivate: settings?.publicPortalConfig?.portalAccess?.isPrivate ?? false,
@@ -311,10 +321,21 @@ export const Route = createFileRoute('/widget/')({
   component: WidgetRoute,
 })
 
+/**
+ * Loads the "dom" animation engine (fades, slides, transforms), not the
+ * larger "dom-max" build's drag/layout/3d support the widget never uses. `m`
+ * components read it from context; `motion` components would ignore it and
+ * bundle their own copy, which is why every framer-motion usage under this
+ * root uses `m`.
+ */
 function WidgetRoute() {
   const { tabs } = Route.useLoaderData()
   if (contentSurfaceCount(tabs) === 0) return null
-  return <WidgetPage />
+  return (
+    <LazyMotion features={domAnimation}>
+      <WidgetPage />
+    </LazyMotion>
+  )
 }
 
 interface SuccessPost {
@@ -365,7 +386,7 @@ function ViewTransition({
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   return (
-    <motion.div
+    <m.div
       key={id}
       ref={ref}
       tabIndex={-1}
@@ -377,7 +398,7 @@ function ViewTransition({
       className="h-full outline-none"
     >
       <Suspense fallback={fallback}>{children}</Suspense>
-    </motion.div>
+    </m.div>
   )
 }
 
@@ -390,7 +411,6 @@ function WidgetPage() {
     orgSlug,
     boardPermissions,
     tabs,
-    linkPreviews,
     defaultBoard,
     portalAccess,
     portalOrigin,
@@ -405,7 +425,6 @@ function WidgetPage() {
   } = Route.useLoaderData()
   const { board: initialBoardSlug } = Route.useSearch()
   const { ensureSession, sessionVersion } = useWidgetAuth()
-  const intl = useIntl()
 
   // The loader seeds boardPermissions for the anonymous SSR baseline (no Bearer
   // at loader time). Refetch it for the REAL actor with the widget's Bearer
@@ -451,6 +470,9 @@ function WidgetPage() {
   const [conversationTarget, setConversationTarget] = useState<ConversationId | 'new' | null>(
     resumeConversationId ? (resumeConversationId as ConversationId) : null
   )
+  // A host's `open({ view: 'chat', body })`. The nonce remounts the messenger
+  // so a draft sent while it is already open still lands in the composer.
+  const [messengerDraft, setMessengerDraft] = useState<{ nonce: number; body: string } | null>(null)
   // Manual size preference: the header's expand/collapse button flips this,
   // and it is STICKY — collapsing turns auto-expansion off for every later
   // item view until the visitor expands again. Persisted per browser.
@@ -477,20 +499,10 @@ function WidgetPage() {
   // panel is always full-screen, so the manual size control is meaningless.
   const [hostIsMobile, setHostIsMobile] = useState(false)
 
-  // Warm the lazy view chunks once the first paint has settled, so tab
-  // clicks resolve from cache instead of hitting the network. Idle-time only:
-  // first paint must never compete with these fetches.
-  useEffect(() => {
-    const prefetch = () => {
-      for (const load of LAZY_VIEW_LOADERS) void load().catch(() => {})
-    }
-    if (typeof window.requestIdleCallback === 'function') {
-      const handle = window.requestIdleCallback(prefetch, { timeout: 3000 })
-      return () => window.cancelIdleCallback(handle)
-    }
-    const timer = window.setTimeout(prefetch, 1500)
-    return () => window.clearTimeout(timer)
-  }, [])
+  // Warm the enabled tabs' lazy view chunks once the widget is shown, so tab
+  // clicks resolve from cache instead of hitting the network.
+  const warmLoaders = useMemo(() => lazyViewLoadersFor(tabs), [tabs])
+  useWarmLazyViews(warmLoaders)
 
   // Where a cross-navigation came from (e.g. Home's "Search for help" jumping
   // to the Help tab). While set, even a ROOT view shows a back chevron that
@@ -648,6 +660,10 @@ function WidgetPage() {
           setView('help')
           break
         case 'messenger':
+          if (command.body) {
+            const body = command.body
+            setMessengerDraft((prev) => ({ nonce: (prev?.nonce ?? 0) + 1, body }))
+          }
           openMessenger()
           break
         case 'tickets':
@@ -850,18 +866,6 @@ function WidgetPage() {
   // the assistant identity when enabled — always available, no presence — or
   // the live presence badge for assistant-less workspaces.
   const presence = useConversationPresence(messengerEnabled && !assistant)
-  // When office hours are configured, tell the visitor up front when the team
-  // is back — the thread body only says so once they've typed.
-  const presenceBackAt = useMemo(() => {
-    if (!presence.nextOpenAt) return null
-    const at = new Date(presence.nextOpenAt)
-    if (Number.isNaN(at.getTime())) return null
-    return new Intl.DateTimeFormat(intl.locale, {
-      weekday: 'long',
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(at)
-  }, [presence.nextOpenAt, intl.locale])
   const messengerHeader =
     view === 'messenger' ? (
       assistant ? (
@@ -883,7 +887,10 @@ function WidgetPage() {
         <div className="min-w-0 ps-1">
           <ConversationPresenceBadge
             available={conversationAvailable(presence.agentsOnline, presence.withinOfficeHours)}
-            backAt={presenceBackAt}
+            // When office hours are configured, the badge tells the visitor up
+            // front when the team is back; the thread body only says so once
+            // they have typed.
+            nextOpenAt={presence.nextOpenAt}
           />
         </div>
       )
@@ -971,11 +978,11 @@ function WidgetPage() {
           fallback={<WidgetMessengerViewSkeleton isNew={conversationTarget === 'new'} />}
         >
           <WidgetMessenger
-            key={conversationTarget ?? 'active'}
+            key={`${conversationTarget ?? 'active'}:${messengerDraft?.nonce ?? 0}`}
+            initialDraft={messengerDraft?.body}
             helpEnabled={tabs.help}
             onArticleSelect={handleHelpArticleSelect}
             conversationTarget={conversationTarget === null ? undefined : conversationTarget}
-            linkPreviews={linkPreviews}
             // A fresh thread exists to be typed into; a resumed one to be read.
             // Mobile hosts skip it — the software keyboard would cover the thread.
             autofocusComposer={conversationTarget === 'new' && !hostIsMobile}
@@ -1096,7 +1103,7 @@ function WidgetPage() {
       >
         {/* Kept mounted, so it can't use the remount-keyed ViewTransition;
             instead the same root entrance replays whenever it becomes visible. */}
-        <motion.div
+        <m.div
           initial={false}
           animate={view === 'feedback' ? { y: 0, opacity: 1 } : { y: 10, opacity: 0 }}
           transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
@@ -1115,7 +1122,7 @@ function WidgetPage() {
             onPostSelect={handlePostSelect}
             onPostCreated={handlePostCreated}
           />
-        </motion.div>
+        </m.div>
       </div>
 
       {view === 'post-detail' && selectedPostId && (

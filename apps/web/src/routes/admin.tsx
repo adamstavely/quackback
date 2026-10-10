@@ -1,40 +1,52 @@
-import { Suspense, lazy } from 'react'
-import {
-  createFileRoute,
-  Outlet,
-  redirect,
-  useNavigate,
-  useRouterState,
-  useRouteContext,
-} from '@tanstack/react-router'
+import { useEffect, type ComponentProps } from 'react'
+import { createFileRoute, Outlet, redirect, useRouterState } from '@tanstack/react-router'
 import { IntlProvider } from 'react-intl'
+import { SearchPaletteProvider } from '@/components/admin/ask/search-palette'
+import { AdminWorkspaceFrame } from '@/components/admin/admin-workspace-frame'
 import { useAdminPresence } from '@/lib/client/hooks/use-admin-presence'
-import { DEFAULT_LOCALE, loadMessages } from '@/lib/shared/i18n'
+import { DEFAULT_LOCALE, loadAdminMessages } from '@/lib/shared/i18n'
 import { fetchUserAvatar } from '@/lib/server/functions/portal'
+import { adminQueries } from '@/lib/client/queries/admin'
+import { isProductEnabled } from '@/lib/shared/types/settings'
+import { unreadCountQuery } from '@/lib/client/hooks/use-notifications-queries'
 import { getLatestVersion, isNewerVersion } from '@/lib/server/functions/version'
+import { AdminProductTourProvider } from '@/components/onboarding/admin-product-tour'
 import { AdminSidebar } from '@/components/admin/admin-sidebar'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { Skeleton } from '@/components/ui/skeleton'
+import { ArticleModal, ChangelogModal, PostModal } from '@/components/admin/entity-modals'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { UpdateBanner } from '@/components/admin/update-banner'
 import { PlanNoticeBanner } from '@/components/admin/plan-notice-banner'
 import { getPlanNotice } from '@/lib/server/functions/plan-notice'
-import { isProductEnabled } from '@/lib/shared/types/settings'
 import { CloudQuackbackWidget } from '@/components/shared/cloud-quackback-widget'
+import { FileViewerProvider, scrollToMessage } from '@/components/shared/files/file-viewer-context'
 import { useHasPermission } from '@/lib/client/use-permissions'
 import { PERMISSIONS } from '@/lib/shared/permissions'
+import { createRouteContextMemo } from '@/lib/client/route-context-memo'
+import type { requireWorkspaceRole } from '@/lib/server/functions/workspace-utils'
+import { useFeatureFlag, useProductEnabled } from '@/lib/client/hooks/use-root-context'
+import { useToasterLocale } from '@/components/ui/use-toaster-locale'
 
-const PostModal = lazy(() =>
-  import('@/components/admin/feedback/post-modal').then((m) => ({ default: m.PostModal }))
-)
-const ChangelogModal = lazy(() =>
-  import('@/components/admin/changelog/changelog-modal').then((m) => ({
-    default: m.ChangelogModal,
-  }))
-)
-const ArticleModal = lazy(() =>
-  import('@/components/admin/help-center/article-modal').then((m) => ({ default: m.ArticleModal }))
-)
+/** What the admin pages read from the role guard's answer. */
+type AdminGuard = Pick<
+  Awaited<ReturnType<typeof requireWorkspaceRole>>,
+  'user' | 'principal' | 'permissions'
+>
+
+/**
+ * The role guard's answer holds for every admin page until the viewer or
+ * their role changes, so navigations and preloads share one call (see
+ * route-context-memo.ts for what expires it).
+ */
+const adminGuard = createRouteContextMemo<AdminGuard>()
+
+async function loadAdminGuard(callbackUrl: string): Promise<AdminGuard> {
+  const { requireWorkspaceRole } = await import('@/lib/server/functions/workspace-utils')
+  // The page being opened rides along so a signed-out visitor returns to it.
+  const { user, principal, permissions } = await requireWorkspaceRole({
+    data: { allowedRoles: ['admin', 'member'], callbackUrl },
+  })
+  return { user, principal, permissions }
+}
 
 export const Route = createFileRoute('/admin')({
   validateSearch: (
@@ -46,7 +58,7 @@ export const Route = createFileRoute('/admin')({
     if (typeof search.article === 'string') next.article = search.article
     return next
   },
-  beforeLoad: async ({ location }) => {
+  beforeLoad: async ({ location, context }) => {
     // Skip auth for public admin routes (login, signup)
     // These are child routes but should be publicly accessible
     const publicPaths = ['/admin/login', '/admin/signup']
@@ -55,19 +67,24 @@ export const Route = createFileRoute('/admin')({
     }
 
     // Only team members (admin, member roles) can access admin dashboard
-    // Portal users (role='user') don't have access to this
-    const [{ requireWorkspaceRole }, { shouldLockAdminToBillingFn }] = await Promise.all([
-      import('@/lib/server/functions/workspace-utils'),
-      import('@/lib/server/functions/billing'),
-    ])
+    // Portal users (role='user') don't have access to this.
     // Role guard first: it throws a sign-in redirect. The billing helper's
     // requireAuth() throws a plain Error, so racing the two can surface an
     // error page for an unauthenticated visitor.
-    const { user, principal, permissions } = await requireWorkspaceRole({
-      data: { allowedRoles: ['admin', 'member'] },
-    })
-    if (await shouldLockAdminToBillingFn({ data: { pathname: location.pathname } })) {
-      throw redirect({ href: '/admin/settings/billing' })
+    const { user, principal, permissions } = await adminGuard.get(() =>
+      loadAdminGuard(location.href)
+    )
+
+    // Two billing locks keep billing managers on billing pages: a pending plan
+    // downgrade (to the pages where they get under the new plan's limits), and
+    // a trial that ended with no plan chosen, once its grace period is over (to
+    // the plan picker). Only a billing manager of a workspace with plan billing
+    // (cloudEnabled) can be held, so only they load and pay for the check.
+    if (context.cloudEnabled && permissions.includes(PERMISSIONS.BILLING_MANAGE)) {
+      const { holdOnBilling } = await import('@/lib/client/admin-billing-lock')
+      if (await holdOnBilling(location.pathname)) {
+        throw redirect({ href: '/admin/settings/billing' })
+      }
     }
 
     return {
@@ -87,8 +104,9 @@ export const Route = createFileRoute('/admin')({
         updateBannerDismissedVersion: null,
         currentUser: null,
         planNotice: null,
+        inLaunchWindow: false,
         locale: DEFAULT_LOCALE,
-        messages: await loadMessages(DEFAULT_LOCALE),
+        messages: await loadAdminMessages(DEFAULT_LOCALE),
       }
     }
 
@@ -97,15 +115,32 @@ export const Route = createFileRoute('/admin')({
       user: NonNullable<typeof context.user>
       principal: NonNullable<typeof context.principal>
     }
+    // The rail's review badge is only asked for by viewers who can act on it.
+    const warmModeration =
+      isProductEnabled(context.settings?.featureFlags, 'feedback') &&
+      (context.permissions ?? []).includes(PERMISSIONS.POST_APPROVE)
 
     const locale = context.acceptLanguageLocale ?? DEFAULT_LOCALE
-    const [avatarData, latestRelease, planNotice, messages] = await Promise.all([
+    const [avatarData, latestRelease, planNotice, messages, launchWindow] = await Promise.all([
       fetchUserAvatar({
         data: { userId: user.id, fallbackImageUrl: user.image },
       }),
       getLatestVersion(),
       getPlanNotice(),
-      loadMessages(locale),
+      loadAdminMessages(locale),
+      // Only cloud loads the help launcher, so only cloud asks whether to hide it.
+      context.cloudEnabled
+        ? import('@/lib/server/functions/onboarding-progress')
+            .then((module) => module.getLaunchWindowOpenFn())
+            .catch(() => ({ open: false }))
+        : { open: false },
+      // The rail's unread badge rides the document rather than a request of
+      // its own after hydration. Unreadable now, it is left to the bell.
+      context.queryClient.ensureQueryData(unreadCountQuery()).catch(() => null),
+      // The same goes for the count of posts waiting for review.
+      warmModeration
+        ? context.queryClient.ensureQueryData(adminQueries.moderationStatus()).catch(() => null)
+        : null,
     ])
 
     const latestVersion =
@@ -124,6 +159,7 @@ export const Route = createFileRoute('/admin')({
       latestVersion,
       updateBannerDismissedVersion: context.updateBannerDismissedVersion ?? null,
       planNotice,
+      inLaunchWindow: launchWindow.open,
       locale,
       messages,
       currentUser: {
@@ -135,38 +171,10 @@ export const Route = createFileRoute('/admin')({
   },
   // The layout loader (avatar/version/plan-notice/messages) is stable across
   // intra-admin navigation, so cache it for 5 min instead of re-running the
-  // Promise.all on every child route change. beforeLoad still runs each nav to
-  // re-assert the auth guard.
+  // Promise.all on every child route change.
   staleTime: 5 * 60 * 1000,
   component: AdminLayout,
 })
-
-function EntityModalChunkFallback({
-  searchParam,
-  title,
-}: {
-  searchParam: 'post' | 'entry' | 'article'
-  title: string
-}) {
-  const navigate = useNavigate()
-  const { pathname, search } = useRouterState({ select: (s) => s.location })
-  const close = () => {
-    const { [searchParam]: _cleared, ...rest } = search as Record<string, unknown>
-    void navigate({ to: pathname, search: rest, replace: true })
-  }
-
-  return (
-    <Dialog open onOpenChange={(next) => !next && close()}>
-      <DialogContent className="flex h-[85vh] w-[95vw] flex-col gap-0 p-0 sm:w-[90vw] lg:max-w-5xl xl:max-w-6xl">
-        <DialogTitle className="sr-only">{title}</DialogTitle>
-        <div className="flex h-full flex-col gap-3 p-6">
-          <Skeleton className="h-8 w-1/3 rounded-md" />
-          <Skeleton className="min-h-0 flex-1 rounded-lg" />
-        </div>
-      </DialogContent>
-    </Dialog>
-  )
-}
 
 function useEntityIdFromUrl(key: 'post' | 'entry' | 'article'): string | undefined {
   return useRouterState({
@@ -177,32 +185,76 @@ function useEntityIdFromUrl(key: 'post' | 'entry' | 'article'): string | undefin
   })
 }
 
+/**
+ * The post, changelog entry and article modals any admin page opens from the
+ * URL. They read the location and permissions themselves, so opening one (a
+ * search-only navigation) renders them and not the layout around them. Each
+ * opens its dialog at once and loads its content inside it (entity-modals.tsx).
+ */
+function EntityModals({
+  currentUser,
+}: {
+  currentUser: ComponentProps<typeof PostModal>['currentUser'] | null
+}) {
+  const postId = useEntityIdFromUrl('post')
+  const entryId = useEntityIdFromUrl('entry')
+  const articleId = useEntityIdFromUrl('article')
+  const onRoadmap = useRouterState({
+    select: (s) =>
+      s.location.pathname === '/admin/roadmap' || s.location.pathname.startsWith('/admin/roadmap/'),
+  })
+  const canViewChangelogDrafts = useHasPermission(PERMISSIONS.CHANGELOG_VIEW_DRAFT)
+  const canManageHelpCenter = useHasPermission(PERMISSIONS.HELP_CENTER_MANAGE)
+  const feedbackEnabled = useProductEnabled('feedback')
+  const changelogEnabled = useProductEnabled('changelog')
+  const helpCenterEnabled = useProductEnabled('helpCenter')
+
+  return (
+    <>
+      {currentUser && feedbackEnabled && postId && !onRoadmap && (
+        <PostModal postId={postId} currentUser={currentUser} />
+      )}
+      {changelogEnabled && canViewChangelogDrafts && entryId && (
+        <ChangelogModal entryId={entryId} />
+      )}
+      {helpCenterEnabled && canManageHelpCenter && articleId && (
+        <ArticleModal articleId={articleId} />
+      )}
+    </>
+  )
+}
+
+/**
+ * The first navigation after hydration reuses the guard this document was
+ * rendered with instead of asking the server again. Each part is selected:
+ * the route context is a new object after every navigation, the parts are not.
+ */
+function useSeedAdminGuard() {
+  const user = Route.useRouteContext({ select: (context) => context.user })
+  const principal = Route.useRouteContext({ select: (context) => context.principal })
+  const permissions = Route.useRouteContext({ select: (context) => context.permissions })
+  useEffect(() => {
+    if (user && principal && permissions) adminGuard.seed({ user, principal, permissions })
+  }, [user, principal, permissions])
+}
+
 function AdminLayout() {
   const {
     initialUserData,
     latestVersion,
     updateBannerDismissedVersion,
     planNotice,
+    inLaunchWindow,
     currentUser,
     locale,
     messages,
   } = Route.useLoaderData()
-  const postId = useEntityIdFromUrl('post')
-  const entryId = useEntityIdFromUrl('entry')
-  const articleId = useEntityIdFromUrl('article')
-  const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const onRoadmap = pathname === '/admin/roadmap' || pathname.startsWith('/admin/roadmap/')
-  const canViewChangelogDrafts = useHasPermission(PERMISSIONS.CHANGELOG_VIEW_DRAFT)
-  const canManageHelpCenter = useHasPermission(PERMISSIONS.HELP_CENTER_MANAGE)
+  useSeedAdminGuard()
+  useToasterLocale(locale)
 
   // Mark team members online for conversation routing across the whole admin (not just
   // the inbox), but only when the support inbox feature is on.
-  const { settings } = useRouteContext({ from: '__root__' })
-  const conversationsEnabled =
-    (settings?.featureFlags as { supportInbox?: boolean } | undefined)?.supportInbox ?? false
-  const feedbackEnabled = isProductEnabled(settings?.featureFlags, 'feedback')
-  const changelogEnabled = isProductEnabled(settings?.featureFlags, 'changelog')
-  const helpCenterEnabled = isProductEnabled(settings?.featureFlags, 'helpCenter')
+  const conversationsEnabled = useFeatureFlag('supportInbox')
   useAdminPresence(Boolean(initialUserData) && conversationsEnabled)
 
   // For public routes (login, signup), render just the outlet without the admin layout
@@ -212,52 +264,77 @@ function AdminLayout() {
 
   return (
     <IntlProvider locale={locale} defaultLocale={DEFAULT_LOCALE} messages={messages}>
-      <CloudQuackbackWidget />
-      <TooltipProvider delay={0}>
-        <div className="flex h-screen bg-background">
-          <AdminSidebar initialUserData={initialUserData} latestVersion={latestVersion} />
-          <main
-            data-admin-shell=""
-            className="flex-1 min-w-0 overflow-hidden sm:h-screen sm:py-2 sm:pr-2 sm:pl-1 p-0"
-          >
-            {/* Mobile: Add padding for fixed header */}
-            <div
-              data-admin-canvas=""
-              className="h-full sm:pt-0 pt-14 sm:rounded-lg sm:border sm:border-border overflow-hidden flex flex-col"
-            >
-              <PlanNoticeBanner notice={planNotice} />
-              <UpdateBanner
-                latestVersion={latestVersion}
-                dismissedVersion={updateBannerDismissedVersion}
-              />
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <Outlet />
-              </div>
-            </div>
-          </main>
-          {currentUser && feedbackEnabled && postId && !onRoadmap && (
-            <Suspense fallback={<EntityModalChunkFallback searchParam="post" title="Edit post" />}>
-              <PostModal postId={postId} currentUser={currentUser} />
-            </Suspense>
-          )}
-          {changelogEnabled && canViewChangelogDrafts && entryId && (
-            <Suspense
-              fallback={
-                <EntityModalChunkFallback searchParam="entry" title="Edit changelog entry" />
-              }
-            >
-              <ChangelogModal entryId={entryId} />
-            </Suspense>
-          )}
-          {helpCenterEnabled && canManageHelpCenter && articleId && (
-            <Suspense
-              fallback={<EntityModalChunkFallback searchParam="article" title="Edit article" />}
-            >
-              <ArticleModal articleId={articleId} />
-            </Suspense>
-          )}
-        </div>
-      </TooltipProvider>
+      <SearchPaletteProvider>
+        <AdminProductTourProvider>
+          <TooltipProvider delay={0}>
+            <AdminContent
+              initialUserData={initialUserData}
+              latestVersion={latestVersion}
+              updateBannerDismissedVersion={updateBannerDismissedVersion}
+              planNotice={planNotice}
+              inLaunchWindow={inLaunchWindow}
+              currentUser={currentUser}
+            />
+          </TooltipProvider>
+        </AdminProductTourProvider>
+      </SearchPaletteProvider>
     </IntlProvider>
+  )
+}
+
+function AdminContent({
+  initialUserData,
+  latestVersion,
+  updateBannerDismissedVersion,
+  planNotice,
+  inLaunchWindow,
+  currentUser,
+}: Pick<
+  ReturnType<typeof Route.useLoaderData>,
+  | 'initialUserData'
+  | 'latestVersion'
+  | 'updateBannerDismissedVersion'
+  | 'planNotice'
+  | 'inLaunchWindow'
+  | 'currentUser'
+>) {
+  // An open Home chat sits above the corner launcher's spot; the launcher steps aside.
+  const canUseCopilot = useHasPermission(PERMISSIONS.COPILOT_USE)
+  const chatOpen = useRouterState({
+    select: (state) =>
+      /^\/admin\/?$/.test(state.location.pathname) &&
+      typeof (state.location.search as { copilotThread?: unknown }).copilotThread === 'string',
+  })
+  return (
+    <>
+      {/* In the launch window the corner launcher stays hidden (it reads like the
+          workspace's own Messenger); Help, Contact us opens it. */}
+      <CloudQuackbackWidget launcherHidden={inLaunchWindow || (canUseCopilot && chatOpen)} />
+      <AdminWorkspaceFrame
+        sidebar={
+          initialUserData && (
+            <AdminSidebar
+              initialUserData={initialUserData}
+              latestVersion={latestVersion}
+              planNotice={planNotice}
+            />
+          )
+        }
+        notices={
+          <>
+            <PlanNoticeBanner notice={planNotice} />
+            <UpdateBanner
+              latestVersion={latestVersion}
+              dismissedVersion={updateBannerDismissedVersion}
+            />
+          </>
+        }
+      >
+        <FileViewerProvider onJumpToMessage={scrollToMessage}>
+          <Outlet />
+        </FileViewerProvider>
+      </AdminWorkspaceFrame>
+      <EntityModals currentUser={currentUser} />
+    </>
   )
 }

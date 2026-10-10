@@ -11,11 +11,13 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { IntlProvider } from 'react-intl'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ConversationId } from '@quackback/ids'
 import type { FeatureFlags } from '@/lib/shared/types/settings'
 import { installInMemoryLocalStorage } from '@/test/local-storage'
 import { aguiRun, structuredDeltas, mockStreamingResponse } from '@/test/agui'
+import en from '@/locales/en.json'
 
 // Radix Popover/DropdownMenu rely on pointer/layout APIs happy-dom lacks.
 beforeAll(() => {
@@ -29,7 +31,10 @@ beforeAll(() => {
 afterEach(cleanup)
 
 vi.mock('@tanstack/react-router', () => ({
-  useRouteContext: () => ({ principal: { id: 'principal_1' } }),
+  useRouteContext: (opts?: { select?: (context: never) => unknown }) => {
+    const context = { principal: { id: 'principal_1' } }
+    return opts?.select ? opts.select(context as never) : context
+  },
 }))
 
 const hoisted = vi.hoisted(() => ({
@@ -83,13 +88,15 @@ function renderPanel(
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const onInsert = props.onInsert ?? vi.fn()
   render(
-    <QueryClientProvider client={client}>
-      <CopilotPanel
-        item={{ kind: 'conversation', id: CONVERSATION_ID }}
-        flags={props.flags ?? ALL_FLAGS_ON}
-        onInsert={onInsert}
-      />
-    </QueryClientProvider>
+    <IntlProvider locale="en" messages={en}>
+      <QueryClientProvider client={client}>
+        <CopilotPanel
+          item={{ kind: 'conversation', id: CONVERSATION_ID }}
+          flags={props.flags ?? ALL_FLAGS_ON}
+          onInsert={onInsert}
+        />
+      </QueryClientProvider>
+    </IntlProvider>
   )
   return { onInsert }
 }
@@ -215,7 +222,7 @@ describe('<CopilotPanel> ask -> stream -> answer', () => {
     vi.unstubAllGlobals()
   })
 
-  it('shows a retry affordance on an error response', async () => {
+  it('shows a try again affordance on an error response', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -231,7 +238,7 @@ describe('<CopilotPanel> ask -> stream -> answer', () => {
     await ask('Hello?')
 
     expect(await screen.findByText('The assistant is not configured')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
 

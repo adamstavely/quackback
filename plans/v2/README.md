@@ -39,6 +39,12 @@ The owner-selected product phases are:
 
 See [05-implementation-plan.md](05-implementation-plan.md) for the supporting work, acceptance gates and estimates inside each phase. Foundations and production verification start in Phase 1; authorization ships before the capabilities that depend on it. The early portal does not depend on tiered support, and the initial tower does not expose tier-specific functionality until Phase 5.
 
+## Upstream sync log
+
+| Date | Upstream merged | Effect on the plans |
+| --- | --- | --- |
+| 2026-10-10 | `upstream/main` @ `ff4e94bf1` (113 commits since the 2026-09-19 baseline) | **Clean merge, no conflicts** — the fork still changes no upstream file. Upstream migrations moved `0283 → 0297` with no fork impact (separate lineage working). **Labs was removed** (`c314414e8`: registry, server functions and operator script gone; the Labs page is an empty shell and stored `workspace_experiments` rows are ignored) ⇒ shared seam **F-6 is retired** and fork features are gated by a `fork_settings` feature flag instead. Upstream renamed the **Quinn** assistant to **Quackback AI** (`c02eb63ff`) — a naming change only; older review documents keep the old name. Every other seam anchor in `SEAMS.md` was re-verified and still exists. |
+
 ## Status
 
 All documents are **plans only**. Nothing is implemented. In `01-decisions.md`, ✅ items are decided, 🟡 items are
