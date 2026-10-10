@@ -358,6 +358,20 @@ describe('replayGateVerdict', () => {
       '0281_workspace_experiments',
       '0282_refined_visual_theme_visible',
       '0283_refined_visual_theme_default_on',
+      '0284_integration_sync',
+      '0285_integration_link_scope',
+      '0286_integration_sync_privacy',
+      '0287_conversation_message_edited_at',
+      '0288_kb_translations_dutch_search',
+      '0289_identity_provider_id_token_nonce',
+      '0290_files',
+      '0291_legacy_surface_switches',
+      '0292_account_profile_sync',
+      '0293_test_customer',
+      '0294_workspace_copilot',
+      '0295_website_branding_existing_workspaces',
+      '0296_validate_workspace_copilot_checks',
+      '0297_onboarding_emails',
     ])
     const verdict = replayGateVerdict(before, verdictsFor(replaySetFor(before)), false)
     expect(verdict.ok).toBe(false)

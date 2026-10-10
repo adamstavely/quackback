@@ -30,7 +30,7 @@ export type WidgetOpenCommand =
   | { type: 'article'; articleId: string } // slug or `article_` TypeID (`kb_article_` still accepted)
   | { type: 'changelog'; entryId?: string }
   | { type: 'help'; query?: string }
-  | { type: 'messenger' }
+  | { type: 'messenger'; body?: string }
   | { type: 'tickets' }
   | { type: 'messages' }
   | { type: 'home' }
@@ -71,7 +71,7 @@ export function resolveOpenCommand(
     case 'messages':
     case 'chat':
     case 'live-chat':
-      return tabs.messages ? { type: 'messenger' } : null
+      return tabs.messages ? { type: 'messenger', body: emptyToUndef(opts.body?.trim()) } : null
     case 'tickets':
       if (tabs.tickets) return { type: 'tickets' }
       if (tabs.messages) return { type: 'messages' }
@@ -108,13 +108,21 @@ export function resolveComposeBoardId(
   return ''
 }
 
-/** Drop a compose selection the current session can no longer see. */
+/**
+ * Replace the compose selection once the live board list is known.
+ *
+ * An empty selection is filled (private portals paint with no boards, then
+ * identify reveals one). A selection the session can no longer see is
+ * dropped. A still-visible selection is kept, including a members-only board
+ * held through the anonymous first paint.
+ */
 export function shouldResetComposeBoard(
   selectedBoardId: string,
   boards: ReadonlyArray<{ id: string; slug: string }>,
   confirmedBoardSlugs: readonly string[] | null | undefined
 ): boolean {
-  if (!selectedBoardId || !confirmedBoardSlugs) return false
+  if (!confirmedBoardSlugs) return false
+  if (!selectedBoardId) return true
   const selected = boards.find((b) => b.id === selectedBoardId)
   return !selected || !confirmedBoardSlugs.includes(selected.slug)
 }

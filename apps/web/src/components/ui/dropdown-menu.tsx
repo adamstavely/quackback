@@ -3,10 +3,26 @@ import { Menu as MenuPrimitive } from '@base-ui/react/menu'
 import { CheckIcon, ChevronRightIcon } from '@heroicons/react/24/solid'
 
 import { asChildRender, overlayTriggerProps } from '@/components/ui/as-child'
+import {
+  OverlayOpenedContext,
+  useOverlayOpened,
+  useOverlayOpenedRoot,
+} from '@/components/ui/overlay-opened'
 import { cn } from '@/lib/shared/utils'
 
-function DropdownMenu(props: MenuPrimitive.Root.Props) {
-  return <MenuPrimitive.Root data-slot="dropdown-menu" {...props} />
+function DropdownMenu({ open, defaultOpen, onOpenChange, ...props }: MenuPrimitive.Root.Props) {
+  const opened = useOverlayOpenedRoot(open, defaultOpen, onOpenChange)
+  return (
+    <OverlayOpenedContext.Provider value={opened.value}>
+      <MenuPrimitive.Root
+        data-slot="dropdown-menu"
+        open={open}
+        defaultOpen={defaultOpen}
+        onOpenChange={opened.onOpenChange}
+        {...props}
+      />
+    </OverlayOpenedContext.Provider>
+  )
 }
 
 function DropdownMenuTrigger({
@@ -48,6 +64,9 @@ function DropdownMenuContent({
     /** When false, the menu will not flip to stay in view. */
     avoidCollisions?: boolean
   }) {
+  // Nothing to portal until the menu first opens.
+  const opened = useOverlayOpened()
+  if (!opened) return null
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
@@ -65,7 +84,7 @@ function DropdownMenuContent({
             'max-h-(--available-height)',
             'origin-(--transform-origin)',
             'bg-popover text-popover-foreground',
-            'border [border-radius:calc(var(--radius)*0.8)] shadow-md',
+            'rounded-panel border border-border shadow-md',
             'data-open:animate-in data-closed:animate-out',
             'data-closed:fade-out-0 data-open:fade-in-0',
             'data-closed:zoom-out-95 data-open:zoom-in-95',
@@ -106,10 +125,10 @@ function DropdownMenuItem({
       nativeButton={composed.nativeButton}
       render={composed.render}
       className={cn(
-        'relative flex cursor-default items-center gap-2 px-2 py-1.5',
-        'rounded-sm text-[13px] outline-hidden select-none',
+        'relative flex cursor-default items-center gap-2 px-2.5 py-2',
+        'rounded-field text-[14px] outline-hidden select-none',
         'transition-colors duration-150',
-        'focus:bg-accent focus:text-accent-foreground',
+        'focus:bg-accent focus:text-foreground',
         'data-disabled:pointer-events-none data-disabled:opacity-50',
         'data-inset:pl-8',
         'data-[variant=destructive]:text-destructive',
@@ -136,9 +155,9 @@ function DropdownMenuCheckboxItem({
     <MenuPrimitive.CheckboxItem
       data-slot="dropdown-menu-checkbox-item"
       className={cn(
-        'relative flex cursor-default items-center gap-2 py-1.5 pr-2 pl-8',
-        'rounded-sm text-[13px] outline-hidden select-none',
-        'focus:bg-accent focus:text-accent-foreground',
+        'relative flex cursor-default items-center gap-2 py-2 pr-2.5 pl-8',
+        'rounded-field text-[14px] outline-hidden select-none',
+        'focus:bg-accent focus:text-foreground',
         'data-disabled:pointer-events-none data-disabled:opacity-50',
         "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
@@ -171,9 +190,9 @@ function DropdownMenuRadioItem({
       data-slot="dropdown-menu-radio-item"
       closeOnClick={closeOnClick}
       className={cn(
-        'relative flex cursor-default items-center gap-2 py-1.5 pr-2 pl-8',
-        'rounded-sm text-[13px] outline-hidden select-none',
-        'focus:bg-accent focus:text-accent-foreground',
+        'relative flex cursor-default items-center gap-2 py-2 pr-2.5 pl-8',
+        'rounded-field text-[14px] outline-hidden select-none',
+        'focus:bg-accent focus:text-foreground',
         'data-disabled:pointer-events-none data-disabled:opacity-50',
         "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
@@ -201,7 +220,10 @@ function DropdownMenuLabel({
     <div
       data-slot="dropdown-menu-label"
       data-inset={inset}
-      className={cn('px-2 py-1.5 text-sm font-medium data-inset:pl-8', className)}
+      className={cn(
+        'px-2 py-1.5 text-[13px] leading-[1.42857] font-semibold data-inset:pl-8',
+        className
+      )}
       {...props}
     />
   )
@@ -245,10 +267,10 @@ function DropdownMenuSubTrigger({
       data-inset={inset}
       delay={0}
       className={cn(
-        'flex cursor-default items-center gap-2 px-2 py-1.5',
-        'rounded-sm text-[13px] outline-hidden select-none',
-        'focus:bg-accent focus:text-accent-foreground',
-        'data-open:bg-accent data-open:text-accent-foreground',
+        'flex cursor-default items-center gap-2 px-2.5 py-2',
+        'rounded-field text-[14px] outline-hidden select-none',
+        'focus:bg-accent focus:text-foreground',
+        'data-open:bg-accent data-open:text-foreground',
         'data-inset:pl-8',
         "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         "[&_svg:not([class*='text-'])]:text-muted-foreground",
@@ -286,7 +308,7 @@ function DropdownMenuSubContent({
             'z-50 min-w-[8rem] overflow-hidden p-1',
             'origin-(--transform-origin)',
             'bg-popover text-popover-foreground',
-            'border [border-radius:calc(var(--radius)*0.8)] shadow-lg',
+            'rounded-panel border border-border shadow-md',
             'data-open:animate-in data-closed:animate-out',
             'data-closed:fade-out-0 data-open:fade-in-0',
             'data-closed:zoom-out-95 data-open:zoom-in-95',

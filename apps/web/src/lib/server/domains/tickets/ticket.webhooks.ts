@@ -34,6 +34,7 @@ import {
 import { contentJsonToMarkdown } from '@/lib/server/markdown-tiptap'
 import { logger } from '@/lib/server/logger'
 import { makeSafeDispatch } from '@/lib/server/events/safe-dispatch'
+import { loadAuthors } from '../principals/principal-display'
 
 const log = logger.child({ component: 'ticket-webhooks' })
 const safe = makeSafeDispatch(log)
@@ -176,8 +177,14 @@ export async function emitTicketReplied(
   ticket: Ticket,
   message: ConversationMessageDTO
 ): Promise<void> {
-  await safe('ticket.replied', () =>
-    dispatchTicketReplied(
+  await safe('ticket.replied', async () => {
+    // Requester replies notify only other watchers, so keep the support name.
+    // Agent replies also notify the requester and must use the public label.
+    let author = message.author
+    if (author && message.senderType !== 'visitor') {
+      author = (await loadAuthors([author.principalId])).get(author.principalId) ?? null
+    }
+    return dispatchTicketReplied(
       toEventActor(actor),
       ticketRef(ticket),
       message.id,
@@ -185,10 +192,10 @@ export async function emitTicketReplied(
       messageAttachments(message),
       message.senderType === 'visitor' ? 'visitor' : 'agent',
       ticket.title,
-      message.author?.displayName ?? null,
+      author?.displayName ?? null,
       ticket.requesterPrincipalId ?? null
     )
-  )
+  })
 }
 
 /** An agent-only internal note added to a ticket thread (never customer-visible). */

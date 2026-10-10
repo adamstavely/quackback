@@ -135,7 +135,20 @@ export async function handleSlackDecision(
   const pending = await getPendingActionById(action.value as AssistantPendingActionId)
   if (!pending || pending.originRole !== 'workspace_assistant' || !pending.workspaceThreadKey)
     return
-  const [boundTeam, boundChannel, boundThread] = JSON.parse(pending.workspaceThreadKey)
+  if (pending.workspaceThreadKey.startsWith('workspace:')) return
+  let binding: unknown
+  try {
+    binding = JSON.parse(pending.workspaceThreadKey)
+  } catch {
+    return
+  }
+  if (
+    !Array.isArray(binding) ||
+    binding.length !== 3 ||
+    binding.some((value) => typeof value !== 'string')
+  )
+    return
+  const [boundTeam, boundChannel, boundThread] = binding
   if (
     boundTeam !== team ||
     boundChannel !== channel ||
@@ -153,7 +166,7 @@ export async function handleSlackDecision(
     getToolSpecByName(pending.toolName) ??
     (actor
       ? ((await getConnectorSpecByToolName(pending.toolName, 'workspace')) ??
-        (await getWorkspaceMcpSpecByName(pending.toolName, actor, 'Quinn')))
+        (await getWorkspaceMcpSpecByName(pending.toolName, actor, 'Quackback AI')))
       : null)
   if (
     !terminal &&
@@ -169,12 +182,14 @@ export async function handleSlackDecision(
   if (!terminal) {
     if (!actor) return
     try {
-      const { decideAssistantAction } = await import('@/lib/server/functions/assistant-actions')
+      const { decideAssistantAction } =
+        await import('@/lib/server/domains/assistant/assistant-actions.service')
       result = await decideAssistantAction(
         pending.id,
         action.action_id === 'qb_action_approve' ? 'approved' : 'rejected',
         person.id,
-        actor
+        actor,
+        pending.workspaceThreadKey
       )
     } catch (error) {
       log.warn(
@@ -356,7 +371,7 @@ export async function handleSlackHookJob(job: ClaimedJob): Promise<void> {
   }
   const secrets = decryptSecrets<{ accessToken: string }>(row.secrets)
   const client = new WebClient(secrets.accessToken, {
-    retryConfig: { retries: 2 },
+    retryConfig: { retries: 0 },
     timeout: 15_000,
   })
   if (kind === 'interactions' && payload.type === 'block_actions') {
@@ -678,6 +693,8 @@ async function handleSlackQuestion(input: {
         })
         .catch(() => {})
     else if (command) await replyError('Something went wrong on my side. Try again in a moment.')
+    // The durable receipt must not claim successful processing after a failed turn.
+    throw new Error('Slack app event processing failed')
   } finally {
     if (!command) endSlackTurn(team, channel, thread, turnAbort)
     if (!command)

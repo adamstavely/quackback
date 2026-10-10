@@ -18,9 +18,12 @@ import type { PortalUserDetail } from '@/lib/shared/types'
 import type { PrincipalId } from '@quackback/ids'
 
 vi.mock('@tanstack/react-router', () => ({
-  useRouteContext: () => ({
-    settings: { featureFlags: { supportInbox: true } },
-  }),
+  useRouteContext: (opts?: { select?: (context: never) => unknown }) => {
+    const context = {
+      settings: { featureFlags: { supportInbox: true } },
+    }
+    return opts?.select ? opts.select(context as never) : context
+  },
   Link: ({
     children,
     to,
@@ -110,6 +113,8 @@ const BASE_USER: PortalUserDetail = {
   contactEmail: null,
   lastSeenAt: new Date('2026-04-01T12:00:00.000Z'),
   country: 'DE',
+  teamRole: null,
+  hasSignedIn: true,
   engagedPosts: [],
 }
 
@@ -167,7 +172,7 @@ describe('UserDetail', () => {
         currentMemberRole="admin"
       />
     )
-    const dashes = screen.getAllByText('—')
+    const dashes = screen.getAllByText('-')
     expect(dashes.length).toBeGreaterThanOrEqual(2)
   })
 
@@ -195,5 +200,44 @@ describe('UserDetail', () => {
     expect(screen.getByRole('button', { name: /Send message/ })).toBeDisabled()
     fireEvent.click(screen.getByLabelText('More actions'))
     expect(await screen.findByRole('menuitem', { name: 'Merge' })).toBeInTheDocument()
+  })
+
+  describe('Escape', () => {
+    function renderWithClose() {
+      const onClose = vi.fn()
+      renderDetail(
+        <UserDetail
+          user={BASE_USER}
+          isLoading={false}
+          onClose={onClose}
+          onRemoveUser={vi.fn()}
+          isRemovePending={false}
+          currentMemberRole="admin"
+        />
+      )
+      return onClose
+    }
+
+    it('closes the profile', () => {
+      const onClose = renderWithClose()
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('leaves the profile open when pressed in a field', () => {
+      const onClose = renderWithClose()
+      const field = document.createElement('input')
+      document.body.appendChild(field)
+      fireEvent.keyDown(field, { key: 'Escape' })
+      field.remove()
+      expect(onClose).not.toHaveBeenCalled()
+    })
+
+    it('leaves the profile open while editing the name', () => {
+      const onClose = renderWithClose()
+      fireEvent.click(screen.getByTitle('Edit user details'))
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(onClose).not.toHaveBeenCalled()
+    })
   })
 })

@@ -49,6 +49,7 @@ import { officeHoursSnapshot } from '@/lib/shared/office-hours'
 import type { ConversationPresence } from '@/lib/shared/conversation/presence'
 import { realEmail } from '@/lib/shared/anonymous-email'
 import { inboxChannelFilterSchema } from '@/lib/shared/channels/inbox-filter'
+import { AGENT_CONVERSATION_PANELS } from '@/lib/shared/conversation/agent-panels'
 import {
   CONVERSATION_STATUSES,
   CONVERSATION_END_REASONS,
@@ -125,7 +126,8 @@ const listConversationsSchema = z.object({
   // excludes them).
   // 'created_by_me' = only conversations the requesting agent started (their
   // first message is agent-authored by them).
-  view: z.enum(['all', 'mentions', 'quinn', 'spam', 'created_by_me']).optional(),
+  // 'test' = only test conversations.
+  view: z.enum(['all', 'mentions', 'quinn', 'spam', 'created_by_me', 'test']).optional(),
   // Quinn-inbox sub-filter by involvement outcome; omitted = any Quinn-engaged.
   ai: z.enum(['resolved', 'escalated', 'pending']).optional(),
   before: z.string().optional(),
@@ -245,9 +247,10 @@ const markUnreadFromMessageSchema = z.object({
   messageId: z.string(),
 })
 
-async function assertConversationsEnabled(): Promise<void> {
-  const { isConversationsEnabled } = await import('@/lib/server/domains/settings/settings.support')
-  if (!(await isConversationsEnabled())) {
+async function assertConversationsEnabled(principalId: PrincipalId): Promise<void> {
+  const { isConversationsEnabledFor } =
+    await import('@/lib/server/domains/settings/settings.support')
+  if (!(await isConversationsEnabledFor(principalId))) {
     throw new Error('Conversations are not enabled')
   }
 }
@@ -259,7 +262,7 @@ async function assertConversationsEnabled(): Promise<void> {
  * Team members bypass the portal check (admin inbox).
  */
 async function assertVisitorConversationAccess(ctx: AuthContext): Promise<void> {
-  await assertConversationsEnabled()
+  await assertConversationsEnabled(ctx.principal.id)
   if (isTeamMember(ctx.principal.role) || ctx.scope === 'widget') return
   const { resolvePortalAccessForRequest } = await import('./portal-access')
   const access = await resolvePortalAccessForRequest()
@@ -428,7 +431,8 @@ export const runGetMyConversation = createServerOnlyFn(async function runGetMyCo
 ) {
   const { getMessengerConfig, getWidgetConfig } =
     await import('@/lib/server/domains/settings/settings.widget')
-  const { isConversationsEnabled } = await import('@/lib/server/domains/settings/settings.support')
+  const { isConversationsEnabledFor } =
+    await import('@/lib/server/domains/settings/settings.support')
   const { getSettings } = await import('./workspace')
   const { isEmailConfigured } = await import('@quackback/email')
   const { canEmailVisitor } = await import('@/lib/shared/conversation/reply-capability')
@@ -436,7 +440,7 @@ export const runGetMyConversation = createServerOnlyFn(async function runGetMyCo
   const { assistantConfigSchema, DEFAULT_ASSISTANT_CONFIG } =
     await import('@/lib/shared/assistant/config')
   const [enabled, messengerConfig, appSettings, widgetConfig] = await Promise.all([
-    isConversationsEnabled(),
+    isConversationsEnabledFor(ctx?.principal.id),
     getMessengerConfig(),
     getSettings(),
     getWidgetConfig(),
@@ -576,8 +580,9 @@ export const runGetMyConversations = createServerOnlyFn(async function runGetMyC
     conversations: [],
     linkedTickets: {} as Record<string, ConversationTicketSummary>,
   }
-  const { isConversationsEnabled } = await import('@/lib/server/domains/settings/settings.support')
-  if (!(await isConversationsEnabled()) || !ctx?.principal) return empty
+  const { isConversationsEnabledFor } =
+    await import('@/lib/server/domains/settings/settings.support')
+  if (!ctx?.principal || !(await isConversationsEnabledFor(ctx.principal.id))) return empty
 
   if (!isTeamMember(ctx.principal.role) && ctx.scope !== 'widget') {
     const { resolvePortalAccessForRequest } = await import('./portal-access')
@@ -632,8 +637,9 @@ export const runGetMessengerUnread = createServerOnlyFn(async function runGetMes
   ctx: AuthContext | null
 ) {
   const zero = { conversations: 0, total: 0 }
-  const { isConversationsEnabled } = await import('@/lib/server/domains/settings/settings.support')
-  if (!(await isConversationsEnabled()) || !ctx?.principal) return zero
+  const { isConversationsEnabledFor } =
+    await import('@/lib/server/domains/settings/settings.support')
+  if (!ctx?.principal || !(await isConversationsEnabledFor(ctx.principal.id))) return zero
 
   if (!isTeamMember(ctx.principal.role) && ctx.scope !== 'widget') {
     const { resolvePortalAccessForRequest } = await import('./portal-access')
@@ -836,6 +842,30 @@ export const mintConversationStreamTokenFn = createServerFn({ method: 'GET' }).h
   return runMintConversationStreamToken(await requireAuth())
 })
 
+const editMessageSchema = z.object({
+  messageId: z.string(),
+  content: z.string().max(MAX_CONVERSATION_MESSAGE_LENGTH).default(''),
+  contentJson: z.unknown().nullable().optional(),
+})
+
+/** Replace the body of a message the caller authored. */
+export const editConversationMessageFn = createServerFn({ method: 'POST' })
+  .validator(editMessageSchema)
+  .handler(async ({ data }) => {
+    // The permission depends on the message (reply or note, conversation or
+    // ticket), so the service checks it once the row is loaded.
+    const ctx = await requireAuth()
+    const actor = await policyActorFromAuth(ctx)
+    const { editConversationMessage } =
+      await import('@/lib/server/domains/conversation/conversation.edit')
+    return editConversationMessage(
+      data.messageId as ConversationMessageId,
+      data.content,
+      (data.contentJson ?? null) as import('@/lib/shared/db-types').TiptapContent | null,
+      actor
+    )
+  })
+
 /** Soft-delete a message (team members; or a visitor deleting their own). */
 export const deleteConversationMessageFn = createServerFn({ method: 'POST' })
   .validator(messageIdSchema)
@@ -904,6 +934,7 @@ export const listConversationsFn = createServerFn({ method: 'GET' })
         startedByPrincipalId: data.view === 'created_by_me' ? ctx.principal.id : undefined,
         // Spam view: the only scope that lists spam-ended conversations.
         spamOnly: data.view === 'spam',
+        testOnly: data.view === 'test',
         // Quinn view: a chosen bucket narrows to its statuses; none = any Quinn
         // involvement (every bucket).
         assistantStatuses:
@@ -947,22 +978,8 @@ export const getConversationAssistantActivityFn = createServerFn({ method: 'GET'
   .validator(z.object({ conversationId: z.string() }))
   .handler(async ({ data }): Promise<ConversationAssistantActivity | null> => {
     await requireAuth({ permission: PERMISSIONS.CONVERSATION_VIEW })
-    const { getLatestInvolvement } =
-      await import('@/lib/server/domains/assistant/assistant.involvement')
-    const inv = await getLatestInvolvement(data.conversationId as ConversationId)
-    if (!inv) return null
-    return {
-      outcome: inv.status,
-      handoffReason: inv.handoffReason,
-      sources: inv.sources.map((s) => ({
-        type: s.type,
-        id: s.id,
-        title: s.title ?? '',
-        url: s.url ?? '',
-      })),
-      rating: inv.rating,
-      answeredAt: inv.lastAssistantAnswerAt?.toISOString() ?? null,
-    }
+    const { loadConversationAssistantActivity } = await import('./conversation-panels')
+    return loadConversationAssistantActivity(data.conversationId as ConversationId)
   })
 
 const userConversationsSchema = z.object({
@@ -989,9 +1006,17 @@ export const listConversationsForUserFn = createServerFn({ method: 'GET' })
     )
   })
 
-/** A single conversation (agent view) + first page of messages. */
+const agentConversationSchema = listMessagesSchema.extend({
+  // The reads beside the thread to load with it (see conversation-panels.ts).
+  panels: z.array(z.enum(AGENT_CONVERSATION_PANELS)).optional(),
+})
+
+/**
+ * A single conversation (agent view) + first page of messages, and the
+ * panels beside it that the caller asks for.
+ */
 export const getConversationFn = createServerFn({ method: 'GET' })
-  .validator(listMessagesSchema)
+  .validator(agentConversationSchema)
   .handler(async ({ data }) => {
     const ctx = await requireAuth({ permission: PERMISSIONS.CONVERSATION_VIEW })
     const actor = await policyActorFromAuth(ctx)
@@ -1018,7 +1043,8 @@ export const getConversationFn = createServerFn({ method: 'GET' })
           'customer language detection failed to load'
         )
       )
-    const [dto, page] = await Promise.all([
+    const requestedPanels = data.before ? undefined : data.panels
+    const [dto, page, panels] = await Promise.all([
       conversationToDTO(conversation, 'agent'),
       // Agents see internal notes inline. CONVERGENCE PHASE 0: a linked
       // customer ticket's legacy ticket-parented rows render inline too —
@@ -1029,6 +1055,15 @@ export const getConversationFn = createServerFn({ method: 'GET' })
         includeInternal: true,
         includeLinkedTicket: true,
       }),
+      requestedPanels?.length
+        ? import('./conversation-panels').then((m) =>
+            m.loadAgentConversationPanels(conversation, requestedPanels, {
+              userId: ctx.user.id,
+              permissions: ctx.permissions,
+              actor,
+            })
+          )
+        : undefined,
     ])
     // Upgrade to AgentConversationMessageDTO[] by attaching the agent-only reaction +
     // flag + post-suggestion + pending-action + translated-from fields. This
@@ -1042,7 +1077,7 @@ export const getConversationFn = createServerFn({ method: 'GET' })
       page.pendingActionPointers,
       page.translatedFromPointers
     )
-    return { conversation: dto, messages, hasMore: page.hasMore }
+    return { conversation: dto, messages, hasMore: page.hasMore, panels }
   })
 
 /** Agent reply. */
@@ -1657,24 +1692,23 @@ export const translateConversationMessagesFn = createServerFn({ method: 'GET' })
       data.conversationId as ConversationId,
       actor
     )
-    const { getInboxTranslationContext, translateIncomingMessage, TranslationUnavailableError } =
-      await import('@/lib/server/domains/conversation/conversation-translation.service')
+    const {
+      getInboxTranslationContext,
+      translateIncomingMessage,
+      inboxTranslationOverAllowance,
+      TranslationUnavailableError,
+    } = await import('@/lib/server/domains/conversation/conversation-translation.service')
     const context = await getInboxTranslationContext(conversation.id)
-    if (!context?.enabled) return {}
+    if (!context?.enabled) return { translations: {}, overAllowance: false }
 
     const {
       db: appDb,
-      user: userTable,
       conversationMessages: messagesTable,
-      eq: eqOp,
       inArray: inArrayOp,
     } = await import('@/lib/server/db')
 
-    const teammate = await appDb.query.user.findFirst({
-      where: eqOp(userTable.id, ctx.user.id),
-      columns: { preferredLanguage: true },
-    })
-    const targetLocale = teammate?.preferredLanguage ?? 'en'
+    const { readPreferredLanguage } = await import('./teammate-preferences')
+    const targetLocale = (await readPreferredLanguage(ctx.user.id)) ?? 'en'
 
     const messages = await appDb
       .select({
@@ -1710,7 +1744,9 @@ export const translateConversationMessagesFn = createServerFn({ method: 'GET' })
         throw err
       }
     }
-    return results
+    // Past the AI allowance translation keeps running (and counting); the
+    // flag drives a one-line notice for the teammate.
+    return { translations: results, overAllowance: await inboxTranslationOverAllowance() }
   })
 
 /** Manual per-conversation activation toggle (ACTIVATION). */

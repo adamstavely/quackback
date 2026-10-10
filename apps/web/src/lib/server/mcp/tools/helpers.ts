@@ -14,7 +14,7 @@ import { isFeatureEnabled } from '@/lib/server/domains/settings/settings.service
 import { segmentIdsForPrincipal } from '@/lib/server/domains/segments/segment-membership.service'
 import { DomainException } from '@/lib/shared/errors'
 import { contentJsonToMarkdown } from '@/lib/server/markdown-tiptap'
-import type { TiptapContent } from '@/lib/server/db'
+import type { ConversationAttachment, TiptapContent } from '@/lib/server/db'
 import type { Actor } from '@/lib/server/policy/types'
 import { hasApiScope } from '@/lib/server/domains/api-keys/api-key-scopes'
 import type { McpAuthContext, McpScope } from '../types'
@@ -127,6 +127,14 @@ export function requireTeamRole(auth: McpAuthContext): CallToolResult | null {
   }
 }
 
+/** Feature flags a tool can require before its scope/role guards run. */
+type ToolFeature = 'helpCenter' | 'copilotHome'
+
+const FEATURE_DENIALS: Record<ToolFeature, string> = {
+  helpCenter: 'Error: Help center is not enabled. Enable it in Settings → General.',
+  copilotHome: 'Error: Settings tools follow Copilot on Home. Turn it on in Settings → Labs.',
+}
+
 /** Return an error if the help center feature is disabled. */
 export async function requireHelpCenter(): Promise<CallToolResult | null> {
   if (await isFeatureEnabled('helpCenter')) return null
@@ -135,7 +143,7 @@ export async function requireHelpCenter(): Promise<CallToolResult | null> {
     content: [
       {
         type: 'text',
-        text: 'Error: Help center is not enabled. Enable it in Settings → General.',
+        text: FEATURE_DENIALS.helpCenter,
       },
     ],
   }
@@ -145,8 +153,11 @@ export async function requireHelpCenter(): Promise<CallToolResult | null> {
 // Tool registration
 // ============================================================================
 
-/** Feature flags a tool can require before its scope/role guards run. */
-type ToolFeature = 'helpCenter'
+async function requireFeature(feature: ToolFeature): Promise<CallToolResult | null> {
+  if (feature === 'helpCenter') return requireHelpCenter()
+  if (await isFeatureEnabled(feature)) return null
+  return { isError: true, content: [{ type: 'text', text: FEATURE_DENIALS[feature] }] }
+}
 
 export interface ToolDef<TArgs> {
   name: string
@@ -181,8 +192,7 @@ export function registerTool<TArgs>(
 ): void {
   const wrapped = (async (args: TArgs): Promise<CallToolResult> => {
     if (def.feature) {
-      // Single-value ToolFeature union today; every flagged tool is helpCenter.
-      const denied = await requireHelpCenter()
+      const denied = await requireFeature(def.feature)
       if (denied) return denied
     }
     if (def.scope) {
@@ -211,6 +221,21 @@ export function registerTool<TArgs>(
 /** Build the agent-author object used by the conversation write tools (reply, suggest, share). */
 export function agentFromMcpAuth(auth: McpAuthContext) {
   return { principalId: auth.principalId, displayName: auth.name, email: auth.email }
+}
+
+/**
+ * Turn the `fileIds` a reply/note tool was called with into the attachment
+ * refs `resolveAttachments` expects. Only `fileId` is filled in — the service
+ * rebuilds url/name/contentType/size from the stored row, so nothing else on
+ * this ref is trusted. Undefined (not an empty array) when there are none, so
+ * a caller that forwards this straight into a service input leaves that
+ * field absent rather than an empty list.
+ */
+export function attachmentsFromFileIds(
+  fileIds: string[] | undefined
+): ConversationAttachment[] | undefined {
+  if (!fileIds || fileIds.length === 0) return undefined
+  return fileIds.map((fileId) => ({ fileId })) as ConversationAttachment[]
 }
 
 // ============================================================================

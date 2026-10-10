@@ -1,9 +1,14 @@
 import { z } from 'zod'
+import type { AssistantSurface } from './surfaces'
 
 export const ASSISTANT_CONFIG_VERSION = 4 as const
 export const ASSISTANT_NAME_MAX_LENGTH = 80
 export const ASSISTANT_AVATAR_URL_MAX_LENGTH = 2_000
 export const ASSISTANT_ADDITIONAL_INSTRUCTIONS_MAX_LENGTH = 2_000
+
+/** The message of the error a save raises when the settings changed in another session. */
+export const ASSISTANT_REVISION_CONFLICT_MESSAGE =
+  'AI agent settings changed in another session. Reload the latest settings and try again.'
 
 export const ASSISTANT_TONES = ['warm', 'balanced', 'professional'] as const
 export const ASSISTANT_RESPONSE_LENGTHS = ['brief', 'balanced', 'detailed'] as const
@@ -238,7 +243,7 @@ export type AssistantConfig = z.infer<typeof assistantConfigSchema>
 export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = {
   version: ASSISTANT_CONFIG_VERSION,
   identity: {
-    name: 'Quinn',
+    name: 'Quackback AI',
     avatarUrl: null,
   },
   agents: {
@@ -388,15 +393,17 @@ export const ASSISTANT_ROLE_CATALOGUE = {
  * teammate-facing Q&A role resolves to `copilot`. Runtime
  * voice/knowledge/guidance resolution all funnel through this rather than
  * re-deriving the split from a role literal.
+ * Workspace chat shares Copilot configuration; integration turns keep the
+ * internally managed workspace configuration.
  */
-export function roleToAgent(role: AssistantRole): AssistantAgentKind {
+export function roleToAgent(role: AssistantRole, surface?: AssistantSurface): AssistantAgentKind {
   switch (role) {
     case 'customer_support':
       return 'agent'
     case 'copilot_qa':
       return 'copilot'
     case 'workspace_assistant':
-      return 'workspace'
+      return surface === 'workspace' ? 'copilot' : 'workspace'
     default: {
       const exhaustive: never = role
       throw new Error(`roleToAgent: unhandled assistant role "${exhaustive}"`)

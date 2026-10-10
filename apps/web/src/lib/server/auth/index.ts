@@ -22,9 +22,12 @@ import { getWorkspaceScope, runWithWorkspaceScope } from '@/lib/server/workspace
 import { WorkspaceKeyedCache } from '@/lib/server/workspaces/workspace-keyed'
 import type { GenericOAuthConfig } from './build-oauth-configs'
 import { guardBetterAuthUserCreation } from './signup-policy'
+import { assignSessionScope } from './session-audience'
 import { isSignInMethodEnabled } from '@/lib/shared/signin-methods'
+import { accountDisplayName } from '@/lib/shared/greeting-name'
 import { workspaceAuthTrustedOrigins } from './trusted-origins'
 import { ensureMcpOauthResource } from './ensure-mcp-oauth-resource'
+import { HTTP_DISABLED_AUTH_PATHS } from './http-disabled-paths'
 
 const log = logger.child({ component: 'auth-config' })
 
@@ -123,6 +126,10 @@ const authInstances = new WorkspaceKeyedCache<AuthInstance>(256)
 // round-trip). Mismatch → rebuild, other pods' writes propagate.
 const authConfigVersions = new WorkspaceKeyedCache<number>(256)
 const AUTH_CACHE_KEY = 'instance'
+// The build in flight, per workspace. A cold page fans out into several
+// concurrent server-function requests; they share one build rather than each
+// loading every provider's credentials and registering the plugins again.
+const authBuilds = new WorkspaceKeyedCache<Promise<AuthInstance>>(256)
 
 type RateLimitCounter = { count: number; lastRequest: number }
 
@@ -188,7 +195,7 @@ async function createAuth() {
   const { sendPasswordResetEmail, isEmailConfigured } = await import('@quackback/email')
   const { getPlatformCredentials } =
     await import('@/lib/server/domains/platform-credentials/platform-credential.service')
-  const { getAllAuthProviders } = await import('./auth-providers')
+  const { getAllAuthProviders, socialProviderConfig } = await import('./auth-providers')
   const { getTierLimits } = await import('@/lib/server/domains/settings/tier-limits.service')
   const { getWorkspaceSettings } = await import('@/lib/server/domains/settings/settings.service')
   const { listIdentityProviders, getIdentityProviderCredentials } =
@@ -269,17 +276,22 @@ async function createAuth() {
     return minted
   }
 
-  const providerRows = await listIdentityProviders()
+  // The same row the build takes auth_config_version from, so the redirect
+  // styles match the version this instance is cached under.
+  const providerRows = await listIdentityProviders({
+    authConfig: workspaceSettings?.settings?.authConfig ?? null,
+  })
   const oidcConfigs = await buildGenericOAuthConfigs({
     providers: providerRows,
     creds: getIdentityProviderCredentials,
     tierAllowsOidc: tierLimits.features.customOidcProvider,
+    baseUrl: config.baseUrl,
     discovery: (discoveryUrl) => fetchJson(discoveryUrl),
     fetchUserInfo: (url, accessToken) => fetchJson(url, { authorization: `Bearer ${accessToken}` }),
     // Observe-then-enforce: log the discrepancy so its real rate is known
     // before any release starts refusing sign-ins over it.
-    onResolved: (registrationId, accountId, claims) => {
-      stashResolvedClaims(registrationId, accountId, claims)
+    onResolved: (registrationId, accountId, resolved) => {
+      stashResolvedClaims(registrationId, accountId, resolved)
     },
     onResolutionWarning: (registrationId, warnings) => {
       log.warn({ registrationId, warnings }, 'identity resolution discrepancy observed')
@@ -288,6 +300,16 @@ async function createAuth() {
       log.warn({ registrationId, reason }, 'identity profile resolution failed')
     },
     placeholderEmailFor: resolvePlaceholderEmail,
+    // A failure here must never block the sign-in: Better Auth then answers as
+    // it would have without the vouch.
+    onProviderEmail: async (registrationId, accountId, email) => {
+      try {
+        const { vouchForEnforcedAddress } = await import('./enforcing-provider-email')
+        await vouchForEnforcedAddress({ registrationId, accountId, email, providers: providerRows })
+      } catch (error) {
+        log.error({ err: error, registrationId }, 'enforcing provider vouch failed')
+      }
+    },
     mapProfileToUser: mapProfileClaims,
   })
   genericOAuthConfigs.push(...oidcConfigs)
@@ -301,31 +323,18 @@ async function createAuth() {
   // Observed, not enforced. Withdrawing it outright would stop existing
   // password users linking on their first SSO sign-in and start returning
   // "account not linked" — a regression for providers that are behaving
-  // perfectly well. So log which providers would lose it, size the blast radius
-  // from real installations, and flip afterwards. Two of the predicate's inputs
-  // (whether the provider asserts a verified address, and an admin override)
-  // also need a column that has not landed yet.
-  const { allowsAutoLinking } = await import('./provider-trust')
-  for (const c of oidcConfigs) {
-    trustedProviders.push(c.providerId)
-    const row = providerRows.find((p) => p.registrationId === c.providerId)
-    if (
-      row &&
-      !allowsAutoLinking({
-        lastSuccessfulTestAt: row.lastSuccessfulTestAt,
-        detailsChangedAt: row.detailsChangedAt,
-        // Not yet persisted; assumed true so the observation isolates the
-        // connection-test signal rather than flagging every provider.
-        assertsVerifiedEmail: true,
-        trustOverride: null,
-      })
-    ) {
-      log.warn(
-        { registrationId: c.providerId },
-        'provider would lose auto-linking under derived trust (no fresh connection test)'
-      )
-    }
-  }
+  // perfectly well. So note which providers the derived predicate would not
+  // trust, size the population from real installations, and flip afterwards.
+  // Two of the predicate's inputs (whether the provider asserts a verified
+  // address, and an admin override) also need a column that has not landed yet.
+  const { oidcTrustedProviderIds } = await import('./provider-trust')
+  trustedProviders.push(
+    ...oidcTrustedProviderIds(
+      oidcConfigs.map((c) => c.providerId),
+      providerRows,
+      log
+    )
+  )
 
   // Layer A registration filter: an OAuth provider is registered on
   // the Better-Auth instance only if creds exist AND `authConfig.oauth`
@@ -352,18 +361,10 @@ async function createAuth() {
     if (!isSignInMethodEnabled(unifiedOAuthConfig, provider.id)) continue
 
     // Built-in social providers
-    const providerConfig: Record<string, unknown> = {
-      clientId: creds.clientId,
-      clientSecret: creds.clientSecret,
+    socialProviders[provider.id] = {
+      ...socialProviderConfig(provider, creds),
       mapProfileToUser: mapProfileClaims,
     }
-    // Add provider-specific fields (e.g., workspaceKey for Microsoft, issuer for GitLab)
-    for (const field of provider.platformCredentials) {
-      if (field.key !== 'clientId' && field.key !== 'clientSecret' && creds[field.key]) {
-        providerConfig[field.key] = creds[field.key]
-      }
-    }
-    socialProviders[provider.id] = providerConfig
     trustedProviders.push(provider.id)
   }
 
@@ -396,6 +397,7 @@ async function createAuth() {
   // Per-endpoint hooks for Layer B/C enforcement. Imported lazily here
   // to keep the createAuth() module-loading dependency graph clean.
   const { hooksBefore, hooksAfter } = await import('./hooks')
+  const { betterAuthIpAddressOptions } = await import('./client-ip')
 
   const instance = betterAuth({
     hooks: {
@@ -419,9 +421,8 @@ async function createAuth() {
     // Use SECRET_KEY for auth signing (Better Auth defaults to BETTER_AUTH_SECRET)
     secret: activeSecretKey(),
 
-    // Disable the JWT plugin's /token endpoint — conflicts with OAuth's /oauth2/token
-    // Does NOT affect magicLink or session management
-    disabledPaths: ['/token'],
+    // Closed to HTTP, still callable in process: see http-disabled-paths.ts.
+    disabledPaths: HTTP_DISABLED_AUTH_PATHS,
 
     database: drizzleAdapter(db, {
       provider: 'pg',
@@ -461,14 +462,17 @@ async function createAuth() {
 
     // Tell Better-Auth about non-standard columns on `user` so the
     // OAuth `mapProfileToUser` return shape is allowed through and
-    // written by drizzleAdapter. We only register `locale` here —
-    // existing custom columns (metadata, isAnonymous, twoFactorEnabled,
-    // imageKey) are written by other code paths (anonymous plugin /
-    // databaseHooks / direct queries) and don't need to round-trip
-    // through Better-Auth's signup validators.
+    // written by drizzleAdapter. `imageKey` (the uploaded avatar) is
+    // registered so the session's user carries it and the viewer's avatar
+    // needs no read of its own; `input: false` keeps it out of what sign-up
+    // and update-user accept, since only the avatar upload writes it. The
+    // other custom columns (metadata, isAnonymous, twoFactorEnabled) are
+    // written by other code paths (anonymous plugin / databaseHooks / direct
+    // queries) and don't need to round-trip through Better-Auth's validators.
     user: {
       additionalFields: {
         locale: { type: 'string', required: false, input: false },
+        imageKey: { type: 'string', required: false, input: false },
       },
     },
 
@@ -551,6 +555,9 @@ async function createAuth() {
     },
 
     advanced: {
+      // The client address comes from the app's own trusted resolution, never
+      // from a header the client can write. See `./client-ip`.
+      ipAddress: betterAuthIpAddressOptions,
       // Use TypeID format for user IDs to match our schema
       database: {
         generateId: ({ model }) => {
@@ -594,7 +601,7 @@ async function createAuth() {
                   const { generateAnonymousName } = await import('@/lib/shared/anonymous-names')
                   return generateAnonymousName(user.id)
                 })()
-              : user.name
+              : (accountDisplayName(user.name, user.email) ?? user.name)
             // Race-safe lazy create (the factory's onConflictDoNothing subsumes
             // the prior explicit findFirst guard). Always 'user' — team access is
             // via invitations only.
@@ -620,8 +627,10 @@ async function createAuth() {
               if (!isAnonymous) {
                 const { ensureAutoSubscribed } =
                   await import('@/lib/server/domains/changelog/changelog-subscription.service')
+                const { logSettingsReadError } =
+                  await import('@/lib/server/domains/settings/settings-log')
                 ensureAutoSubscribed(createdPrincipal.id as PrincipalId).catch((err) =>
-                  log.error({ err }, 'failed to auto-subscribe to changelog on signup')
+                  logSettingsReadError(log, err, 'failed to auto-subscribe to changelog on signup')
                 )
               }
             }
@@ -630,12 +639,7 @@ async function createAuth() {
       },
       session: {
         create: {
-          // Only the widget's lazy anonymous mint; everything else is a dashboard sign-in.
-          before: async (sessionData, context) => {
-            if (context?.path === '/sign-in/anonymous') {
-              return { data: { ...sessionData, scope: 'widget' } }
-            }
-          },
+          before: assignSessionScope,
         },
       },
     },
@@ -682,17 +686,8 @@ async function createAuth() {
           // `email-verification` (adding a first address) and `change-email`
           // (moving to a new one) both mean the same thing to the recipient:
           // prove you hold this address.
-          const { sendVerifyAddressEmail } = await import('@quackback/email')
-          const { getEmailSafeUrl } = await import('@/lib/server/storage/s3')
-          const settings = await db.query.settings.findFirst({
-            columns: { name: true, logoKey: true },
-          })
-          await sendVerifyAddressEmail({
-            to: email,
-            code: otp,
-            workspaceName: settings?.name ?? undefined,
-            logoUrl: getEmailSafeUrl(settings?.logoKey) ?? undefined,
-          })
+          const { sendVerifyAddressCode } = await import('./verify-address-email')
+          await sendVerifyAddressCode(email, otp)
         },
         otpLength: 6,
         expiresIn: 600,
@@ -713,8 +708,11 @@ async function createAuth() {
         expiresIn: 10,
       }),
 
-      // JWT plugin — signs access tokens, exposes /api/auth/jwks for verification
-      jwt(),
+      // JWT plugin: signs access tokens, exposes /api/auth/jwks for verification.
+      // Its `set-auth-jwt` header on `/get-session` is set by `hooksAfter`
+      // instead, and only for a request that came over the wire: the plugin's
+      // own hook signed one for every in-process session read too.
+      jwt({ disableSettingJwtHeader: true }),
 
       // MCP authorization server (`mcp()` replaces `oauthProvider()` — do not
       // register both). Tokens are audience-bound to `/api/mcp`.
@@ -812,7 +810,11 @@ async function createAuth() {
               name: newUser.user.name,
               email: newUser.user.email,
               image: newImage,
-              displayName: newUser.user.name || anonymousUser.user.name,
+              // A sign-in by email alone gives no name: show one from the
+              // address before the visitor's generated name, never "Anonymous".
+              displayName:
+                accountDisplayName(newUser.user.name, newUser.user.email) ??
+                (anonPrincipal?.displayName || anonymousUser.user.name),
             })
 
             // The principal's `type` flipped from 'anonymous' → 'user'; drop
@@ -855,15 +857,15 @@ async function createAuth() {
  * Get the auth instance (lazy-initialized).
  *
  * Cross-pod invalidation: every call reads the cached settings row's
- * `authConfigVersion` (one Redis hit, already happens for everything
- * else). If the cached _auth was built against an older version, drop
- * it and rebuild. This guarantees that a write on pod A propagates to
- * pod B no later than its next request after pod A's commit. The
+ * `authConfigVersion` (read once per request, and reused by a process for
+ * up to `SETTINGS_LOCAL_TTL_MS`). If the cached _auth was built against an
+ * older version, drop it and rebuild. A write on pod A therefore reaches
+ * pod B within that window of pod A's commit, and pod A at once. The
  * version is bumped by `bumpAuthConfigVersionInTx` from every
  * auth-instance-affecting write path.
  */
 export async function getAuth(): Promise<AuthInstance> {
-  let instance = authInstances.get(AUTH_CACHE_KEY)
+  const instance = authInstances.get(AUTH_CACHE_KEY)
   const builtVersion = authConfigVersions.get(AUTH_CACHE_KEY)
   // Skip the version check when no instance is cached yet — the build
   // path below records the version after creation.
@@ -872,17 +874,40 @@ export async function getAuth(): Promise<AuthInstance> {
     const t = await getWorkspaceSettings()
     const current = t?.settings?.authConfigVersion
     if (typeof current === 'number' && current !== builtVersion) {
-      resetAuth()
-      instance = undefined
+      // Concurrent callers all see the same stale instance; only the first
+      // drops it and rebuilds. The rest take what that rebuild installed, or
+      // join it while it is still in flight, rather than starting another.
+      if (authInstances.get(AUTH_CACHE_KEY) === instance) {
+        resetAuth()
+        return buildAuth()
+      }
+      return authInstances.get(AUTH_CACHE_KEY) ?? buildAuth()
     }
+    return instance
   }
-  if (!instance) {
-    const built = await createAuth()
-    instance = built.instance
-    authInstances.set(AUTH_CACHE_KEY, instance)
-    authConfigVersions.set(AUTH_CACHE_KEY, built.authConfigVersion)
-  }
-  return instance
+  return instance ?? buildAuth()
+}
+
+/** Join the workspace's build in flight, or start one. */
+function buildAuth(): Promise<AuthInstance> {
+  const inFlight = authBuilds.get(AUTH_CACHE_KEY)
+  if (inFlight) return inFlight
+  const build: Promise<AuthInstance> = createAuth()
+    .then((built) => {
+      // A reset while this was building means it was built from a config that
+      // has since changed: serve it to the callers already waiting on it, but
+      // do not install it.
+      if (authBuilds.get(AUTH_CACHE_KEY) === build) {
+        authInstances.set(AUTH_CACHE_KEY, built.instance)
+        authConfigVersions.set(AUTH_CACHE_KEY, built.authConfigVersion)
+      }
+      return built.instance
+    })
+    .finally(() => {
+      if (authBuilds.get(AUTH_CACHE_KEY) === build) authBuilds.delete(AUTH_CACHE_KEY)
+    })
+  authBuilds.set(AUTH_CACHE_KEY, build)
+  return build
 }
 
 /**
@@ -892,6 +917,7 @@ export async function getAuth(): Promise<AuthInstance> {
 export function resetAuth(): void {
   authInstances.delete(AUTH_CACHE_KEY)
   authConfigVersions.delete(AUTH_CACHE_KEY)
+  authBuilds.delete(AUTH_CACHE_KEY)
 }
 
 // Export a proxy object that lazily initializes auth on first access
@@ -904,7 +930,8 @@ export const auth = {
         return async (...args: unknown[]) => {
           const authInstance = await getAuth()
           const api = authInstance.api as Record<string, (...args: unknown[]) => unknown>
-          return api[prop as string](...args)
+          const { withTrustedClientIpArgs } = await import('./client-ip')
+          return api[prop as string](...withTrustedClientIpArgs(args))
         }
       },
     })
@@ -916,7 +943,8 @@ export const auth = {
       log.debug({ method: request.method, path: url.pathname }, 'magic-link request')
     }
     const authInstance = await getAuth()
-    const response = await authInstance.handler(request)
+    const { withTrustedClientIpRequest } = await import('./client-ip')
+    const response = await authInstance.handler(withTrustedClientIpRequest(request))
     if (isMagicLink) {
       log.debug({ status: response.status }, 'magic-link response')
     }

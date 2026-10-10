@@ -1,12 +1,29 @@
 import * as React from 'react'
+import { useOptionalIntl } from './use-optional-intl'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 import { XMarkIcon } from '@heroicons/react/24/solid'
 
 import { asChildRender, overlayTriggerProps } from '@/components/ui/as-child'
+import {
+  OverlayOpenedContext,
+  useOverlayOpened,
+  useOverlayOpenedRoot,
+} from '@/components/ui/overlay-opened'
 import { cn } from '@/lib/shared/utils'
 
-function Dialog(props: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+function Dialog({ open, defaultOpen, onOpenChange, ...props }: DialogPrimitive.Root.Props) {
+  const opened = useOverlayOpenedRoot(open, defaultOpen, onOpenChange)
+  return (
+    <OverlayOpenedContext.Provider value={opened.value}>
+      <DialogPrimitive.Root
+        data-slot="dialog"
+        open={open}
+        defaultOpen={defaultOpen}
+        onOpenChange={opened.onOpenChange}
+        {...props}
+      />
+    </OverlayOpenedContext.Provider>
+  )
 }
 
 function DialogTrigger({
@@ -58,7 +75,7 @@ function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) 
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        'data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 fixed inset-0 z-50 bg-black/50',
+        'data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 fixed inset-0 z-50 bg-black/60',
         className
       )}
       {...props}
@@ -76,14 +93,18 @@ function DialogContent({
   showCloseButton?: boolean
   instant?: boolean
 }) {
+  // Nothing to portal until the dialog first opens.
+  const opened = useOverlayOpened()
+  const intl = useOptionalIntl()
+  if (!opened) return null
   return (
-    <DialogPortal data-slot="dialog-portal">
+    <DialogPrimitive.Portal data-slot="dialog-portal">
       <DialogOverlay className={instant ? '!animate-none !duration-0' : undefined} />
       <DialogPrimitive.Popup
         aria-describedby={undefined}
         data-slot="dialog-content"
         className={cn(
-          'bg-background fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 [border-radius:var(--radius)] border p-6 shadow-lg outline-none',
+          'bg-background fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-panel border border-border p-6 shadow-md outline-none',
           !instant &&
             'data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 duration-200',
           className
@@ -97,11 +118,13 @@ function DialogContent({
             className="ring-offset-background focus:ring-ring data-open:bg-accent data-open:text-muted-foreground absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <XMarkIcon />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">
+              {intl.formatMessage({ id: 'ui.close', defaultMessage: 'Close' })}
+            </span>
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Popup>
-    </DialogPortal>
+    </DialogPrimitive.Portal>
   )
 }
 
@@ -129,7 +152,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn('text-lg leading-none font-semibold', className)}
+      className={cn('text-lg leading-none font-semibold tracking-[-0.02em]', className)}
       {...props}
     />
   )

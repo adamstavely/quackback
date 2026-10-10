@@ -74,7 +74,7 @@ export function AddConnectorDialog({
         onOpenChange(false)
         reset()
         void navigate({
-          to: '/admin/automation/connectors/$connectorId',
+          to: '/admin/settings/connectors/$connectorId',
           params: { connectorId: row.id },
         })
       },
@@ -104,7 +104,7 @@ export function AddConnectorDialog({
             {intl.formatMessage({
               id: 'automation.connectors.add.description',
               defaultMessage:
-                'Connect Quinn to an external MCP server. Tools are discovered automatically.',
+                'Connect Quackback AI to an external MCP server. Tools are discovered automatically.',
             })}
           </DialogDescription>
         </DialogHeader>

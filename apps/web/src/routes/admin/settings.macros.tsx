@@ -1,15 +1,16 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { PERMISSIONS } from '@/lib/shared/permissions'
 import { assertRoutePermission } from '@/lib/shared/route-permission'
-import { DocumentDuplicateIcon } from '@heroicons/react/24/solid'
 import { isProductEnabled } from '@/lib/shared/types/settings'
-import { BackLink } from '@/components/ui/back-link'
-import { PageHeader } from '@/components/shared/page-header'
-import { SettingsCard } from '@/components/admin/settings/settings-card'
-import { MacrosManager } from '@/components/admin/conversation/macros-manager'
-import { UpgradeScreen } from '@/components/admin/upgrade'
+import { useState } from 'react'
+import { SettingsPage } from '@/components/admin/settings/settings-page'
+import { NewButton } from '@/components/shared/new-button'
+import { MacrosSettingsBody } from '@/components/admin/settings/macros-settings-body'
+import { warmQuery } from '@/lib/client/queries/warm-query'
+import { adminPageHead } from '@/lib/client/admin-head'
 
 export const Route = createFileRoute('/admin/settings/macros')({
+  head: adminPageHead('Macros settings'),
   beforeLoad: ({ context }) => {
     if (!isProductEnabled(context.settings?.featureFlags, 'support')) {
       throw redirect({ to: '/admin/settings/general' })
@@ -20,7 +21,15 @@ export const Route = createFileRoute('/admin/settings/macros')({
     const { hasEntitlementFn } = await import('@/lib/server/functions/entitlement-status')
     const { ensureBillingCatalogue } = await import('@/lib/client/queries/billing')
     const [macrosEntitled] = await Promise.all([
-      hasEntitlementFn({ data: { key: 'aiDrafts' } }),
+      // The library renders only on a plan that includes macros; warm it then
+      // so the page renders complete from the document.
+      hasEntitlementFn({ data: { key: 'aiDrafts' } }).then(async (entitled) => {
+        if (entitled) {
+          const { macrosQuery } = await import('@/lib/client/queries/macros')
+          await warmQuery(context.queryClient, macrosQuery())
+        }
+        return entitled
+      }),
       ensureBillingCatalogue(context.queryClient, context.billingEnabled),
     ])
     return { macrosEntitled }
@@ -30,27 +39,20 @@ export const Route = createFileRoute('/admin/settings/macros')({
 
 function MacrosSettingsPage() {
   const { macrosEntitled } = Route.useLoaderData()
+  const [creating, setCreating] = useState(false)
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div className="lg:hidden">
-        <BackLink to="/admin/settings/support">Support</BackLink>
-      </div>
-      <PageHeader
-        icon={DocumentDuplicateIcon}
-        title="Macros"
-        description="Reusable replies with variables and bundled actions"
+    <SettingsPage
+      page="/admin/settings/macros"
+      description="Reusable replies with variables and bundled actions."
+      actions={
+        macrosEntitled ? <NewButton noun="macro" onClick={() => setCreating(true)} /> : undefined
+      }
+    >
+      <MacrosSettingsBody
+        entitled={macrosEntitled}
+        creating={creating}
+        onCreatingChange={setCreating}
       />
-      <MacrosSettingsBody entitled={macrosEntitled} />
-    </div>
-  )
-}
-
-export function MacrosSettingsBody({ entitled }: { entitled: boolean }) {
-  return entitled ? (
-    <SettingsCard>
-      <MacrosManager />
-    </SettingsCard>
-  ) : (
-    <UpgradeScreen entitlement="aiDrafts" />
+    </SettingsPage>
   )
 }

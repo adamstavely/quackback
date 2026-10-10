@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { createServerFn } from '@tanstack/react-start'
 import { tiptapContentSchema } from '@/lib/shared/schemas/posts'
+import { updateThemeSchema } from '@/lib/shared/schemas/settings'
 // Import types from barrel export (client-safe)
 import {
   DEFAULT_PORTAL_CONFIG,
@@ -324,10 +325,6 @@ export const fetchUserProfile = createServerFn({ method: 'GET' })
 // Write Operations
 // ============================================
 
-const updateThemeSchema = z.object({
-  brandingConfig: z.record(z.string(), z.unknown()),
-})
-
 export const updatePortalConfigSchema = z.object({
   features: z
     .object({
@@ -499,7 +496,7 @@ export const updateAuthConfigFn = createServerFn({ method: 'POST' })
       data.oauth && AUDIT_TRACKED_OAUTH_KEYS.some(({ key }) => key in (data.oauth ?? {}))
     )
     const tracksSso = Boolean(data.ssoOidc)
-    const before = tracksAnyToggle || tracksSso ? await getAuthConfig() : null
+    const before = tracksAnyToggle || tracksSso ? await getAuthConfig('fresh') : null
 
     try {
       // Backstop the unified "keep ≥1 working sign-in method" invariant — a
@@ -507,7 +504,7 @@ export const updateAuthConfigFn = createServerFn({ method: 'POST' })
       // in (the client `isLastMethod` guard covers only the UI). A blocked
       // attempt falls through to the failure audit + re-throw below.
       if (data.oauth) {
-        const current = before ?? (await getAuthConfig())
+        const current = before ?? (await getAuthConfig('fresh'))
         const proposedOauth = {
           ...((current?.oauth ?? {}) as Record<string, boolean | undefined>),
           ...data.oauth,
@@ -1067,7 +1064,8 @@ export const updateDefaultSlaPolicyFn = createServerFn({ method: 'POST' })
 // ============================================
 
 const updateSpamFilterConfigSchema = z.object({
-  trustedSenders: z.array(z.string().max(320)).max(MAX_TRUSTED_SENDERS),
+  trustedSenders: z.array(z.string().max(320)).max(MAX_TRUSTED_SENDERS).optional(),
+  aiClassifier: z.boolean().optional(),
 })
 
 /** The spam filter's trusted-sender list (admin read, for the settings UI). */
@@ -1078,11 +1076,15 @@ export const getSpamFilterConfigFn = createServerFn({ method: 'GET' }).handler(a
   return await getSpamFilterConfig()
 })
 
-/** Replace the trusted-sender list wholesale (add/remove are list rewrites). */
+/** Replace the trusted-sender list wholesale (add/remove are list rewrites)
+ *  and/or switch the AI classifier. */
 export const updateSpamFilterConfigFn = createServerFn({ method: 'POST' })
   .validator(updateSpamFilterConfigSchema)
   .handler(async ({ data }) => {
-    log.info({ trusted_count: data.trustedSenders.length }, 'update spam filter config')
+    log.info(
+      { trusted_count: data.trustedSenders?.length, ai_classifier: data.aiClassifier },
+      'update spam filter config'
+    )
     await requireAuth({ permission: PERMISSIONS.SETTINGS_MANAGE })
     const { updateSpamFilterConfig } = await import('@/lib/server/domains/settings/settings.spam')
     return await updateSpamFilterConfig(data)
@@ -1131,7 +1133,7 @@ export const updateModerationDefaultFn = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     log.info({ require_approval: data.requireApproval }, 'update moderation default')
     const auth = await requireAuth({ permission: PERMISSIONS.SETTINGS_MODERATION })
-    const before = await getPortalConfig()
+    const before = await getPortalConfig('fresh')
     const updated = await updatePortalConfig({ moderationDefault: data })
     await recordAuditEvent({
       event: 'moderation.default.changed',

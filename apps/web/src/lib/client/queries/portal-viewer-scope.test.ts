@@ -12,7 +12,12 @@ vi.mock('@/lib/server/functions/portal', () => ({
   fetchPortalData: vi.fn(),
 }))
 
-import { removeViewerScopedPortalQueries, VIEWER_SCOPED_PORTAL_QUERY_KEYS } from './portal'
+import { fetchPortalData } from '@/lib/server/functions/portal'
+import {
+  portalQueries,
+  removeViewerScopedPortalQueries,
+  VIEWER_SCOPED_PORTAL_QUERY_KEYS,
+} from './portal'
 
 const teamCatalog = [{ id: 'tag_internal', name: 'Churn risk', isPublic: false }]
 const anonymousCatalog: unknown[] = []
@@ -88,10 +93,31 @@ describe('removeViewerScopedPortalQueries', () => {
     expect(queryClient.getQueryData(feedKey)).toBeUndefined()
   })
 
+  it("drops the previous viewer's notifications, unread count included", async () => {
+    const queryClient = newClient()
+    queryClient.setQueryData(['notifications', 'unreadCount'], 3)
+    queryClient.setQueryData(['notifications', 'list', { unreadOnly: false }], {
+      notifications: [],
+    })
+
+    removeViewerScopedPortalQueries(queryClient)
+
+    // The portal loader's read of the count goes to the network as the new viewer.
+    const queryFn = vi.fn(async () => 0)
+    const served = await queryClient.ensureQueryData({
+      queryKey: ['notifications', 'unreadCount'],
+      queryFn,
+    })
+    expect(served).toBe(0)
+    expect(queryFn).toHaveBeenCalledTimes(1)
+    expect(queryClient.getQueryCache().findAll({ queryKey: ['notifications', 'list'] })).toEqual([])
+  })
+
   it('covers every family whose payload depends on the viewer', () => {
     expect(VIEWER_SCOPED_PORTAL_QUERY_KEYS).toEqual(
       expect.arrayContaining([
         ['portal', 'tags'],
+        ['portal', 'boards'],
         ['portal', 'data'],
         ['portal', 'posts'],
         ['portal', 'post'],
@@ -100,5 +126,27 @@ describe('removeViewerScopedPortalQueries', () => {
         ['publicPosts'],
       ])
     )
+  })
+})
+
+describe('portalQueries.portalData', () => {
+  it('keys the cache by viewer without sending the viewer id to the server', async () => {
+    vi.mocked(fetchPortalData).mockResolvedValue({
+      boards: [],
+      posts: { items: [], hasMore: false },
+      statuses: [],
+      tags: [],
+      votedPostIds: [],
+      principalId: null,
+    } as never)
+    const asViewer = portalQueries.portalData({ sort: 'top', userId: 'user_viewer' })
+    const asOther = portalQueries.portalData({ sort: 'top', userId: 'user_other' })
+    expect(asViewer.queryKey).not.toEqual(asOther.queryKey)
+
+    await newClient().fetchQuery(asViewer)
+
+    expect(fetchPortalData).toHaveBeenCalledTimes(1)
+    const sent = vi.mocked(fetchPortalData).mock.calls[0][0] as { data: Record<string, unknown> }
+    expect(sent.data).toEqual({ sort: 'top' })
   })
 })

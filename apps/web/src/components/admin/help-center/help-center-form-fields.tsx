@@ -1,5 +1,5 @@
 import type { UseFormReturn } from 'react-hook-form'
-import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import { RichTextEditor, type EditorDocument } from '@/components/ui/rich-text-editor'
 import { FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form'
 import { TitleInput } from '@/components/shared/title-input'
 import { FormError } from '@/components/shared/form-error'
@@ -10,7 +10,7 @@ interface HelpCenterFormFieldsProps {
   // oxlint-disable-next-line @typescript-eslint/no-explicit-any
   form: UseFormReturn<any>
   contentJson: JSONContent | null
-  onContentChange: (json: JSONContent, html: string, markdown: string) => void
+  onContentChange: (document: EditorDocument) => void
   error?: string
   showDescription?: boolean
 }
@@ -41,7 +41,7 @@ export function HelpCenterFormFields({
                   type="text"
                   aria-label="Page description"
                   placeholder="Page description (optional)"
-                  className="w-full bg-transparent border-0 outline-none text-sm text-muted-foreground placeholder:text-muted-foreground/50 focus-visible:ring-2 focus-visible:ring-ring/50"
+                  className="w-full bg-transparent border-0 outline-none text-sm text-muted-foreground placeholder:text-muted-foreground/50"
                   {...field}
                   value={field.value ?? ''}
                 />
@@ -60,7 +60,7 @@ export function HelpCenterFormFields({
             <FormControl>
               <RichTextEditor
                 value={contentJson || ''}
-                onChange={onContentChange}
+                onDocumentChange={onContentChange}
                 placeholder="Write your help article..."
                 minHeight="100%"
                 fill

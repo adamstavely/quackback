@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState, type ComponentProps } from 'react'
 import { useIntl } from 'react-intl'
 import {
   ArrowRightIcon,
@@ -16,7 +16,6 @@ import { ReactionChip } from '@/components/shared/reaction-chip'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
-import { ConfirmDialog } from '@/components/shared/confirm-dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { TimeAgo } from '@/components/ui/time-ago'
 import { REACTION_EMOJIS } from '@/lib/shared/db-types'
@@ -26,17 +25,33 @@ import type { CommentReactionCount } from '@/lib/shared'
 import type { PublicCommentView } from '@/lib/client/queries/portal-detail'
 import { cn } from '@/lib/shared/utils'
 import { StatusBadge } from '@/components/ui/status-badge'
-import { CommentContent } from '@/components/public/comment-content'
+import { CommentContent, useCommentDoc } from '@/components/public/comment-content'
 import { AuthorHoverCard } from '@/components/public/author-hover-card'
 import { AdminAuthorHoverCard } from '@/components/admin/admin-author-hover-card'
 import { CommentForm, type CreateCommentMutation } from './comment-form'
-import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import {
+  LazyRichTextEditor,
+  RichTextEditorPlaceholder,
+} from '@/components/ui/lazy-rich-text-editor'
 import { COMMENT_EDITOR_FEATURES } from './comment-editor-features'
-import { commentMarkdownToTiptapJson } from '@/lib/server/markdown-tiptap'
-import type { TiptapContent } from '@/lib/shared/db-types'
+import type { ReplyPolicy, TiptapContent } from '@/lib/shared/db-types'
 import type { PostCommentId, PostId, PrincipalId } from '@quackback/ids'
 import { InlineModerationActions } from '@/components/shared/inline-moderation-actions'
 import { useApproveComment, useRejectComment } from '@/lib/client/mutations/moderation'
+import { useOpenedOnce } from '@/lib/client/hooks/use-opened-once'
+
+// Asked only when someone deletes a comment, so it loads on first use.
+const LazyConfirmDialog = lazy(() =>
+  import('@/components/shared/confirm-dialog').then((m) => ({ default: m.ConfirmDialog }))
+)
+
+function ConfirmDialog(props: ComponentProps<typeof LazyConfirmDialog>) {
+  return (
+    <Suspense fallback={null}>
+      <LazyConfirmDialog {...props} />
+    </Suspense>
+  )
+}
 
 /**
  * Groups root-level comments so consecutive private comments are wrapped
@@ -113,6 +128,12 @@ interface CommentThreadProps {
    * authn): show "You don't have access" instead of a sign-in prompt.
    */
   noAccess?: boolean
+  /**
+   * The board's reply rule, as reported by the server. `'author-only'` narrows
+   * the `noAccess` notice from the generic tier denial to "this thread belongs
+   * to its author". Undefined (admin mode, legacy payloads) means `'anyone'`.
+   */
+  replyPolicy?: ReplyPolicy
   user?: { name: string | null; email: string; principalId?: PrincipalId }
   /** Logo URL for the team badge (from branding settings) */
   teamBadgeLogoUrl?: string
@@ -166,6 +187,7 @@ export function CommentThread({
   comments,
   allowCommenting = true,
   noAccess = false,
+  replyPolicy,
   user,
   teamBadgeLogoUrl,
   teamBadgeLabel,
@@ -228,14 +250,22 @@ export function CommentThread({
 
     // Signed in but denied by the board's comment tier (segments/team) — an
     // authorization failure, not authentication. State it; no sign-in affordance.
+    // An author-only board names its rule instead: the viewer's account is fine,
+    // this thread just isn't theirs. Signed-out viewers fall through to the
+    // sign-in CTA below, since they may yet sign in as the author.
     if (noAccess) {
       return (
         <div className="flex items-center justify-center gap-3 py-4 px-4 bg-muted/30 [border-radius:var(--radius)] border border-border/30">
           <p className="text-sm text-muted-foreground">
-            {intl.formatMessage({
-              id: 'portal.commentThread.noAccess',
-              defaultMessage: "You don't have access to comment on this board",
-            })}
+            {replyPolicy === 'author-only'
+              ? intl.formatMessage({
+                  id: 'portal.commentThread.authorOnlyReplies',
+                  defaultMessage: 'Only the post author and team members can reply on this board',
+                })
+              : intl.formatMessage({
+                  id: 'portal.commentThread.noAccess',
+                  defaultMessage: "You don't have access to comment on this board",
+                })}
           </p>
         </div>
       )
@@ -264,7 +294,7 @@ export function CommentThread({
         <p className="text-muted-foreground text-center py-4">
           {intl.formatMessage({
             id: 'portal.commentThread.empty',
-            defaultMessage: 'No comments yet. Be the first to share your thoughts!',
+            defaultMessage: 'No comments yet. Be the first to share your thoughts.',
           })}
         </p>
       ) : (
@@ -362,6 +392,8 @@ function CommentItem({
   const approveComment = useApproveComment(postId)
   const rejectComment = useRejectComment(postId)
   const [showReplyForm, setShowReplyForm] = useState(false)
+  // The reply composer, and the editor it brings, mounts when Reply first opens it.
+  const replyFormMounted = useOpenedOnce(showReplyForm)
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [reactions, setReactions] = useState<CommentReactionCount[]>(comment.reactions)
   const [isPending, setIsPending] = useState(false)
@@ -371,12 +403,10 @@ function CommentItem({
   const editJsonRef = useRef<TiptapContent | null>(comment.contentJson ?? null)
   const [editError, setEditError] = useState<string | null>(null)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const deleteConfirmMounted = useOpenedOnce(deleteConfirmOpen)
 
-  // Stored doc preferred; legacy rows fall back to a markdown parse.
-  const editInitialJson = useMemo<TiptapContent>(() => {
-    if (comment.contentJson) return comment.contentJson
-    return commentMarkdownToTiptapJson(comment.content)
-  }, [comment.contentJson, comment.content])
+  // Null while a legacy markdown-only row's parse loads, once editing starts.
+  const editInitialJson = useCommentDoc(comment.content, comment.contentJson, isEditing)
 
   const editMutation = useEditComment({
     commentId: comment.id as PostCommentId,
@@ -434,7 +464,14 @@ function CommentItem({
       await editMutation.mutateAsync({ content: trimmed, contentJson: editJsonRef.current })
       setIsEditing(false)
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : 'Failed to save edit')
+      setEditError(
+        err instanceof Error
+          ? err.message
+          : intl.formatMessage({
+              id: 'portal.commentThread.editFailed',
+              defaultMessage: 'Failed to save edit',
+            })
+      )
     }
   }
 
@@ -699,20 +736,26 @@ function CommentItem({
                   }
                 }}
               >
-                <RichTextEditor
-                  value={editInitialJson}
-                  borderless
-                  minHeight="64px"
-                  autofocus="end"
-                  features={COMMENT_EDITOR_FEATURES}
-                  onImageUpload={onImageUpload}
-                  onVideoUpload={onImageUpload}
-                  disabled={editMutation.isPending}
-                  onChange={(json, _html, markdown) => {
-                    editJsonRef.current = json as TiptapContent
-                    setEditContent(markdown ?? '')
-                  }}
-                />
+                {editInitialJson ? (
+                  <Suspense fallback={<RichTextEditorPlaceholder minHeight="64px" />}>
+                    <LazyRichTextEditor
+                      value={editInitialJson}
+                      borderless
+                      minHeight="64px"
+                      autofocus="end"
+                      features={COMMENT_EDITOR_FEATURES}
+                      onImageUpload={onImageUpload}
+                      onVideoUpload={onImageUpload}
+                      disabled={editMutation.isPending}
+                      onDocumentChange={(document) => {
+                        editJsonRef.current = document.json() as TiptapContent
+                        setEditContent(document.markdown())
+                      }}
+                    />
+                  </Suspense>
+                ) : (
+                  <RichTextEditorPlaceholder minHeight="64px" />
+                )}
               </div>
               {editError && <p className="text-xs text-destructive mt-1">{editError}</p>}
               <div className="flex items-center gap-2 mt-2">
@@ -947,7 +990,7 @@ function CommentItem({
                     })}
               </Button>
             )}
-            {canDelete && (
+            {canDelete && deleteConfirmMounted && (
               <ConfirmDialog
                 open={deleteConfirmOpen}
                 onOpenChange={setDeleteConfirmOpen}
@@ -986,19 +1029,21 @@ function CommentItem({
             }}
           >
             <div className="overflow-hidden">
-              <div className="mt-3 ms-10 max-w-lg p-3 bg-muted/30 [border-radius:var(--radius)] border border-border/30">
-                <CommentForm
-                  postId={postId}
-                  parentId={comment.id}
-                  onSuccess={() => setShowReplyForm(false)}
-                  onCancel={() => setShowReplyForm(false)}
-                  user={user}
-                  createComment={createComment}
-                  isTeamMember={isTeamMember}
-                  defaultPrivate={comment.isPrivate}
-                  onImageUpload={onImageUpload}
-                />
-              </div>
+              {replyFormMounted && (
+                <div className="mt-3 ms-10 max-w-lg p-3 bg-muted/30 [border-radius:var(--radius)] border border-border/30">
+                  <CommentForm
+                    postId={postId}
+                    parentId={comment.id}
+                    onSuccess={() => setShowReplyForm(false)}
+                    onCancel={() => setShowReplyForm(false)}
+                    user={user}
+                    createComment={createComment}
+                    isTeamMember={isTeamMember}
+                    defaultPrivate={comment.isPrivate}
+                    onImageUpload={onImageUpload}
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>

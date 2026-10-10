@@ -17,7 +17,6 @@ import {
   fetchDefaultSlaPolicyFn,
   getSpamFilterConfigFn,
 } from '@/lib/server/functions/settings'
-import { listVisibleLabsExperimentsFn } from '@/lib/server/functions/labs'
 import { getHelpCenterConfigFn } from '@/lib/server/functions/help-center-settings'
 import { getHelpCenterDomainStatusFn } from '@/lib/server/functions/help-center-domain'
 import { listRedirectRulesFn } from '@/lib/server/functions/help-center-redirect-rules'
@@ -32,6 +31,7 @@ import {
   listIdentityProvidersFn,
 } from '@/lib/server/functions/sso'
 import { listRolesFn } from '@/lib/server/functions/roles'
+import { listExportRunsFn, listImportRunsFn } from '@/lib/server/functions/data-runs'
 import {
   fetchSettingsLogoData,
   fetchSettingsHeaderLogoData,
@@ -234,10 +234,18 @@ export const settingsQueries = {
       staleTime: STALE_TIME_MEDIUM,
     }),
 
-  labs: () =>
+  /** Workspace export history, shared by the export action and the history list. */
+  exportRuns: () =>
     queryOptions({
-      queryKey: ['settings', 'labs'],
-      queryFn: listVisibleLabsExperimentsFn,
+      queryKey: ['export-runs'],
+      queryFn: () => listExportRunsFn(),
+      staleTime: STALE_TIME_SHORT,
+    }),
+
+  importRuns: () =>
+    queryOptions({
+      queryKey: ['import-runs'],
+      queryFn: () => listImportRunsFn(),
       staleTime: STALE_TIME_SHORT,
     }),
 }
