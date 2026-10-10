@@ -22,7 +22,7 @@ Development rules:
 - Keep each branch based on the then-current main, with a `codex/` prefix. Do not combine an upstream upgrade with feature implementation in the same PR.
 - Add fork code under the planned fork directories and tables under the fork schema. No upstream migration renumbering or broad refactoring.
 - One package owns each shared registry or seam. Other features register into it. Update `SEAMS.md`, generated authorization artifacts and principal-reference declarations in the same PR as the integration.
-- Authorization enforcement and deny checks are safety prerequisites, not optional Labs features. Product features start disabled. Disabling a feature must not disable protection for data already created.
+- Authorization enforcement and deny checks are safety prerequisites, not optional feature-flagged extras. Product features start disabled. Disabling a feature must not disable protection for data already created.
 - Merge backend slices behind flags; expose a capability only after its entire release gate passes. Do not release personas before REST/MCP enforcement or expose approval flows before receiver conformance and durable routing.
 - Use expand-only schema changes. A rollback ordinarily returns to compatible code, keeps the data/schema, and disables the affected product surface. Do not equate disabling a flag with undoing an external action or a ticket transition.
 
@@ -133,7 +133,7 @@ Exit: clean install and populated upgrade preserve upstream data; repeated runs 
 
 Depends on: IP-02. Owns: F-3–F-10, fork directories and the guard/test harness.
 
-Add minimal registries for MCP tools, settings modules, principal re-point steps, Labs, permissions, jobs, audit types and authz classifications. Empty registries preserve upstream behavior. Create disposable single-workspace and two-workspace PostgreSQL fixtures, actor fixtures, controlled concurrency barriers and crash/retry helpers.
+Add minimal registries for MCP tools, settings modules, principal re-point steps, fork feature flags, permissions, jobs, audit types and authz classifications. Empty registries preserve upstream behavior. Create disposable single-workspace and two-workspace PostgreSQL fixtures, actor fixtures, controlled concurrency barriers and crash/retry helpers.
 
 Exit: fork principal references are enumerated or exempted; registry isolation holds across tenants; existing CI guardrails pass with empty product registries. No duplicated feature-specific registration seam.
 

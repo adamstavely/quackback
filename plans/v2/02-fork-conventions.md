@@ -40,7 +40,7 @@
 
 ### 3.1 Why
 
-Upstream migrations are **hand-numbered** (`0283_…` at time of writing) with a **hand-maintained**
+Upstream migrations are **hand-numbered** (`0297_…` as of the 2026-10-10 upstream sync; 14 new upstream migrations landed in that sync with **zero** fork impact, which is the separate-lineage rule working) with a **hand-maintained**
 `packages/db/drizzle/meta/_journal.json`, and the drizzle-orm migrator tracks only a **high-water
 `created_at`**, not a per-file ledger (`packages/db/README.md` "Long-lived dev databases can silently
 skip migrations"). A fork migration placed in that sequence would:
@@ -142,8 +142,8 @@ A **seam** is any edit to an upstream-owned file. Rules:
 3. **Seams are one-liners where humanly possible:** a mount point (`<ForkSlot name="…" />`), a registry
    call, an import, an enum member. Logic lives in fork directories.
 4. **Prefer existing extension points** over seams: the channel registry, the routing
-   `registerStrategy`, the integrations capability registry, Labs experiments
-   (`lib/shared/labs/registry.ts`) for feature-gating, webhooks, the public REST API and MCP.
+   `registerStrategy`, the integrations capability registry, fork feature flags in `fork_settings` for
+   feature-gating, webhooks, the public REST API and MCP.
 5. **Closed unions are seams.** Adding a workflow action, trigger, macro action, view rule, sort key,
    audit event type or activity type is an edit to an upstream union — count it as a seam and minimise
    how many a feature needs.
@@ -231,9 +231,11 @@ Upstream merges anonymous principals into identified ones via the re-point regis
 
 ## 9. Feature gating
 
-- Gate each fork feature behind a **Labs experiment** (`lib/shared/labs/registry.ts` — one registry
-  line each, a seam) or a `fork_settings` flag, so features can ship dark and be disabled per workspace
-  without a deploy.
+- Gate each fork feature behind a **fork feature flag** in `fork_settings` (`features.<feature> = on|off`,
+  default off), read by a fork helper and surfaced on the fork settings page, so features can ship dark and be
+  disabled per workspace without a deploy. **Upstream removed Labs** (`c314414e8`: the registry, its server
+  functions and the operator script are gone; the Labs page is an empty shell and stored `workspace_experiments`
+  rows are ignored), so the former F-6 Labs seam is retired and fork features must not depend on it.
 
 ## 10. Shared foundation seams (owned by Foundations, used by every plan)
 
@@ -247,7 +249,6 @@ Foundations phase and every plan registers into fork-owned lists instead:
 | F-3 | `apps/web/src/lib/server/mcp/tools/index.ts`                         | `registerForkTools(server, auth)` after upstream registration                                          | `mcp/tools/fork-index.ts` → `fork-<feature>.ts`                 |
 | F-4 | `apps/web/src/components/admin/settings/settings-modules.ts`         | `return applyForkSettingsModules(modules, flags)` at the end of `buildSettingsModules` (1 upstream commit / 90 days — chosen over `settings-nav.tsx`, 22) | `components/fork/settings/fork-settings-modules.ts` (adds pages to existing modules by id, or a "Workspace extensions" module) |
 | F-5 | `apps/web/src/lib/server/domains/principals/principal-repoint.ts`    | Invoke fork re-point steps inside the merge (§8)                                                      | `lib/server/fork/principals/fork-repoint.ts`                    |
-| F-6 | `apps/web/src/lib/shared/labs/registry.ts`                           | `...FORK_LABS_EXPERIMENTS` spread in `LABS_REGISTRY`                                                   | `lib/shared/fork/labs.ts`                                       |
 | F-7 | `packages/db/src/rbac-catalogue.ts`                                  | One fenced block per list (§5)                                                                         | — (keys live in the block)                                      |
 | F-8 | `apps/web/src/lib/server/jobs/definitions.ts`                        | `...FORK_JOB_DEFINITIONS` spread at the end of `JOB_DEFINITIONS`                                        | `lib/server/fork/jobs/definitions.ts`                           |
 | F-9 | `apps/web/src/lib/server/audit/log.ts`                               | One fenced block of fork members in the `AuditEventType` union                                         | — (members live in the block; one per feature prefix)           |
@@ -255,8 +256,8 @@ Foundations phase and every plan registers into fork-owned lists instead:
 | F-11 | `apps/web/src/lib/server/fleet/schema-floor.ts`                      | Also check `FORK_MIN_SCHEMA_VERSION` against the fork ledger (§3.3a)                                     | `packages/db/src/fork/schema-version.ts`                        |
 | F-12 | `apps/web/src/lib/server/content/ssrf-guard.ts` (+ webhook write check `events/integrations/webhook/constants.ts`) | Env allow-list `SSRF_ALLOWED_CIDRS` / `SSRF_ALLOWED_HOSTS` for intranet targets; loopback and link-local always blocked (`04-intranet-deployment.md` E-1) | `lib/server/fork/network/allow-list.ts`                         |
 
-Where a v2 plan's seam table lists a settings-nav entry, an MCP registration line, a Labs line or a
-catalogue edit, a scheduled job or audit event types, **that entry is satisfied by F-3/F-4/F-6/F-7/F-8/F-9/F-10/F-11/F-12** and is not an additional seam.
+Where a v2 plan's seam table lists a settings-nav entry, an MCP registration line or a
+catalogue edit, a scheduled job or audit event types, **that entry is satisfied by F-3/F-4/F-7/F-8/F-9/F-10/F-11/F-12** and is not an additional seam.
 
 ## 11. Branding and theming (all fork UI)
 

@@ -2,7 +2,7 @@
 
 > **Status:** v2 (round 2 + staff review) — supersedes `plans/v1/prioritization-scoring-plan.md`. Planning only; nothing implemented.
 > **Depends on:** Foundations (fork lineage F-1/F-2, `fork_settings`, shared seams F-3 MCP / F-4 settings /
-> F-5 principal re-point / F-6 Labs / F-7 catalogue / F-8 jobs) and `10-rbac-persona-extensions.md` (fork catalogue
+> F-5 principal re-point / F-7 catalogue / F-8 jobs) and `10-rbac-persona-extensions.md` (fork catalogue
 > file, "UX Team" role template, per-tool MCP permission gate R-5). Build order slot: **after 10, before 30**.
 > **Decisions applied:** D1, D2, D3 (✅); D-P5, D-P6, D-P7, D-P8, D-P9 (✅). **Open:** D-P1, D-P2, D-P3, D-P4 (⏳);
 > O-P10, O-P11, O-P12 (🟡, defaults adopted). Built on a provisional reading (RICE, Reach = vote count, fixed
@@ -22,7 +22,7 @@
 | Separate `post_prioritization.csv` + read-only fork MCP tool confirmed; REST later. | D-P8 ✅ |
 | One current score per post + full history confirmed. | D-P9 ✅ |
 | D-P1..D-P4 re-opened (⏳): RICE + Reach = `vote_count` kept as provisional; framework interface gained a `reach` source and `derived` factors (§4.2.1). | D-P1..D-P4 ⏳ |
-| Catalogue (F-7), Labs (F-6) and MCP registration (F-3) are shared seams — not counted here. Settings page reachable via F-4. Scorer principal columns get an F-5 exemption entry. | `02-fork-conventions.md` §10, X-R2/X-R3 |
+| Catalogue (F-7) and MCP registration (F-3) are shared seams — not counted here. Settings page reachable via F-4. Scorer principal columns get an F-5 exemption entry. | `02-fork-conventions.md` §10, X-R2/X-R3 |
 | Fixed §3: the seeded **default** status is `open` (`statuses.ts:45-50`, `isDefault: true`), not `under_review` (`:53-59`). Closed NEW-P9 (import cannot receive the export ZIP). | code verification |
 
 ## Staff-review changes
@@ -61,7 +61,7 @@
 | 14 | Server fns in `functions/posts.ts` | `lib/server/fork/prioritization/functions.ts`. |
 | 15 | Merge/unmerge undefined | §4.6, no merge-flow seam. |
 | 16 | Multi-tenant migrator | Fork lineage via F-1; pooled = migrations before code (§8). |
-| 17 | No feature gate | Labs experiment `fork-prioritization` via F-6, default off. |
+| 17 | No feature gate | Fork feature flag `fork_settings.features.prioritization` (default off) — upstream removed Labs, so no F-6 seam. |
 | 18 | REST/MCP/CSV exposure missing | D-P8: separate CSV + fork MCP read tools (Phase 5); REST later. |
 | 19 | `companies.mrrCents` ignored | Weighted-Reach extension (§4.2.1, §4.10). |
 | 20 | Roadmap score ordering | Phase 6 (not delivered by this plan's core phases). |
@@ -79,7 +79,7 @@
 | R7 | **D-P7:** on framework switch, posts in Open/default/Under Review **at switch time** need re-scoring; others keep their (frozen) old score labelled with its framework. |
 | R8 | A save is rejected if the framework/version or the post status changed since the form loaded. |
 | R9 | The control tower can list prioritization for a workspace in pages via one MCP tool with the same ordering and values as the app. |
-| R10 | Fork-conventions compliant: fork tables + lineage, marked seams, Labs gate, `single` and `pooled`. |
+| R10 | Fork-conventions compliant: fork tables + lineage, marked seams, fork feature flag, `single` and `pooled`. |
 
 ## 2. TL;DR
 
@@ -91,8 +91,8 @@
 - One slot prop on `MetadataSidebar`; a self-fetching `PrioritizationPanel` from `post-modal.tsx` only; a batched
   score chip on inbox rows.
 - MCP: `get_post_prioritization` (one post) + `list_post_prioritization` (portfolio page).
-- **11 own seams** (Phases 3–5). Catalogue, Labs, MCP registration, settings page, principal re-point and the
-  optional reach job ride shared F-7/F-6/F-3/F-4/F-5/F-8.
+- **11 own seams** (Phases 3–5). Catalogue, MCP registration, settings page, principal re-point and the
+  optional reach job ride shared F-7/F-3/F-4/F-5/F-8.
 
 ## 3. Current state (verified at `780a7b577`; new claims re-checked at `eb7914767`)
 
@@ -117,8 +117,8 @@
   stale** (`seed-system.ts:70-104`) ⇒ adding a key to the admin list revokes Manager's row on next migrate.
   Custom roles: new keys default-off; `createRole` only enforces the editor's grant ceiling
   (`role.service.ts:12-24`, `role.ceiling.ts:22`).
-- Labs: `LABS_REGISTRY` (`lib/shared/labs/registry.ts`, via F-6); server read
-  `getExperimentStateForWorkspace` (`domains/settings/settings.labs.ts:347`).
+- Feature gate: fork flag `fork_settings.features.prioritization`, read by the fork settings helper (upstream
+  Labs was removed in `c314414e8`).
 - Export: `buildEntityList()` (`domains/export/workspace-export.ts:34-48`, iterated `:57`). Import is
   single-CSV (`domains/import/import-service.ts:421`); no ZIP import path exists.
 - Companies: `companies.mrr_cents` (`schema/companies.ts:26`) via `principal.company_id` (`schema/auth.ts:866`,
@@ -462,7 +462,7 @@ added to the rescore set at switch).
 | P-11 | `apps/web/src/components/admin/feedback/table/feedback-table-view.tsx` (`:236-248`) | `useForkPrioritizationRowScores(filteredPosts)` + `{forkScoreChip(post.id)}` beside `<FeedbackRow/>` (wrapper gains `relative`) | Mixed ordering must be visible where it happens (X-5); `FeedbackRow` has no slot and the list DTO stays upstream | Re-add hook line + chip line + class |
 
 **Own count: 11** (P-1..P-9, P-11 Phases 3–4; P-10 Phase 5). **Via shared seams (not counted):** F-7 catalogue keys +
-admin-block entries; F-6 Labs entry; F-3 MCP tools; F-4 settings page; F-5 re-point exemptions; F-8 reach
+admin-block entries; F-3 MCP tools; F-4 settings page; F-5 re-point exemptions; F-8 reach
 rebuild job (only under §4.10 step 2). **Deferred (Phase 6):** roadmap `sortFor` + roadmap enums.
 
 ## 8. Phases & validation gates
@@ -470,7 +470,7 @@ rebuild job (only under §4.10 step 2). **Deferred (Phase 6):** roadmap `sortFor
 | Phase | Deliverable | Gate |
 | --- | --- | --- |
 | **0. Prereqs** | Foundations (F-1..F-8, `fork_settings`); plan 10 fork catalogue file, UX Team template, per-tool MCP gate | Merged; fork drift green |
-| **1. Schema + registry** | Fork tables; `frameworks.ts` (RICE v1), `framework-sql.ts`, config; Labs entry (F-6); keys in fork + admin block (F-7); UX Team template keys; re-point exemptions (F-5) | Unit: RICE math, validation, `compatibleWith` equivalence. DB: TS/SQL parity over every entry. `seedSystemData`: Manager lacks both keys, Owner/Admin hold both. **Pooled:** fork lineage applied fleet-wide before dependent code. |
+| **1. Schema + registry** | Fork tables; `frameworks.ts` (RICE v1), `framework-sql.ts`, config; fork feature flag (F-6); keys in fork + admin block (F-7); UX Team template keys; re-point exemptions (F-5) | Unit: RICE math, validation, `compatibleWith` equivalence. DB: TS/SQL parity over every entry. `seedSystemData`: Manager lacks both keys, Owner/Admin hold both. **Pooled:** fork lineage applied fleet-wide before dependent code. |
 | **2. Backend** | Services + fns (§4.7) incl. switch transaction and save guard | Integration per §9 (authz, status gate, stale-form conflict, switch semantics, history). `MATRIX.md` regenerated. |
 | **3. Post-modal panel** | P-8, P-9; panel | Portal + roadmap modal unchanged (snapshot). Manual: Under Review → score → vote on portal → score rose; move to Planned → read-only. |
 | **4. Inbox sort + row chip** | P-1..P-7, **P-11** (chip ships with the sort) | Keyset: 3 pages over current / legacy / needs-re-scoring / unscored / zero-vote posts, no dup/skip, tier order held. Chip matches sort value on every row. `EXPLAIN ANALYZE` in budget. `priority` sort regression. Saved view round-trip. |
@@ -527,7 +527,7 @@ edit + migrate (reconcile restores Manager rows).
 
 ## 11. Relationship to other v2 plans
 
-- **Foundations / `02-fork-conventions.md`:** fork lineage, `fork_settings`, F-3/F-4/F-5/F-6/F-7/F-8, `SEAMS.md`
+- **Foundations / `02-fork-conventions.md`:** fork lineage, `fork_settings`, F-3/F-4/F-5/F-7/F-8, `SEAMS.md`
   (P-1..P-10 + new P-11).
 - **10-rbac-persona-extensions.md:** this plan relies on `FORK_WORKSPACE_ADMIN_PERMISSIONS` holding both
   prioritization keys, the "UX Team" template holding `prioritization.score`, `prioritization.manage`,

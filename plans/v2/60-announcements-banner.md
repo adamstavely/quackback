@@ -29,7 +29,7 @@
 | **Instant push:** writes publish a content-free `revision` event on logical channel `fork:announcements` via upstream `pubsub.publish`; portal and embed hold an SSE stream (new fork route reusing `subscribe`, `createSseStream`, `startStreamHeartbeat`, `createStreamLimiter`, HMAC stream-token pattern) and refetch on change. 30 s TTL / SWR design removed (N-5 closed). Scheduled go-live/expiry handled by a client timer at `nextTransitionAt` (still no jobs). | D-N6 |
 | New seam: module-state ledger entry for a **dedicated** banner stream limiter (embeds on busy internal apps must not exhaust the chat stream budget). | D-N6 + module-state rule |
 | `announcement.manage` granted to Manager (system) and the **"Fleet Agent"** custom-role template; Admin (fleet owner) holds it by construction. N-8 closed. | D-N8 |
-| MCP registration, settings nav, Labs entry, catalogue edit now satisfied by shared seams F-3/F-4/F-6/F-7 — not counted. Tenant audit seam kept (N-9 → decided) and moved to Phase 1 so admin writes are audited from day one. | `02-…` §10, D-C2 |
+| MCP registration, settings nav, catalogue edit now satisfied by shared seams F-3/F-4/F-7 — not counted. Tenant audit seam kept (N-9 → decided) and moved to Phase 1 so admin writes are audited from day one. | `02-…` §10, D-C2 |
 | `created_by/updated_by_principal_id` declared as **exemptions** (staff-only) in the fork re-point registry (via F-5). | `02-…` §8 |
 
 ## Staff-review changes
@@ -148,7 +148,7 @@ filtering stays in the feed read.
 | MCP tools | `apps/web/src/lib/server/mcp/tools/fork-announcements.ts`, listed in `mcp/tools/fork-index.ts` (F-3) |
 | Shared | `apps/web/src/lib/shared/fork/announcements/{types.ts, schema.ts (zod), visibility.ts, presets.ts, placeholders.ts}` |
 | Components | `apps/web/src/components/fork/announcements/{portal-banner.tsx, banner-bar.tsx, editor-form.tsx, template-picker.tsx, preview.tsx, use-banner-stream.ts}` |
-| Settings registration | `components/fork/settings/fork-settings-modules.ts` (F-4); Labs `fork-announcements` in `lib/shared/fork/labs.ts` (F-6) |
+| Settings registration | `components/fork/settings/fork-settings-modules.ts` (F-4); fork flag `fork_settings.features.announcements` in `lib/shared/fork/labs.ts` (F-6) |
 | Routes | `routes/admin/settings.fork-announcements.tsx` (+ `.templates.tsx`, `.install.tsx`); `routes/api/fork-announcements/{stream.ts, banner[.]js.ts, embed/everyone[.]json.ts, embed/session.ts, embed/feed.ts, embed/font.$fontId.$weight[.]woff2.ts}` |
 | Embed SDK | `packages/widget/src/fork/banner/{banner-queue.ts, render.ts, dismiss.ts, styles.ts, stream.ts, presets.ts}` |
 
@@ -336,7 +336,7 @@ upstream's primitives unchanged.
   1. **No viewer authentication** (intranet revision): frames carry only `{ epoch, rev }`, never announcement
      content, and identity-free embeds (§4.7) must be able to subscribe, so the stream token of the staff-review
      design is dropped. Reach is restricted by the network and edge SSO (D-E1); abuse is bounded by the
-     dedicated limiter (step 2) and per-IP cap. Labs/`enabled` off → 404.
+     dedicated limiter (step 2) and per-IP cap. the fork flag / `enabled` off → 404.
   2. Reserve a slot on the **dedicated** `announcementStreamLimiter` (`createStreamLimiter` from
      `realtime/stream-connection-limit.ts:77`; e.g. `maxGlobal 300, maxPerWorkspace 200, maxPerIp 20`). Refused →
      503; the client falls back to a 60 s poll of the feed.
@@ -420,7 +420,7 @@ employee (D-E1), but the banner SDK cannot know *who* without an identity token.
 
 **Identity-free feed — `GET /api/fork-announcements/embed/everyone.json[?rev=<rev>]`:**
 - No custom request headers → no CORS preflight. `enforcePerIpLimit` (`widget/public-endpoint.ts:45`,
-  `keyPrefix 'fork-ann-everyone'`, 120/min). Embed or Labs off, or portal not `public` → `{ enabled:false }`.
+  `keyPrefix 'fork-ann-everyone'`, 120/min). Embed or the fork flag off, or portal not `public` → `{ enabled:false }`.
 - Body: `buildBannerFeed({ kind: 'everyone' }, 'embed')` → `{ enabled, revision, nextTransitionAt, items, theme,
   font }` (theme/font per §4.2; identical for every viewer).
 - Headers: `Access-Control-Allow-Origin: *`, `Content-Type: application/json`,
@@ -454,7 +454,7 @@ never blanks the banner.
 - **`POST /api/fork-announcements/embed/session`** `{ ssoToken }` (JSON → CORS preflight; `OPTIONS` via the
   existing `preflightResponse()`/`corsHeaders()` in `lib/server/integrations/apps/cors.ts:15-21`, precedent
   `routes/api/track.ts:17`):
-  1. `enforcePerIpLimit` (`keyPrefix 'fork-ann-session'`, 30/min); embed or Labs off, or portal not `public` →
+  1. `enforcePerIpLimit` (`keyPrefix 'fork-ann-session'`, 30/min); embed or the fork flag off, or portal not `public` →
      `{ enabled:false }`.
   2. `getWidgetSecret()` (`settings.widget.ts:426`) + `verifyHS256JWT` (`identity-token.ts:54`); require
      `sub|id` and `email` — the same claims `/api/widget/identify` requires (`routes/api/widget/identify.ts:195-213`).
@@ -513,7 +513,7 @@ never blanks the banner.
 - `portal-banner.tsx` is self-fetching (`useQuery`, `staleTime: Infinity`, invalidated by the stream's
   `revision`, window focus, `nextTransitionAt` timer); the `_portal.tsx` seam is one JSX line + import between
   `<PortalHeader …/>` and `<main>` (`routes/_portal.tsx:381-390`).
-- Renders only when Labs `fork-announcements` and `announcements.enabled`. Dismissal
+- Renders only when the fork flag `features.announcements` and `announcements.enabled` are on. Dismissal
   `localStorage['qb.banner.dismissed']` (id → `updatedAt`). Presets drive `role`/`aria-live`.
 - English literals (D-N1); `components/fork/**` is outside `PORTAL_SOURCE_ROOTS`
   (`lib/shared/__tests__/portal-message-coverage.test.ts:19-25`), so no locale keys are needed.
@@ -524,7 +524,7 @@ never blanks the banner.
 
 - Page registered through F-4 (`fork-settings-modules.ts` adds "Announcements" to the workspace module);
   visible with `announcement.view` (read-only list, preview and templates); editor, actions and config panel
-  render only with `announcement.manage`; shows an "enable in Labs" notice when the experiment is off.
+  render only with `announcement.manage`; shows an "enable in settings" notice when the fork flag is off.
 - List (derived-state chips), editor: **kind picker with live preset preview** (same `banner-bar.tsx`),
   "Start from template" (placeholder inputs, §4.2), title, body, link, priority, surfaces, audience (all /
   segments, reusing the existing segment list fn), publish-now / schedule / expire (no dismissibility control — every banner is dismissible, D-N9).
@@ -622,7 +622,7 @@ principal references.
   `WORKSPACE_ADMIN_PERMISSIONS` (:613, filter :649) → both granted. The Fleet Agent / Fleet Observer templates
   are `10-…`'s (listed under *Depends on*). Invariant (unit test): every system role or template holding
   `announcement.manage` also holds `announcement.view`.
-- Labs toggling stays with upstream's Labs permission.
+- The fork feature flag is toggled on the fork settings page under `settings.manage`.
 - The embed endpoints are viewer reads (no permission key): `everyone.json` and `stream` are identity-free
   (audience-all / content-free; network + edge SSO restrict reach, D-E1); `embed/session` + `embed/feed` are
   gated by widget-JWT verification and the viewer token. All require `embedEnabled` and a `public` portal.
@@ -631,7 +631,7 @@ principal references.
 ## 7. Seams
 
 Shared seams used, not counted: F-1 (fork migrations), F-2 (drift), F-3 (MCP tools), F-4 (settings page),
-F-5 (re-point exemption), F-6 (Labs `fork-announcements`), F-7 (`announcement.view`, `announcement.manage`),
+F-5 (re-point exemption), F-7 (`announcement.view`, `announcement.manage`),
 F-9 (`fork_announcement.*` audit members).
 
 | ID | Upstream file | Change (one-liner) | Phase | Why unavoidable | How to re-apply |
@@ -661,7 +661,7 @@ Generated (regenerate): `lib/shared/permissions.ts`, `MATRIX.md`, `MODULE-STATE.
 
 | Phase | Deliverable | Gate |
 | --- | --- | --- |
-| **1. Data + authoring** | Table + migration, service, `visibility.ts`, `presets.ts`, `placeholders.ts`, templates key + page, config, key via F-7, Labs via F-6, page via F-4, re-point exemption via F-5, audit members (F-9), transactional audit, both keys, revision counter (`fork_announcement_revision`, bumped in each write tx) + publish | Fork drift clean; `isLive` + placeholder unit tests; Manager and a Fleet-Agent-template role can author; Contributor reads the list but write fns 403; audit rows name the author; injected audit-insert failure rolls back the write and publishes nothing; `MATRIX.md` regenerated; module-state green |
+| **1. Data + authoring** | Table + migration, service, `visibility.ts`, `presets.ts`, `placeholders.ts`, templates key + page, config, key via F-7, fork feature flag, page via F-4, re-point exemption via F-5, audit members (F-9), transactional audit, both keys, revision counter (`fork_announcement_revision`, bumped in each write tx) + publish | Fork drift clean; `isLive` + placeholder unit tests; Manager and a Fleet-Agent-template role can author; Contributor reads the list but write fns 403; audit rows name the author; injected audit-insert failure rolls back the write and publishes nothing; `MATRIX.md` regenerated; module-state green |
 | **2. Portal banner + push + status** | `feed.ts`, `status-feed.ts`, `getPortalBannerFn`, `portal-banner.tsx`, `_portal.tsx` mount, `stream.ts` route, dedicated limiter (N-5), resolved-at status read | `check:widget-bundle` passes; non-user actor → nothing; segment row only to members; publish in admin appears in an open portal tab < 2 s without reload; **R2-8 gap test green** (publish injected before `subscribe`, between `subscribe` and the initial read, and between the read and the initial frame → the open portal tab shows the new content without reconnect or poll); out-of-order frames and older feed responses never regress the banner; archive disappears likewise; scheduled item appears at `publish_at` via timer; hidden tab closes the stream; limiter refusal falls back to polling; open incident appears / resolves; a >14-day-old incident resolved now shows `success` for 1 h then disappears on the `nextTransitionAt` timer; maintenance appears on lead-window entry |
 | **3. Embed** | tsup entry (N-3), `banner[.]js.ts`, `embed/everyone[.]json.ts`, `embed/session.ts`, `embed/feed.ts`, font route (bundled `@fontsource` files), viewer token, optional identity lifecycle + `getIdentityToken`, shadow-DOM renderer + SSE client, install page | host-vary green (incl. `everyone.json`); script-tag-only install shows audience-all embed items and never segment items; `everyone.json` needs no preflight and a new `rev` bypasses the cached body; portal not `public` or embed off → nothing; bad/expired `ssoToken` → 403 and everyone feed stays; unknown identity → everyone feed, no user created; identified user sees the same items as in the portal incl. segments (D-N7); banner initialised before widget identify gains segment items after it; account switch never shows the previous user's segment items; viewer-token expiry recovers via `getIdentityToken`, or falls back to everyone without it; deleted/recreated principal → `reidentify`; viewer token from workspace A rejected on B; strict-CSP page (incl. `font-src <instance>`) renders with the branding font and makes no request to any other origin; widget + banner coexist; publish reaches the embed instantly, including the R2-8 gap test (publish at each injected stream hook → embed updates without reconnect or poll) |
 | **4. Tower** | MCP tools (F-3), tower UI (`20-…`) | Needs `10-…` Phase 1a + `20-…` OAuth. Publish to A only; broadcast A+B arrives instantly on both; retry idempotent (no second row/audit); timeout after tenant commit reported `uncertain` then reconciled `succeeded`; fleet owner and Fleet Agent publish; Fleet Observer lists announcements/templates but upsert/archive denied; tenant audit names the human |
@@ -692,7 +692,7 @@ Generated (regenerate): `lib/shared/permissions.ts`, `MATRIX.md`, `MODULE-STATE.
   `segmentIdsForPrincipal`, `getPortalConfig().access.visibility`) — the `PortalAccessContext` /
   `evaluatePortalAccess` pins are removed with the replication;
   realtime primitives (`subscribe`, `publish`, `createStreamLimiter`, `startStreamHeartbeat`, `createSseStream`).
-- **Route:** stream — no auth required, `Access-Control-Allow-Origin: *`, 404 when Labs/`enabled` off,
+- **Route:** stream — no auth required, `Access-Control-Allow-Origin: *`, 404 when the fork flag / `enabled` off,
   `subscribe` resolves **before** the initial read (call order asserted through the hooks), initial `revision` frame,
   forwards a published revision, frames contain only `{ epoch, rev }` and no announcement content, never sends a `rev`
   ≤ the last one sent on that connection, releases slot on abort (including abort during `subscribe`), 503 at

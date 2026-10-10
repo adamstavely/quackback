@@ -15,7 +15,6 @@
 | F-3 | `apps/web/src/lib/server/mcp/tools/index.ts`                      | `registerForkTools(server, auth)` at end of `registerTools`               | 10, 20, 30, 50, 60 | planned |
 | F-4 | `apps/web/src/components/admin/settings/settings-modules.ts`      | `return applyForkSettingsModules(modules, flags)`                         | 10, 30, 40, 50, 60 | planned |
 | F-5 | `apps/web/src/lib/server/domains/principals/principal-repoint.ts` | Invoke fork re-point steps on principal merge                             | 40 (+ any customer-referencing fork table) | planned |
-| F-6 | `apps/web/src/lib/shared/labs/registry.ts`                        | `...FORK_LABS_EXPERIMENTS` spread                                         | 50, 60 (+ others as gated) | planned |
 | F-7 | `packages/db/src/rbac-catalogue.ts`                               | Fenced fork blocks in `PERMISSIONS`, `PERMISSION_CATALOGUE`, `WORKSPACE_ADMIN_PERMISSIONS`, Contributor list | 10, 30, 40, 50, 60 | planned |
 | F-8 | `apps/web/src/lib/server/jobs/definitions.ts`                     | `...FORK_JOB_DEFINITIONS` spread at end of `JOB_DEFINITIONS`              | 40 (+ any scheduled fork job) | planned |
 | F-9 | `apps/web/src/lib/server/audit/log.ts`                            | One fenced block of fork members in `AuditEventType` (`account_action.*`, `fork_announcement.*`) | 40, 60 | planned |
@@ -23,8 +22,8 @@
 | F-11 | `apps/web/src/lib/server/fleet/schema-floor.ts` | First statement of `assertSchemaFloor` checks the fork ledger + catalogue version (`FORK_MIN_SCHEMA_VERSION`) | 20 (all pooled) | planned |
 | F-12 | `apps/web/src/lib/server/content/ssrf-guard.ts` (+ `events/integrations/webhook/constants.ts` write check) | Env allow-list for intranet CIDRs/hosts; loopback + link-local always blocked (`04-…` E-1) | all (blocker for intranet SSO, 40, webhooks) | planned |
 
-Plan seam tables that list a settings-nav entry, an MCP registration line, a Labs line or catalogue
-keys, a scheduled job or audit event types are **satisfied by F-3 / F-4 / F-6 / F-7 / F-8 / F-9 / F-10 / F-11 / F-12** and are not counted again below.
+Plan seam tables that list a settings-nav entry, an MCP registration line or catalogue
+keys, a scheduled job or audit event types are **satisfied by F-3 / F-4 / F-7 / F-8 / F-9 / F-10 / F-11 / F-12** and are not counted again below.
 
 The fork's production image is a fork-owned `apps/web/Dockerfile.fork` layered on the upstream image; upstream's
 `apps/web/Dockerfile` is **not** edited (`02-fork-conventions.md` §3.3a).
@@ -86,7 +85,7 @@ The fork's production image is a fork-owned `apps/web/Dockerfile.fork` layered o
 
 ## Totals (core phases, excluding conditional / optional / deferred)
 
-Foundations 12 (incl. F-12 SSRF allow-list, a blocker for intranet SSO) · RBAC 14 (R-10 spans 10 files) · Control tower 3 (+1 conditional) · Tiered support 11 (8 core +
+Foundations 11 (incl. F-12 SSRF allow-list, a blocker for intranet SSO; F-6 retired — upstream removed Labs) · RBAC 14 (R-10 spans 10 files) · Control tower 3 (+1 conditional) · Tiered support 11 (8 core +
 3 hub) · Account actions 0 own (uses T-2's slot; +1 optional, +1 deferred) · Prioritization 11 · Announcements 3.
 
 Per the staff review, these counts are an estimate of merge surface, not a target: add a seam whenever an
