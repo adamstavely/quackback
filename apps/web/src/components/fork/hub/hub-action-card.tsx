@@ -32,15 +32,19 @@ export function HubActionCard({
 }: HubActionCardProps): ReactElement {
   return (
     <Card>
-      <CardContent className="flex items-center gap-4 p-6">
+      <CardContent className="flex flex-wrap items-center gap-4 p-6">
         <span className="flex size-12 shrink-0 items-center justify-center rounded-[var(--radius)] bg-primary/10">
           <Icon aria-hidden className="size-6 text-primary" />
         </span>
-        <span className="flex min-w-0 grow flex-col gap-0.5">
+        <span className="flex min-w-0 basis-32 flex-1 flex-col gap-0.5">
           <span className="text-base font-semibold text-foreground">{title}</span>
           <span className="text-[13px] leading-snug text-muted-foreground">{description}</span>
         </span>
-        <Button asChild variant={primary ? 'default' : 'outline'} className="shrink-0">
+        <Button
+          asChild
+          variant={primary ? 'default' : 'outline'}
+          className="shrink-0 max-w-full whitespace-normal"
+        >
           <Link to={to}>{cta}</Link>
         </Button>
       </CardContent>

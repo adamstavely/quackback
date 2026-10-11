@@ -403,6 +403,13 @@ function PortalLayout() {
               {customCss && (
                 <style dangerouslySetInnerHTML={{ __html: escapeInlineStyle(customCss) }} />
               )}
+              {/* FORK-SEAM(A11Y-2): keyboard bypass for repeated portal navigation. */}
+              <a
+                href="#portal-main"
+                className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:bg-background focus:p-3 focus:text-foreground focus:outline-2 focus:outline-current"
+              >
+                Skip to content
+              </a>
               <PortalHeader
                 orgName={workspaceName}
                 orgLogo={brandingData?.logoUrl ?? null}
@@ -414,7 +421,7 @@ function PortalLayout() {
               />
               {/* FORK-SEAM(N-1): announcement banners under the portal header. */}
               <PortalAnnouncementsBanner />
-              <main className="flex-1 w-full flex flex-col">
+              <main id="portal-main" tabIndex={-1} className="flex-1 w-full flex flex-col">
                 <FileViewerProvider onJumpToMessage={scrollToMessage}>
                   <Outlet />
                 </FileViewerProvider>

@@ -77,3 +77,27 @@ test('restores live connection after embed is turned back on', async () => {
   await el.refresh()
   expect(streams).toBeGreaterThan(first)
 })
+test('a live update retains link focus, and final dismissal provides a focus destination', async () => {
+  ;(window as Window & { __QUACKBACK_BANNER__?: { url: string } }).__QUACKBACK_BANNER__ = {
+    url: 'https://example.internal',
+  }
+  let value = {
+    ...feed(),
+    items: [{ ...item, link: { url: 'https://example.internal/details', label: 'Details' } }],
+  }
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockImplementation(async () => ({ ok: true, json: async () => value }))
+  )
+  const el = document.createElement('review-banner') as QuackbackBannerElement
+  document.body.append(el)
+  await el.refresh()
+  ;(el.shadowRoot!.querySelector('.link') as HTMLElement).focus()
+  value = { ...value, items: [{ ...value.items[0]!, title: 'Updated notice' }] }
+  await el.refresh()
+  expect(el.shadowRoot!.activeElement?.textContent).toBe('Details')
+  const dismiss = el.shadowRoot!.querySelector('.dismiss') as HTMLButtonElement
+  dismiss.focus()
+  dismiss.click()
+  expect(el.shadowRoot!.activeElement?.textContent).toBe('No more announcements.')
+})

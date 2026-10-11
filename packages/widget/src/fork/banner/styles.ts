@@ -86,11 +86,14 @@ export const BASE_CSS = `
   .content { flex-direction: row; align-items: baseline; gap: 16px; }
   .text { flex: 1; }
 }
-.text { margin: 0; min-width: 0; }
+.text { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .title { font-weight: 600; }
 
 .link {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   color: inherit;
   font-weight: 500;
   text-decoration: underline;
@@ -118,6 +121,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .dismiss svg { width: 16px; height: 16px; }
 
 .more {
+  min-height: 24px;
   align-self: flex-start;
   padding: 2px;
   border: 0;
@@ -131,7 +135,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .more:hover { opacity: 1; }
 
 .link:focus-visible, .dismiss:focus-visible, .more:focus-visible {
-  outline: 2px solid var(--ring);
+  outline: 2px solid currentColor;
   outline-offset: 2px;
 }
 

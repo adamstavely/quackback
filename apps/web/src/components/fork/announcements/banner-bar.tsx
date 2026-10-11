@@ -48,7 +48,7 @@ export function BannerBar({
     >
       <Icon aria-hidden className={cn('mt-0.5 size-5 shrink-0', style.iconColor)} />
       <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-x-4">
-        <p className="min-w-0 sm:flex-1">
+        <p className="min-w-0 sm:flex-1 [overflow-wrap:anywhere]">
           {/* The kind in words, so it never rests on colour or icon alone (SC 1.4.1). */}
           <span className="sr-only">{preset.label}: </span>
           <span className="font-semibold">{item.title}</span>
@@ -58,7 +58,7 @@ export function BannerBar({
         {item.link ? (
           <a
             href={item.link.url}
-            className="shrink-0 rounded-sm font-medium underline underline-offset-2 outline-none hover:no-underline focus-visible:ring-2 focus-visible:ring-ring"
+            className="min-w-0 max-w-full rounded-sm font-medium [overflow-wrap:anywhere] underline underline-offset-2 outline-none hover:no-underline focus-visible:outline-2 focus-visible:outline-current focus-visible:outline-offset-2"
           >
             {item.link.label}
           </a>

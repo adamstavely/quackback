@@ -33,7 +33,7 @@ export function HubCardHeader({
   viewAll,
 }: HubCardHeaderProps): ReactElement {
   return (
-    <div className="mb-1 flex items-center gap-4 border-b border-border/60 pb-4">
+    <div className="mb-1 flex flex-wrap items-center gap-4 border-b border-border/60 pb-4">
       <div className="flex min-w-0 flex-col gap-1">
         <h2 id={headingId} className="text-xl font-semibold tracking-tight text-foreground">
           {title}
@@ -42,7 +42,7 @@ export function HubCardHeader({
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-3.5">
         {viewAll ? (
-          <Button asChild variant="link" size="sm" className="px-0">
+          <Button asChild variant="link" size="sm" className="px-0 text-foreground underline">
             <Link to={viewAll.to} search={viewAll.search}>
               {viewAll.label}
             </Link>
@@ -112,19 +112,21 @@ export function HubRow({
   trailing,
 }: HubRowProps): ReactElement {
   return (
-    <li className="grid grid-cols-[2rem_minmax(0,1fr)_auto_auto] items-center gap-x-3.5 border-b border-border/40 py-3 last:border-b-0">
+    <li className="grid grid-cols-[2rem_minmax(0,1fr)] sm:grid-cols-[2rem_minmax(0,1fr)_auto] xl:grid-cols-[2rem_minmax(0,1fr)_auto_auto] items-center gap-x-3.5 border-b border-border/40 py-3 last:border-b-0">
       <span className="flex items-center justify-center">{lead}</span>
       <span className="flex min-w-0 flex-col gap-0.5">
         <Link
           to={titleTo}
-          className="truncate rounded-[var(--radius)] text-[15px] font-medium text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/40"
+          className="truncate rounded-[var(--radius)] text-[15px] font-medium text-foreground outline-none hover:underline focus-visible:outline-2 focus-visible:outline-current"
         >
           {title}
         </Link>
         <span className="truncate text-xs text-muted-foreground">{meta}</span>
       </span>
-      {status}
-      <span className="flex min-w-[7rem] justify-end">{trailing}</span>
+      <span className="col-span-2 sm:col-span-1">{status}</span>
+      <span className="col-span-2 sm:col-span-3 flex min-w-0 justify-end pt-2 xl:col-span-1 xl:min-w-[7rem] xl:pt-0">
+        {trailing}
+      </span>
     </li>
   )
 }

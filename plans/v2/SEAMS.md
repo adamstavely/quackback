@@ -110,6 +110,23 @@ The status candidate selection, storage fallback, and embed reconnection fixes
 are entirely fork-owned and add no upstream seams. Release instructions are in
 `docs/fork/release-checklist.md`.
 
+## Accessibility review integrations (2026-10-11)
+
+Two additional cross-cutting seam IDs, outside the feature estimates above:
+
+- **A11Y-1 — `components/help-center/help-center-search.tsx` and `ask-ai.tsx`:**
+  expose combobox/listbox/active-option semantics and search status, and use readable
+  result text. Optional `AskAiRow.optionId` leaves other callers unchanged. Owner:
+  fork portal maintainer. Gate: `help-center-search.test.tsx` and assistive-technology
+  verification of the selected result after upstream changes.
+- **A11Y-2 — `routes/_portal.tsx`:** keyboard-visible skip link and target on the
+  existing main landmark. Owner: fork portal maintainer. Gate: keyboard bypass on
+  each portal layout upgrade.
+
+Other accessibility corrections remain in fork-owned hub/banner files. See
+`docs/fork/accessibility-review.md` for tested criteria and outstanding release
+validation; these changes are not a full WCAG conformance declaration.
+
 ## Generated files (regenerate, never hand-merge)
 
 `apps/web/src/lib/shared/permissions.ts` · `policy/authz-matrix/MATRIX.md` · `migration-contract/CONTRACT.md`

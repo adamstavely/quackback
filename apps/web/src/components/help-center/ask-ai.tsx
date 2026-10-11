@@ -301,7 +301,7 @@ export function HighlightedText({ text, query }: { text: string; query: string }
     <>
       {splitByTerms(text, query).map((seg, i) =>
         seg.match ? (
-          <mark key={i} className="bg-transparent font-semibold text-primary">
+          <mark key={i} className="bg-transparent font-semibold text-foreground">
             {seg.text}
           </mark>
         ) : (
@@ -356,6 +356,8 @@ function SourceList({
 }
 
 interface AskAiRowProps {
+  /** FORK-SEAM(A11Y-1): optional combobox option semantics for the hero. */
+  optionId?: string
   query: string
   onSelect: () => void
   /** Keyboard-selection styling (arrow keys). */
@@ -363,10 +365,14 @@ interface AskAiRowProps {
 }
 
 /** The pinned "Ask AI about ..." row shown first in autocomplete results. */
-export function AskAiRow({ query, onSelect, highlighted = false }: AskAiRowProps) {
+export function AskAiRow({ query, onSelect, highlighted = false, optionId }: AskAiRowProps) {
   return (
     <button
       type="button"
+      id={optionId}
+      role={optionId ? 'option' : undefined}
+      aria-selected={optionId ? highlighted : undefined}
+      tabIndex={optionId ? -1 : undefined}
       onClick={onSelect}
       data-highlighted={highlighted || undefined}
       className={`group flex w-full items-center gap-2.5 px-3 py-2.5 text-start transition-colors cursor-pointer rounded-lg ${
@@ -384,7 +390,7 @@ export function AskAiRow({ query, onSelect, highlighted = false }: AskAiRowProps
             values={{ query }}
           />
         </span>
-        <span className="block text-xs text-muted-foreground/70 line-clamp-1">
+        <span className="block text-xs text-muted-foreground line-clamp-1">
           <FormattedMessage
             id="helpAskAi.rowSubtitle"
             defaultMessage="Use AI to answer your question in seconds"
