@@ -30,7 +30,9 @@ const AREAS: Record<MessageArea, { users: RegExp; importers: RegExp | null }> = 
   },
   helpCenter: {
     users: /^(components\/help-center\/|routes\/_portal\/hc\/)/,
-    importers: /^(components\/help-center\/|routes\/_portal\/hc(\.tsx$|\/))/,
+    // FORK-SEAM(T-18): the help hub reuses the help-center search and loads its strings.
+    importers:
+      /^(components\/help-center\/|routes\/_portal\/hc(\.tsx$|\/)|routes\/_portal\/hub\.tsx$|components\/fork\/hub\/)/,
   },
   twoFactor: {
     users: /^components\/auth\/two-factor-(challenge-step|enroll-steps)\.tsx$/,

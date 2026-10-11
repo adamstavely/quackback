@@ -17,6 +17,8 @@ import { userContentHostMiddleware } from '@/lib/server/middleware/user-content-
 import { serverFnLogMiddleware } from '@/lib/server/middleware/server-fn-log'
 import { workspaceContextMiddleware } from '@/lib/server/middleware/workspace-context'
 import { expireRouteContextOnWrite } from '@/lib/client/route-context-middleware'
+// FORK-SEAM(T-16): a query-less GET / goes to the help hub, the portal home.
+import { portalHomeMiddleware } from '@/lib/server/fork/middleware/portal-home'
 
 /**
  * Same-origin protection for server functions, matching the framework default.
@@ -48,6 +50,8 @@ export const startInstance = createStart(() => {
       oauthCorsMiddleware,
       workspaceContextMiddleware,
       csrfMiddleware,
+      // FORK-SEAM(T-16): a query-less GET / goes to the help hub, the portal home.
+      portalHomeMiddleware,
     ],
     // Server-function failures never reach the request middleware's error
     // branch (see server-fn-log.ts), so they are logged here instead. Unlike
