@@ -15,6 +15,8 @@ import { isAdmin, type Role } from '@/lib/shared/roles'
 import { resolveActorPermissions } from '@/lib/server/policy/permissions'
 import { hasApiScope, scopeForPermission } from '@/lib/server/domains/api-keys/api-key-scopes'
 import type { PermissionKey } from '@/lib/shared/permissions'
+// FORK-SEAM(R-1): a key acts with its creator's custom role, not the legacy preset.
+import { resolveKeyPermissions } from '@/lib/server/fork/rbac/key-authority'
 
 export type MemberRole = Role
 
@@ -30,6 +32,9 @@ export interface ApiAuthContext {
   principalId: PrincipalId
   /** The role of the member who created the key */
   role: MemberRole
+  // FORK-SEAM(R-1): the key's resolved authority (plans/v2/10 §4.3). Unset only
+  // in tests that build a context by hand, which keep the preset.
+  permissions?: ReadonlySet<PermissionKey>
   /**
    * The key's principal row read during auth, or null when the principal is
    * missing. Exposed so downstream consumers (the MCP handler) reuse the
@@ -89,6 +94,12 @@ export async function requireApiKey(request: Request): Promise<ApiAuthContext | 
     apiKey,
     principalId: apiKey.principalId,
     role,
+    // FORK-SEAM(R-1)
+    permissions: await resolveKeyPermissions({
+      servicePrincipalId: apiKey.principalId,
+      serviceRole: role,
+      createdById: apiKey.createdById,
+    }),
     principal: principalRecord ?? null,
     importMode: false,
   }
@@ -131,7 +142,8 @@ export async function withApiKeyAuth(
   // full owner authority. No options means a valid key is required but no
   // authorization gate — for reads whose data is public.
   if (options) {
-    if (!resolveActorPermissions(auth.role).has(options.permission)) {
+    // FORK-SEAM(R-1)
+    if (!keyPermissions(auth).has(options.permission)) {
       throw new ForbiddenError('FORBIDDEN', `Requires the '${options.permission}' permission`)
     }
     assertKeyScopeFor(auth, options.permission)
@@ -155,13 +167,18 @@ export function assertApiPermissions(
   auth: ApiAuthContext,
   permissions: readonly PermissionKey[]
 ): void {
-  const held = resolveActorPermissions(auth.role)
+  const held = keyPermissions(auth) // FORK-SEAM(R-1)
   for (const permission of permissions) {
     if (!held.has(permission)) {
       throw new ForbiddenError('FORBIDDEN', `Requires the '${permission}' permission`)
     }
     assertKeyScopeFor(auth, permission)
   }
+}
+
+// FORK-SEAM(R-1): the resolved set, or the preset for a hand-built context.
+function keyPermissions(auth: ApiAuthContext): ReadonlySet<PermissionKey> {
+  return auth.permissions ?? resolveActorPermissions(auth.role)
 }
 
 /**

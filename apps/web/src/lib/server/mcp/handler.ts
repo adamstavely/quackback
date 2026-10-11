@@ -33,6 +33,8 @@ import { config } from '@/lib/server/config'
 import { createMcpServer } from './server'
 import type { PrincipalId } from '@quackback/ids'
 import type { McpAuthContext, McpScope } from './types'
+// FORK-SEAM(R-3): MCP callers carry their custom role's permission set.
+import { keyMcpPermissions, oauthMcpPermissions } from '@/lib/server/fork/rbac/mcp-authority'
 
 /** Build a JSON-RPC error response (used for MCP-level denials). */
 function jsonRpcError(status: number, message: string): Response {
@@ -125,6 +127,8 @@ async function resolveOAuthContext(
       role: role as Role,
       authMethod: 'oauth',
       scopes,
+      // FORK-SEAM(R-3)
+      permissions: await oauthMcpPermissions(principalId as PrincipalId, role as Role, scopes),
     }
   } catch {
     return null
@@ -188,6 +192,8 @@ export async function resolveAuthContext(request: Request): Promise<McpAuthConte
         role: authResult.role as Role,
         authMethod: 'api-key',
         scopes: keyScopes,
+        // FORK-SEAM(R-3)
+        permissions: keyMcpPermissions(authResult.permissions, authResult.role, keyScopes),
       }
     }
 
@@ -200,6 +206,8 @@ export async function resolveAuthContext(request: Request): Promise<McpAuthConte
       role: authResult.role as Role,
       authMethod: 'api-key',
       scopes: keyScopes,
+      // FORK-SEAM(R-3)
+      permissions: keyMcpPermissions(authResult.permissions, authResult.role, keyScopes),
     }
   }
 

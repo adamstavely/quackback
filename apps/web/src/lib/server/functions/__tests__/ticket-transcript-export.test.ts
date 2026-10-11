@@ -37,7 +37,11 @@ vi.mock('@/lib/server/functions/auth-helpers', () => ({
   policyActorFromAuth: hoisted.policyActorFromAuth,
 }))
 vi.mock('@/lib/shared/roles', () => ({ isTeamMember: hoisted.isTeamMember }))
-vi.mock('@/lib/server/domains/tickets/ticket.service', () => ({ getTicket: hoisted.getTicket }))
+vi.mock('@/lib/server/domains/tickets/ticket.service', () => ({
+  getTicket: hoisted.getTicket,
+  // FORK-SEAM(R-16): the export first checks the caller can see the ticket.
+  assertTicketVisible: async () => {},
+}))
 vi.mock('@/lib/server/domains/tickets/ticket-message.service', () => ({
   listTicketMessages: hoisted.listTicketMessages,
 }))

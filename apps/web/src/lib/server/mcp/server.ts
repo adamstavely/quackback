@@ -10,6 +10,8 @@ import { hasApiScope } from '@/lib/server/domains/api-keys/api-key-scopes'
 import { RESOURCE_SCOPES } from './required-scope'
 import { registerTools } from './tools'
 import type { McpAuthContext, McpScope } from './types'
+// FORK-SEAM(R-11)
+import { forkMcpResourceGate } from '@/lib/server/fork/rbac/mcp-resource-gate'
 
 type ResourceUri = keyof typeof RESOURCE_SCOPES
 
@@ -47,6 +49,11 @@ function scopeGated(
           },
         ],
       }
+    }
+    // FORK-SEAM(R-11): the caller's custom role decides which resources it reads.
+    const denied = await forkMcpResourceGate(auth, resourceUri)
+    if (denied) {
+      return { contents: [{ uri: uri.href, mimeType: 'text/plain', text: `Error: ${denied}` }] }
     }
     return fn(uri, extra)
   }
