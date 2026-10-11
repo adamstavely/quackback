@@ -8,6 +8,7 @@ import type {
   AnnouncementAudience,
   AnnouncementKind,
   AnnouncementSurface,
+  BannerFeed,
   BannerItem,
 } from '@/lib/shared/fork/announcements/types'
 
@@ -15,15 +16,7 @@ import type {
 const FEED_CAP = 5
 const DEFAULT_LINK_LABEL = 'View details'
 
-export interface BannerFeed {
-  enabled: boolean
-  /** Changes when the revision row is re-created (a restore); clients treat it as newer. */
-  epoch: string | null
-  revision: number
-  /** The next instant a banner starts or ends for this viewer, so clients refetch on time without polling. */
-  nextTransitionAt: string | null
-  items: BannerItem[]
-}
+export type { BannerFeed }
 
 const DISABLED: BannerFeed = {
   enabled: false,

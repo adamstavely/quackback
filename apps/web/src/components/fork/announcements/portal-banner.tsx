@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getPortalBannerFn } from '@/lib/server/functions/fork/announcements-portal'
-import type { BannerItem } from '@/lib/shared/fork/announcements/types'
+import type { BannerFeed, BannerItem } from '@/lib/shared/fork/announcements/types'
 import { BannerBar } from './banner-bar'
+import { useBannerStream } from './use-banner-stream'
 
 export const PORTAL_BANNER_QUERY_KEY = ['fork', 'announcements', 'portal-feed'] as const
 
@@ -35,10 +36,24 @@ export function PortalAnnouncementsBanner(): ReactElement | null {
   const queryClient = useQueryClient()
   const { data } = useQuery({
     queryKey: PORTAL_BANNER_QUERY_KEY,
-    queryFn: () => getPortalBannerFn(),
+    // A slower, older response must not replace newer content already shown.
+    queryFn: async (): Promise<BannerFeed> => {
+      const next = await getPortalBannerFn()
+      const shown = queryClient.getQueryData<BannerFeed>(PORTAL_BANNER_QUERY_KEY)
+      const older = shown && next.epoch === shown.epoch && next.revision < shown.revision
+      return older ? shown : next
+    },
     staleTime: 60_000,
     refetchOnWindowFocus: true,
+    // The recovery path for a lost notification, while the tab is visible.
+    refetchInterval: 5 * 60_000,
   })
+
+  useBannerStream(
+    !!data?.enabled,
+    data ? { epoch: data.epoch, revision: data.revision } : null,
+    () => void queryClient.invalidateQueries({ queryKey: PORTAL_BANNER_QUERY_KEY })
+  )
   // Read after mount: the server has no localStorage, so render nothing dismissed-dependent until then.
   const [dismissed, setDismissed] = useState<Record<string, string> | null>(null)
   const [expanded, setExpanded] = useState(false)

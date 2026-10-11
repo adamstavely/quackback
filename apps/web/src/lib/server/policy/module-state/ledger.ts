@@ -1328,4 +1328,16 @@ export const MODULE_STATE_LEDGER: readonly LedgerEntry[] = [
       'a log line: a wrong hit would drop one informational line, never change which providers ' +
       'are trusted.',
   },
+  // FORK-SEAM(N-5): the announcement stream's own concurrency gauge.
+  {
+    file: 'apps/web/src/lib/server/fork/announcements/stream-limit.ts',
+    name: 'announcementStreamLimiter',
+    category: 'workspace-keyed',
+    reason:
+      "Concurrency gauge for announcement banner streams, kept apart from chat's streamLimiter so " +
+      'banner viewers (every open portal tab, later every embedding app) cannot use up the ' +
+      "per-workspace budget that agents' inbox and visitors' chat streams need. Same shape as " +
+      'streamLimiter: the GLOBAL cap is shared on purpose (file descriptors belong to the process), ' +
+      "the per-workspace and per-(workspace, IP) buckets keep one workspace from refusing another's.",
+  },
 ]
