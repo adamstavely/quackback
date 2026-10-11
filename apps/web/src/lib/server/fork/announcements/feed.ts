@@ -3,6 +3,8 @@ import { and, db, eq, isNull, gt, or, sql } from '@/lib/server/db'
 import { tierAllows } from '@/lib/server/policy/access'
 import { isTeamActor, type Actor } from '@/lib/server/policy/types'
 import { readForkFeatures } from '@/lib/server/fork/settings/features'
+import { announcementsConfig } from './settings'
+import { buildStatusBanners } from './status-feed'
 import { compareBannerItems } from '@/lib/shared/fork/announcements/presets'
 import type {
   AnnouncementAudience,
@@ -91,6 +93,14 @@ export async function buildBannerFeed(
       expiresAt: row.expiresAt?.toISOString() ?? null,
       updatedAt: row.updatedAt.toISOString(),
     })
+  }
+
+  // Status-page incidents and maintenance, in the same strip (§4.5).
+  const config = await announcementsConfig.read()
+  if (config.foldInStatus) {
+    const status = await buildStatusBanners(actor, config.statusLeadHours, now)
+    items.push(...status.items)
+    transitions.push(...status.transitions.filter((t) => t > now.getTime()))
   }
 
   items.sort(compareBannerItems)

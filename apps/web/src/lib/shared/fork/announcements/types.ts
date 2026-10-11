@@ -52,6 +52,8 @@ export interface BannerItem {
   publishAt: string
   expiresAt: string | null
   updatedAt: string
+  /** A maintenance window to show with the text, formatted in the viewer's own locale. */
+  window?: { start: string; end: string | null } | null
 }
 
 /** What a viewer's feed read returns (§4.4). */
