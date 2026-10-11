@@ -5,31 +5,30 @@
  * simply take that path, and the router cannot tell "home" from "the board"
  * either: on the server and in the browser alike it fills in the board's
  * search defaults (`?sort=trending`) before any route hook runs. The raw
- * request still can. Once the router has been involved, every board URL carries
- * a query string, so a query-less `GET /` is someone arriving from outside
- * (a typed URL, a bookmark, the SSO return, a link in an email or another app).
- * That entry goes to the hub; every board URL is left as it was.
- *
- * Inside the portal the logo is the way home, so it links to the hub too.
- * Links that mean "the board" carry `FEEDBACK_BOARD_SEARCH`, the board's own
- * default, so their href is `/?sort=trending` and opening one in a new tab
- * (a raw request again) still lands on the board.
+ * request still can. Once the router has been involved every board URL carries
+ * a query string, so a query-less `GET /` is a full page load of the bare root.
+ * When it comes from outside the portal (a typed URL, a bookmark, the SSO
+ * return, a link in an email or another app) it goes to the hub. When it comes
+ * from a portal page (its Referer is the portal's own origin) it is a portal
+ * link to the board opened in a new tab, such as the Feedback tab, and is left
+ * alone. In-app navigation never reaches the server, so the Feedback tab keeps
+ * upstream's link unchanged and the logo links to the hub (seam T-17).
  */
 export const PORTAL_HOME_PATH = '/hub'
 
-/** Search that marks a link to `/` as "the feedback board", not "home". */
+/** The board's default search; the hub's own links to the board carry it. */
 export const FEEDBACK_BOARD_SEARCH = { sort: 'trending' } as const
-
-/** Search for a built-in portal nav tab's link: only the Feedback tab has one. */
-export function portalNavTabSearch(type: string): typeof FEEDBACK_BOARD_SEARCH | undefined {
-  return type === 'feedback' ? FEEDBACK_BOARD_SEARCH : undefined
-}
 
 const ENTRY_METHODS = new Set(['GET', 'HEAD'])
 
-/** True for a request that enters the portal at its root with no query string. */
-export function isBarePortalRootRequest(method: string, url: string): boolean {
+/** True for a full page load of the bare portal root that comes from outside the portal. */
+export function isBarePortalRootRequest(
+  method: string,
+  url: string,
+  referer: string | null = null
+): boolean {
   if (!ENTRY_METHODS.has(method)) return false
-  const { pathname, search } = new URL(url)
-  return pathname === '/' && search === ''
+  const { origin, pathname, search } = new URL(url)
+  if (pathname !== '/' || search !== '') return false
+  return !referer || !URL.canParse(referer) || new URL(referer).origin !== origin
 }

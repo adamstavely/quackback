@@ -11,6 +11,7 @@ import { createMiddleware } from '@tanstack/react-start'
 import { isBarePortalRootRequest, PORTAL_HOME_PATH } from '@/lib/shared/fork/portal-home'
 
 export const portalHomeMiddleware = createMiddleware().server(({ next, request }) => {
-  if (!isBarePortalRootRequest(request.method, request.url)) return next()
+  if (!isBarePortalRootRequest(request.method, request.url, request.headers.get('referer')))
+    return next()
   return new Response(null, { status: 307, headers: { Location: PORTAL_HOME_PATH } })
 })

@@ -19,6 +19,20 @@ describe('isBarePortalRootRequest', () => {
     expect(isBarePortalRootRequest('POST', 'http://acme.test/')).toBe(false)
   })
 
+  it('sends visitors from outside the portal to the hub', () => {
+    expect(
+      isBarePortalRootRequest('GET', 'http://acme.test/', 'https://idp.example/callback')
+    ).toBe(true)
+    expect(isBarePortalRootRequest('GET', 'http://acme.test/', 'not a url')).toBe(true)
+  })
+
+  it('leaves a portal link opened in a new tab on the board', () => {
+    // e.g. the Feedback tab, middle-clicked from any portal page
+    expect(isBarePortalRootRequest('GET', 'http://acme.test/', 'http://acme.test/roadmap')).toBe(
+      false
+    )
+  })
+
   it('points home at the hub route', () => {
     expect(PORTAL_HOME_PATH).toBe('/hub')
   })
