@@ -1,7 +1,7 @@
 import { useState, type ReactElement } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
-import { EllipsisHorizontalIcon, MegaphoneIcon, PlusIcon } from '@heroicons/react/24/solid'
+import { EllipsisHorizontalIcon, SpeakerWaveIcon, PlusIcon } from '@heroicons/react/24/solid'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -102,7 +102,7 @@ export function AnnouncementList({
           ))}
         </div>
       ) : announcements.length === 0 ? (
-        <EmptyState icon={MegaphoneIcon} title={emptyMessage} className="h-48" />
+        <EmptyState icon={SpeakerWaveIcon} title={emptyMessage} className="h-48" />
       ) : (
         <ul aria-labelledby="announcement-list-heading" className="divide-y divide-border/50 px-3">
           {announcements.map((item) => (
