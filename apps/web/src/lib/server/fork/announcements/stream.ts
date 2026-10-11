@@ -1,6 +1,6 @@
 import { forkAnnouncementRevision } from '@/lib/server/fork/db'
 import { db, eq } from '@/lib/server/db'
-import { forkFeatures } from '@/lib/server/fork/settings/features'
+import { readForkFeatures } from '@/lib/server/fork/settings/features'
 import { subscribe } from '@/lib/server/realtime/pubsub'
 import { startStreamHeartbeat } from '@/lib/server/realtime/stream-heartbeat'
 import { createSseStream, SSE_RESPONSE_HEADERS } from '@/lib/server/utils/sse'
@@ -35,7 +35,7 @@ export async function openAnnouncementStream(
   request: Request,
   hooks: AnnouncementStreamHooks = {}
 ): Promise<Response> {
-  if (!(await forkFeatures.read()).announcements) {
+  if (!(await readForkFeatures()).announcements) {
     return new Response('Not found', { status: 404 })
   }
 

@@ -2,7 +2,7 @@ import { forkAnnouncementRevision, forkAnnouncements } from '@/lib/server/fork/d
 import { and, db, eq, isNull, gt, or, sql } from '@/lib/server/db'
 import { tierAllows } from '@/lib/server/policy/access'
 import { isTeamActor, type Actor } from '@/lib/server/policy/types'
-import { forkFeatures } from '@/lib/server/fork/settings/features'
+import { readForkFeatures } from '@/lib/server/fork/settings/features'
 import { compareBannerItems } from '@/lib/shared/fork/announcements/presets'
 import type {
   AnnouncementAudience,
@@ -18,7 +18,7 @@ const DEFAULT_LINK_LABEL = 'View details'
 
 export type { BannerFeed }
 
-const DISABLED: BannerFeed = {
+export const DISABLED_FEED: BannerFeed = {
   enabled: false,
   epoch: null,
   revision: 0,
@@ -38,7 +38,7 @@ export async function buildBannerFeed(
   access: { granted: boolean },
   surface: AnnouncementSurface
 ): Promise<BannerFeed> {
-  if (!(await forkFeatures.read()).announcements) return DISABLED
+  if (!(await readForkFeatures()).announcements) return DISABLED_FEED
 
   const [rev] = await db
     .select({ epoch: forkAnnouncementRevision.epoch, revision: forkAnnouncementRevision.revision })

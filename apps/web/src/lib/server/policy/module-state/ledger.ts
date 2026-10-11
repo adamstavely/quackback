@@ -1328,6 +1328,17 @@ export const MODULE_STATE_LEDGER: readonly LedgerEntry[] = [
       'a log line: a wrong hit would drop one informational line, never change which providers ' +
       'are trusted.',
   },
+  // FORK-SEAM(N-5): fork feature flags, cached so a feature that is off costs a page nothing.
+  {
+    file: 'apps/web/src/lib/server/fork/settings/features.ts',
+    name: 'flagsCache',
+    category: 'workspace-keyed',
+    reason:
+      'The fork feature flags (fork_settings.features) for each workspace, held for 30 s so every ' +
+      'portal page can ask whether a fork feature is on without a query. Keyed by workspace through ' +
+      "WorkspaceKeyedCache, so one workspace never reads another's flags; a write on this replica " +
+      'drops its entry at once, other replicas pick the change up within the 30 s window.',
+  },
   // FORK-SEAM(N-5): the announcement stream's own concurrency gauge.
   {
     file: 'apps/web/src/lib/server/fork/announcements/stream-limit.ts',

@@ -13,7 +13,7 @@ const state = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/server/fork/settings/features', () => ({
-  forkFeatures: { read: async () => ({ announcements: true }) },
+  readForkFeatures: async () => ({ announcements: true }),
 }))
 vi.mock('@/lib/server/fork/db', () => ({
   forkAnnouncementRevision: { epoch: 'epoch', revision: 'revision', singleton: 'singleton' },

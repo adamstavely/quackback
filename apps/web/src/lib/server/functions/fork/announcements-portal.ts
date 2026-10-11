@@ -1,5 +1,10 @@
 import { createServerFn } from '@tanstack/react-start'
-import { buildBannerFeed, type BannerFeed } from '@/lib/server/fork/announcements/feed'
+import {
+  buildBannerFeed,
+  DISABLED_FEED,
+  type BannerFeed,
+} from '@/lib/server/fork/announcements/feed'
+import { readForkFeatures } from '@/lib/server/fork/settings/features'
 import { getOptionalAuth, hasAuthCredentials, policyActorFromAuth } from '../auth-helpers'
 import { resolvePortalAccessForRequest } from '../portal-access'
 
@@ -10,6 +15,9 @@ import { resolvePortalAccessForRequest } from '../portal-access'
  */
 export const getPortalBannerFn = createServerFn({ method: 'GET' }).handler(
   async (): Promise<BannerFeed> => {
+    // Off is the common case on most workspaces: answer it from the cached flag,
+    // before any session or portal-access work, so it costs no query.
+    if (!(await readForkFeatures()).announcements) return DISABLED_FEED
     const auth = hasAuthCredentials() ? await getOptionalAuth() : null
     const [actor, access] = await Promise.all([
       policyActorFromAuth(auth),
