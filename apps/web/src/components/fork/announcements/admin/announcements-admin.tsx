@@ -6,7 +6,7 @@ import {
   CalendarIcon,
   Cog6ToothIcon,
   DocumentDuplicateIcon,
-  SpeakerWaveIcon,
+  FlagIcon,
   PencilSquareIcon,
   QueueListIcon,
 } from '@heroicons/react/24/solid'
@@ -97,7 +97,7 @@ function AnnouncementsNav({
     <nav aria-label="Announcement views" className="flex h-full flex-col">
       <FilterSection title="Announcements">
         <div className="space-y-1">
-          <NavItem view="live" current={view} icon={SpeakerWaveIcon} count={counts.live}>
+          <NavItem view="live" current={view} icon={FlagIcon} count={counts.live}>
             Live
           </NavItem>
           <NavItem view="scheduled" current={view} icon={CalendarIcon} count={counts.scheduled}>

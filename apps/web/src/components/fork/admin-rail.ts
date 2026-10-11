@@ -1,4 +1,4 @@
-import { SpeakerWaveIcon } from '@heroicons/react/24/solid'
+import { FlagIcon } from '@heroicons/react/24/solid'
 
 /**
  * Fork areas in the admin rail (seam F-4 in `components/admin/admin-sidebar.tsx`).
@@ -11,7 +11,7 @@ export const FORK_RAIL_ITEMS = [
     label: 'Announcements',
     labelId: 'admin.nav.forkAnnouncements',
     href: '/admin/announcements',
-    icon: SpeakerWaveIcon,
+    icon: FlagIcon,
     after: '/admin/status',
   },
 ]
