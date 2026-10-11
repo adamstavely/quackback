@@ -43,8 +43,8 @@ export function BannerBar({
       )}
     >
       <Icon aria-hidden className={cn('mt-0.5 size-5 shrink-0', style.iconColor)} />
-      <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-3">
-        <p className="min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-x-4">
+        <p className="min-w-0 sm:flex-1">
           {/* The kind in words, so it never rests on colour or icon alone (SC 1.4.1). */}
           <span className="sr-only">{preset.label}: </span>
           <span className="font-semibold">{item.title}</span>
