@@ -12,7 +12,7 @@ import { announcementsConfig } from './settings'
 /** What `everyone.json` returns: the feed plus the app's theme for the banner's shadow root. */
 export interface EmbedFeed extends BannerFeed {
   theme: {
-    /** The workspace's theme variables, scoped to `:host` / `:host(.qb-dark)`. */
+    /** The workspace's theme variables, scoped to the banner's root (`.qb-root` / `.qb-root.qb-dark`). */
     css: string
     /** `user` follows the host page's colour-scheme preference. */
     mode: 'light' | 'dark' | 'user'
@@ -69,11 +69,12 @@ function absoluteLinks(item: BannerItem): BannerItem {
 }
 
 /**
- * The portal's theme CSS, rewritten so its variables apply only inside the
- * banner's shadow root: `:root` becomes `:host`, `.dark` becomes
- * `:host(.qb-dark)`. Page-level rules (`body`, `html body`) are dropped; they
- * would never match in a shadow root, and the host page's own styles are not
- * ours to touch.
+ * The portal's theme CSS, rewritten so its variables apply only to the
+ * banner's own root element inside its shadow root: `:root` becomes
+ * `.qb-root`, `.dark` becomes `.qb-root.qb-dark`. Declared there, not on
+ * `:host`, so the embedding app cannot override them on the element.
+ * Page-level rules (`body`, `html body`) are dropped; they would never match
+ * in a shadow root, and the host page's own styles are not ours to touch.
  */
 export function scopeThemeToShadowRoot(css: string): string {
   return css
@@ -82,8 +83,8 @@ export function scopeThemeToShadowRoot(css: string): string {
     .filter((block) => block.startsWith(':root') || block.startsWith('.dark'))
     .map((block) =>
       block.startsWith(':root')
-        ? block.replace(/^:root/, ':host')
-        : block.replace(/^\.dark/, ':host(.qb-dark)')
+        ? block.replace(/^:root/, '.qb-root')
+        : block.replace(/^\.dark/, '.qb-root.qb-dark')
     )
     .join('\n')
 }

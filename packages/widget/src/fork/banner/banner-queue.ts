@@ -21,8 +21,33 @@ function run(command: Command): void {
   }
 }
 
+/**
+ * Banners always render in Inter, served by this Quackback instance. It is
+ * registered on the document (fonts declared inside a shadow root are not
+ * reliably usable) under a private family name, so it never replaces a font
+ * the app itself defines.
+ */
+function loadInter(base: string): void {
+  if (!('fonts' in document) || typeof FontFace === 'undefined') return
+  const face = new FontFace(
+    'QuackbackInter',
+    `url(${base}/api/fork-announcements/embed/inter.woff2) format('woff2')`,
+    {
+      weight: '100 900',
+      style: 'normal',
+      display: 'swap',
+    }
+  )
+  document.fonts.add(face)
+  face.load().catch(() => {
+    // Unavailable (blocked by CSP, offline): the system fallback in the stack is used.
+  })
+}
+
 function install(): void {
   if (!customElements.get(TAG)) customElements.define(TAG, QuackbackBannerElement)
+  const base = (window as { __QUACKBACK_BANNER__?: { url?: string } }).__QUACKBACK_BANNER__?.url
+  if (base) loadInter(base)
 
   const api = window as unknown as {
     QuackbackBanner?: ((command: Command) => void) & { q?: Command[][] }

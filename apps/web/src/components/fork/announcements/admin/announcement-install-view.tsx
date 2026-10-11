@@ -95,19 +95,9 @@ export function AnnouncementInstallView({ embedEnabled }: { embedEnabled: boolea
         </p>
 
         <Snippet
-          id="install-theme"
-          label="3. Optional: match your app's light or dark look"
-          code={`<quackback-banner theme="light"></quackback-banner>`}
-        />
-        <p className="-mt-3 text-xs text-muted-foreground">
-          By default the banner follows your workspace theme and, if that follows the visitor, their
-          system setting. Use <code>theme="light"</code> or <code>theme="dark"</code> to pin it.
-        </p>
-
-        <Snippet
           id="install-csp"
           label="If your app has a Content Security Policy, allow this instance"
-          code={`script-src ${origin};\nconnect-src ${origin};`}
+          code={`script-src ${origin};\nconnect-src ${origin};\nfont-src ${origin};`}
         />
 
         <div className="flex flex-col gap-2">
@@ -126,7 +116,11 @@ export function AnnouncementInstallView({ embedEnabled }: { embedEnabled: boolea
               Everyone can dismiss a banner; it stays hidden in that browser until the banner is
               edited.
             </li>
-            <li>The portal’s custom CSS is not applied inside other apps.</li>
+            <li>
+              Apps cannot restyle the banner. It always uses your Quackback theme and the Inter
+              font, served from this instance; the app’s CSS cannot reach it, and the portal’s
+              custom CSS is not applied inside other apps.
+            </li>
             <li>
               Browsers keep the script for up to five minutes, so updates to it arrive within that.
             </li>

@@ -41,17 +41,6 @@ script uses it instead of adding its own.
 <script src="https://quackback.example.internal/api/fork-announcements/banner.js" defer></script>
 ```
 
-### Match your app's light or dark look
-
-By default the banner follows the Quackback workspace theme and, when that
-follows the visitor, their system setting. Pin it to your app's look:
-
-```html
-<quackback-banner theme="light"></quackback-banner>
-```
-
-`theme="dark"` works the same way.
-
 ### Refresh on demand
 
 ```js
@@ -67,11 +56,12 @@ If your app sets a CSP, allow your Quackback instance:
 ```
 script-src https://quackback.example.internal;
 connect-src https://quackback.example.internal;
+font-src https://quackback.example.internal;
 ```
 
 The banner adds its styles through constructable stylesheets inside its own
-shadow root, so it needs no `style-src 'unsafe-inline'`. It loads no fonts,
-images or scripts from anywhere else.
+shadow root, so it needs no `style-src 'unsafe-inline'`. It loads its font
+(Inter) from your Quackback instance, and nothing from anywhere else.
 
 ## Network and SSO
 
@@ -82,6 +72,7 @@ front of Quackback, it must let these paths through from your internal apps:
 - `/api/fork-announcements/banner.js`
 - `/api/fork-announcements/embed/everyone.json`
 - `/api/fork-announcements/stream`
+- `/api/fork-announcements/embed/inter.woff2`
 
 Everything stays inside the intranet; nothing is loaded from the internet.
 
@@ -109,10 +100,20 @@ The banner is built to WCAG 2.2 AA:
 
 ## Styling and isolation
 
-The banner renders in a shadow root. Your app's CSS does not reach it and its
-CSS does not reach your app. It uses the workspace's Quackback theme (colours,
-radius, font) and the same fixed colours per kind as the portal. The portal's
-custom CSS is **not** applied inside other apps.
+Apps cannot change how the banner looks. It renders in a shadow root, so the
+app's CSS does not reach inside it, and it locks its own element: rules the app
+writes for `quackback-banner` (even `!important` ones or a `style` attribute)
+cannot hide, recolour or restyle it. It always uses:
+
+- the workspace's Quackback theme (colours, corner radius), light or dark as
+  the workspace theme says (or, when the theme follows the visitor, their
+  system setting);
+- the same fixed colours per kind as the portal (incident red, warning amber,
+  maintenance violet, information blue, resolved green);
+- the **Inter** font, loaded from your Quackback instance under a private name
+  so it never replaces a font your app uses.
+
+The portal's custom CSS is not applied inside other apps either.
 
 ## Troubleshooting
 

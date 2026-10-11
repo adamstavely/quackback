@@ -76,6 +76,8 @@ function icon(paths: IconPath[], className: string): SVGSVGElement {
  */
 export class QuackbackBannerElement extends HTMLElement {
   private readonly root: ShadowRoot
+  /** Everything renders inside this; the theme variables and the dark class live on it. */
+  private readonly qbRoot: HTMLDivElement
   private readonly themeSheet: CSSStyleSheet | null
   private feed: EmbedFeed | null = null
   private expanded = false
@@ -102,6 +104,9 @@ export class QuackbackBannerElement extends HTMLElement {
       this.root.appendChild(style)
       this.themeSheet = null
     }
+    this.qbRoot = document.createElement('div')
+    this.qbRoot.className = 'qb-root'
+    this.root.appendChild(this.qbRoot)
   }
 
   private get baseUrl(): string | null {
@@ -237,23 +242,13 @@ export class QuackbackBannerElement extends HTMLElement {
   }
 
   /**
-   * Light or dark. A host app can pin it to match its own look with
-   * `<quackback-banner theme="light">` (or "dark"); otherwise the workspace's
-   * theme decides, and "user" follows the visitor's colour-scheme preference.
+   * Light or dark, from the workspace theme; "user" follows the visitor's
+   * colour-scheme preference. The embedding app has no say in it.
    */
   private onColorScheme = (): void => {
-    const pinned = this.getAttribute('theme')
-    const mode = pinned === 'light' || pinned === 'dark' ? pinned : this.feed?.theme?.mode
+    const mode = this.feed?.theme?.mode
     const dark = mode === 'dark' || (mode === 'user' && !!this.dark?.matches)
-    this.classList.toggle('qb-dark', dark)
-  }
-
-  static get observedAttributes(): string[] {
-    return ['theme']
-  }
-
-  attributeChangedCallback(): void {
-    this.onColorScheme()
+    this.qbRoot.classList.toggle('qb-dark', dark)
   }
 
   private visibleItems(): BannerItem[] {
@@ -280,9 +275,7 @@ export class QuackbackBannerElement extends HTMLElement {
     if (signature === this.rendered) return
     this.rendered = signature
 
-    for (const node of [...this.root.childNodes]) {
-      if (node.nodeName !== 'STYLE') node.remove()
-    }
+    this.qbRoot.replaceChildren()
     this.hidden = items.length === 0
     if (items.length === 0) return
 
@@ -303,11 +296,11 @@ export class QuackbackBannerElement extends HTMLElement {
       more.addEventListener('click', () => {
         this.expanded = !this.expanded
         this.render()
-        ;(this.root.querySelector('.more') as HTMLButtonElement | null)?.focus()
+        ;(this.qbRoot.querySelector('.more') as HTMLButtonElement | null)?.focus()
       })
       strip.appendChild(more)
     }
-    this.root.appendChild(strip)
+    this.qbRoot.appendChild(strip)
   }
 
   private renderItem(item: BannerItem): HTMLElement {

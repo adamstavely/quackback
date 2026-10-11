@@ -40,7 +40,8 @@ export function BannerBar({
     <div
       role={announce ? preset.role : undefined}
       className={cn(
-        'flex items-start gap-3 rounded-[var(--radius)] border px-4 py-3 text-sm text-foreground',
+        // Always Inter, the platform's own font token, whatever the workspace's brand font.
+        'flex items-start gap-3 rounded-[var(--radius)] border px-4 py-3 font-[family-name:var(--font-family-sans)] text-sm text-foreground',
         style.surface,
         className
       )}

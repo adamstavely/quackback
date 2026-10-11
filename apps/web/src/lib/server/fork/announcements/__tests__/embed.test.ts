@@ -10,15 +10,15 @@ describe('scopeThemeToShadowRoot', () => {
   const css =
     ':root { --background: white; --primary: gold; } .dark { --background: black; } body { color: red; } html body { font-family: X !important; }'
 
-  it('moves the theme variables onto the banner host and its dark variant', () => {
+  it('moves the theme variables onto the banner root, where the page cannot override them', () => {
     const scoped = scopeThemeToShadowRoot(css)
-    expect(scoped).toContain(':host { --background: white; --primary: gold; }')
-    expect(scoped).toContain(':host(.qb-dark) { --background: black; }')
+    expect(scoped).toContain('.qb-root { --background: white; --primary: gold; }')
+    expect(scoped).toContain('.qb-root.qb-dark { --background: black; }')
   })
 
   it('drops page-level rules, so nothing reaches the host app', () => {
     const scoped = scopeThemeToShadowRoot(css)
-    expect(scoped).not.toMatch(/(^|\s)(body|html|:root|\.dark)\b/)
+    expect(scoped).not.toMatch(/(^|\s)(body|html|:root|:host)\b/)
   })
 })
 
