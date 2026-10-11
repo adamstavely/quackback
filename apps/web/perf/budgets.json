@@ -958,7 +958,7 @@
       "serverRequests": 3,
       "requests": 92,
       "jsRequests": 86,
-      "jsKB": 370.2,
+      "jsKB": 378,
       "htmlTransferKB": 20.8,
       "componentRenders": 336
     },
@@ -985,7 +985,7 @@
       "requests": 86,
       "jsRequests": 80,
       "jsKB": 361.8,
-      "htmlTransferKB": 16.4,
+      "htmlTransferKB": 17.4,
       "componentRenders": 240
     },
     "ui:admin-inbox-send-reply": {
