@@ -217,6 +217,7 @@ export const Route = createFileRoute('/api/v1/posts/')({
           const actor = {
             principalId: auth.principalId,
             role: auth.role,
+            permissions: auth.permissions, // FORK-SEAM(R-10)
             principalType: callerType === 'service' ? ('service' as const) : ('user' as const),
             segmentIds: callerSegmentIds,
           }

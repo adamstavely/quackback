@@ -32,6 +32,7 @@ export const Route = createFileRoute('/api/v1/conversations/')({
           const actor = {
             principalId: auth.principalId,
             role: auth.role,
+            permissions: auth.permissions, // FORK-SEAM(R-10)
             principalType: 'service' as const,
             segmentIds: new Set<SegmentId>(),
           }

@@ -6,6 +6,17 @@ import { UnauthorizedError, ForbiddenError } from '@/lib/shared/errors'
 import { PERMISSIONS } from '@/lib/shared/permissions'
 
 // Mock the verifyApiKey function
+// FORK-SEAM(R-1): this suite fakes the database, so a key keeps upstream's
+// preset here; the fork's key authority is tested in lib/server/fork/rbac/__tests__.
+vi.mock('@/lib/server/fork/rbac/key-authority', async () => {
+  const { resolveActorPermissions } = await import('@/lib/server/policy/permissions')
+  return {
+    resolveKeyPermissions: async ({ serviceRole }: { serviceRole: 'admin' | 'member' | 'user' }) =>
+      resolveActorPermissions(serviceRole),
+    copyCreatorAssignments: async () => {},
+  }
+})
+
 vi.mock('@/lib/server/domains/api-keys/api-key.service', () => ({
   verifyApiKey: vi.fn(),
 }))
@@ -101,6 +112,7 @@ describe('API Auth', () => {
         apiKey: mockApiKey,
         principalId: mockApiKey.principalId,
         role: 'admin',
+        permissions: expect.any(Set), // FORK-SEAM(R-1)
         // The principal row from the single auth query rides along for reuse
         principal: { role: 'admin' },
         importMode: false,
@@ -170,6 +182,7 @@ describe('API Auth', () => {
         apiKey: mockApiKey,
         principalId: mockApiKey.principalId,
         role: 'admin',
+        permissions: expect.any(Set), // FORK-SEAM(R-1)
         principal: { role: 'admin' },
         importMode: false,
       })

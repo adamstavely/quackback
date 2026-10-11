@@ -14,6 +14,17 @@ const { mockFindFirst, mockLink, mockUnlink } = vi.hoisted(() => ({
   mockUnlink: vi.fn(),
 }))
 
+// FORK-SEAM(R-1): this suite fakes the database, so a key keeps upstream's
+// preset here; the fork's key authority is tested in lib/server/fork/rbac/__tests__.
+vi.mock('@/lib/server/fork/rbac/key-authority', async () => {
+  const { resolveActorPermissions } = await import('@/lib/server/policy/permissions')
+  return {
+    resolveKeyPermissions: async ({ serviceRole }: { serviceRole: 'admin' | 'member' | 'user' }) =>
+      resolveActorPermissions(serviceRole),
+    copyCreatorAssignments: async () => {},
+  }
+})
+
 vi.mock('@/lib/server/domains/api-keys/api-key.service', () => ({
   verifyApiKey: vi.fn().mockResolvedValue({
     id: 'apikey_01h455vb4pex5vsknk084sn02q',
