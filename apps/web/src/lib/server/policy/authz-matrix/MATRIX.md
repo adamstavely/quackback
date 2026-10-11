@@ -1070,7 +1070,7 @@ Key scopes are enforced: an API key holds exactly its stored scopes (owner permi
 
 ## 4. Entry points without a requireAuth/key gate
 
-227 of 1089 entry points hold no `requireAuth` / `withApiKeyAuth` / `requireTeamAuth` gate.
+232 of 1094 entry points hold no `requireAuth` / `withApiKeyAuth` / `requireTeamAuth` gate.
 Each is expected to be intentionally public, a pre-auth flow, a signature-verified webhook, or a handler that delegates auth (e.g. the MCP route).
 **Adding a row here is an access-control change** — confirm the new entry point is meant to be reachable without a gate.
 
@@ -1098,6 +1098,7 @@ Each is expected to be intentionally public, a pre-auth flow, a signature-verifi
 | `lib/server/functions/entitlement-status.ts`::hasEntitlementFn | server-fn |
 | `lib/server/functions/entitlement-status.ts`::hasTierFeatureFn | server-fn |
 | `lib/server/functions/entitlement-status.ts`::listEntitlementsFn | server-fn |
+| `lib/server/functions/fork/announcements-portal.ts`::getPortalBannerFn | server-fn |
 | `lib/server/functions/fork/hub.ts`::getMyHubFeedbackFn | server-fn |
 | `lib/server/functions/help-center-redirect-rules.ts`::resolveHelpCenterRedirectFn | server-fn |
 | `lib/server/functions/help-center.ts`::getPublicArticleBySlugFn | server-fn |
@@ -1224,6 +1225,10 @@ Each is expected to be intentionally public, a pre-auth flow, a signature-verifi
 | `routes/api/export/runs.ts`::GET | route |
 | `routes/api/export/workspace.ts`::POST | route |
 | `routes/api/files/opened.ts`::POST | route |
+| `routes/api/fork-announcements/banner[.]js.ts`::GET | route |
+| `routes/api/fork-announcements/embed/everyone[.]json.ts`::GET | route |
+| `routes/api/fork-announcements/embed/inter[.]woff2.ts`::GET | route |
+| `routes/api/fork-announcements/stream.ts`::GET | route |
 | `routes/api/health.live.ts`::GET | route |
 | `routes/api/health.ready.ts`::GET | route |
 | `routes/api/health.ts`::GET | route |

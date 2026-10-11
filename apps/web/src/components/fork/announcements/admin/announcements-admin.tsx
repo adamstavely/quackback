@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import {
   ArchiveBoxIcon,
+  CodeBracketIcon,
   CalendarIcon,
   Cog6ToothIcon,
   DocumentDuplicateIcon,
@@ -23,6 +24,7 @@ import { Route, type ANNOUNCEMENT_VIEWS } from '@/routes/admin/announcements'
 import { AnnouncementEditor } from './announcement-editor'
 import { AnnouncementList } from './announcement-list'
 import { AnnouncementsOffNotice } from './announcements-off-notice'
+import { AnnouncementInstallView } from './announcement-install-view'
 import { AnnouncementSettingsView } from './announcement-settings-view'
 import { AnnouncementTemplatesView } from './announcement-templates-view'
 
@@ -45,6 +47,7 @@ const VIEW_COPY: Record<View, { title: string; empty: string }> = {
   archived: { title: 'Archived', empty: 'Nothing archived.' },
   templates: { title: 'Templates', empty: '' },
   settings: { title: 'Settings', empty: '' },
+  install: { title: 'Install on an app', empty: '' },
 }
 
 function NavItem({
@@ -122,6 +125,9 @@ function AnnouncementsNav({
           <NavItem view="settings" current={view} icon={Cog6ToothIcon}>
             Settings
           </NavItem>
+          <NavItem view="install" current={view} icon={CodeBracketIcon}>
+            Install on an app
+          </NavItem>
         </div>
       </FilterSection>
     </nav>
@@ -185,6 +191,9 @@ export function AnnouncementsAdmin(): ReactElement {
           ) : null}
           {view === 'settings' && data ? (
             <AnnouncementSettingsView enabled={data.enabled} config={data.config} />
+          ) : null}
+          {view === 'install' && data ? (
+            <AnnouncementInstallView embedEnabled={data.config.embedEnabled} />
           ) : null}
         </div>
       </AdminFilterLayout>

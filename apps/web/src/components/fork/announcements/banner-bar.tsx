@@ -1,13 +1,14 @@
 import type { ReactElement } from 'react'
 import { XMarkIcon } from '@heroicons/react/24/solid'
 import { Button } from '@/components/ui/button'
+import { useLocalDateFormatter } from '@/components/ui/local-date'
 import { KIND_PRESETS } from '@/lib/shared/fork/announcements/presets'
 import type { BannerItem } from '@/lib/shared/fork/announcements/types'
 import { cn } from '@/lib/shared/utils'
 import { KIND_STYLES } from './kind-styles'
 
 interface BannerBarProps {
-  item: Pick<BannerItem, 'kind' | 'title' | 'body' | 'link'>
+  item: Pick<BannerItem, 'kind' | 'title' | 'body' | 'link' | 'window'>
   /**
    * Live-region semantics from the kind's preset: an incident is an alert, the
    * rest are polite status messages (SC 4.1.3). Off for previews, so editing
@@ -32,22 +33,26 @@ export function BannerBar({
   const preset = KIND_PRESETS[item.kind]
   const style = KIND_STYLES[item.kind]
   const Icon = style.icon
+  const formatDate = useLocalDateFormatter()
+  const windowText = item.window ? formatWindow(item.window, formatDate) : null
 
   return (
     <div
       role={announce ? preset.role : undefined}
       className={cn(
-        'flex items-start gap-3 rounded-[var(--radius)] border px-4 py-3 text-sm text-foreground',
+        // Always Inter, the platform's own font token, whatever the workspace's brand font.
+        'flex items-start gap-3 rounded-[var(--radius)] border px-4 py-3 font-[family-name:var(--font-family-sans)] text-sm text-foreground',
         style.surface,
         className
       )}
     >
       <Icon aria-hidden className={cn('mt-0.5 size-5 shrink-0', style.iconColor)} />
-      <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:gap-x-3">
-        <p className="min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-x-4">
+        <p className="min-w-0 sm:flex-1">
           {/* The kind in words, so it never rests on colour or icon alone (SC 1.4.1). */}
           <span className="sr-only">{preset.label}: </span>
           <span className="font-semibold">{item.title}</span>
+          {windowText ? <span> {windowText}</span> : null}
           {item.body ? <span> {item.body}</span> : null}
         </p>
         {item.link ? (
@@ -73,4 +78,25 @@ export function BannerBar({
       ) : null}
     </div>
   )
+}
+
+const WINDOW_START: Intl.DateTimeFormatOptions = {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+}
+const WINDOW_END_SAME_DAY: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' }
+
+/** "Oct 12, 2:00 AM – 4:00 AM", or the full end date when it falls on another day. */
+function formatWindow(
+  span: NonNullable<BannerItem['window']>,
+  formatDate: ReturnType<typeof useLocalDateFormatter>
+): string {
+  const start = new Date(span.start)
+  const startText = formatDate(start, WINDOW_START)
+  if (!span.end) return startText
+  const end = new Date(span.end)
+  const sameDay = start.toDateString() === end.toDateString()
+  return `${startText} – ${formatDate(end, sameDay ? WINDOW_END_SAME_DAY : WINDOW_START)}`
 }

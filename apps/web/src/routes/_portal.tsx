@@ -38,6 +38,8 @@ import { useBrandingFont } from '@/lib/client/hooks/use-branding-font'
 import { usePreviewCss } from '@/components/public/preview-draft-context'
 import { resolvePortalOgImageUrl } from '@/lib/shared/portal-og-image'
 import { shownName } from '@/lib/shared/greeting-name'
+// FORK-SEAM(N-1): announcement banners under the portal header.
+import { PortalAnnouncementsBanner } from '@/components/fork/announcements/portal-banner'
 
 /**
  * Portal documents may be framed same-origin only — the admin Branding page
@@ -410,6 +412,8 @@ function PortalLayout() {
                 // always forces one — hide it there.
                 showThemeToggle={themeMode === 'user' && !preview}
               />
+              {/* FORK-SEAM(N-1): announcement banners under the portal header. */}
+              <PortalAnnouncementsBanner />
               <main className="flex-1 w-full flex flex-col">
                 <FileViewerProvider onJumpToMessage={scrollToMessage}>
                   <Outlet />

@@ -52,4 +52,17 @@ export interface BannerItem {
   publishAt: string
   expiresAt: string | null
   updatedAt: string
+  /** A maintenance window to show with the text, formatted in the viewer's own locale. */
+  window?: { start: string; end: string | null } | null
+}
+
+/** What a viewer's feed read returns (§4.4). */
+export interface BannerFeed {
+  enabled: boolean
+  /** Changes when the revision row is re-created (a restore); clients treat it as newer. */
+  epoch: string | null
+  revision: number
+  /** The next instant a banner starts or ends for this viewer, so clients refetch on time without polling. */
+  nextTransitionAt: string | null
+  items: BannerItem[]
 }
