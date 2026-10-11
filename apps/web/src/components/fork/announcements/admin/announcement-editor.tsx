@@ -620,7 +620,8 @@ function RadioRow({
 }): ReactElement {
   return (
     <div className="flex min-h-6 items-center gap-2">
-      <RadioGroupItem id={id} value={value} />
+      {/* Centres the dot: the platform radio leaves its indicator at the top of the circle. */}
+      <RadioGroupItem id={id} value={value} className="flex items-center justify-center" />
       <Label htmlFor={id} className="font-normal">
         {label}
       </Label>
