@@ -10,6 +10,7 @@ export const ANNOUNCEMENT_VIEWS = [
   'archived',
   'templates',
   'settings',
+  'install',
 ] as const
 
 const searchSchema = z.object({
