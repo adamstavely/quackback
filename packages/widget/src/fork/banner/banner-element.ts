@@ -80,6 +80,7 @@ export class QuackbackBannerElement extends HTMLElement {
   private readonly qbRoot: HTMLDivElement
   private readonly themeSheet: CSSStyleSheet | null
   private feed: EmbedFeed | null = null
+  private dismissed: Record<string, string> = {}
   private expanded = false
   private rendered = ''
   private source: EventSource | null = null
@@ -162,6 +163,7 @@ export class QuackbackBannerElement extends HTMLElement {
       this.scheduleTransition()
       this.render()
       if (!next.enabled) this.closeStream()
+      else this.openStream()
     } catch {
       // Network trouble: keep what is shown; the stream or the next refresh tries again.
     }
@@ -253,7 +255,7 @@ export class QuackbackBannerElement extends HTMLElement {
 
   private visibleItems(): BannerItem[] {
     if (!this.feed?.enabled) return []
-    const dismissed = readDismissed()
+    const dismissed = { ...readDismissed(), ...this.dismissed }
     const now = Date.now()
     return this.feed.items.filter(
       (item) =>
@@ -263,7 +265,8 @@ export class QuackbackBannerElement extends HTMLElement {
   }
 
   private dismiss(item: BannerItem): void {
-    writeDismissed({ ...readDismissed(), [item.id]: item.updatedAt })
+    this.dismissed[item.id] = item.updatedAt
+    writeDismissed({ ...readDismissed(), ...this.dismissed })
     this.render()
   }
 

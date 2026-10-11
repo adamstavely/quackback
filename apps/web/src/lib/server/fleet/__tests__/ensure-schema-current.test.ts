@@ -10,6 +10,10 @@ import { WorkspaceSchemaFloorRefusal } from '../schema-floor'
 
 const readAppliedLedger = vi.fn()
 const migrateDirect = vi.fn()
+const missingFork = vi.fn()
+vi.mock('@quackback/db/fork/readiness', () => ({
+  missingForkRequirements: (...args: unknown[]) => missingFork(...args),
+}))
 
 vi.mock('@quackback/db/schema-version', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@quackback/db/schema-version')>()
@@ -49,6 +53,7 @@ describe('ensureWorkspaceSchemaCurrent', () => {
   beforeEach(() => {
     readAppliedLedger.mockReset()
     migrateDirect.mockReset()
+    missingFork.mockReset().mockResolvedValue([])
   })
 
   it('does not migrate when the ledger already records every bundled migration', async () => {
@@ -60,6 +65,33 @@ describe('ensureWorkspaceSchemaCurrent', () => {
       directConnectionString: 'postgresql://role:pw@direct.example/db',
     })
     expect(migrateDirect).not.toHaveBeenCalled()
+  })
+
+  it('migrates a fork-only release even when upstream is current', async () => {
+    const { ensureWorkspaceSchemaCurrent } = await import('../ensure-schema-current')
+    readAppliedLedger.mockResolvedValue(completeLedger())
+    missingFork.mockResolvedValueOnce(['fork schema']).mockResolvedValueOnce([])
+    migrateDirect.mockResolvedValue({ ok: true, after: completeLedger() })
+    await ensureWorkspaceSchemaCurrent({
+      workspaceKey: 'fork_only',
+      sql: {} as never,
+      directConnectionString: 'postgresql://role:pw@direct.example/db',
+    })
+    expect(migrateDirect).toHaveBeenCalledOnce()
+  })
+
+  it('refuses a successful migration that still lacks the fork catalogue receipt', async () => {
+    const { ensureWorkspaceSchemaCurrent } = await import('../ensure-schema-current')
+    readAppliedLedger.mockResolvedValue(completeLedger())
+    missingFork.mockResolvedValue(['fork permission catalogue'])
+    migrateDirect.mockResolvedValue({ ok: true, after: completeLedger() })
+    await expect(
+      ensureWorkspaceSchemaCurrent({
+        workspaceKey: 'incomplete',
+        sql: {} as never,
+        directConnectionString: 'postgresql://role:pw@direct.example/db',
+      })
+    ).rejects.toBeInstanceOf(WorkspaceSchemaFloorRefusal)
   })
 
   it('migrates a mint whose vendor snapshot stopped short of this build', async () => {

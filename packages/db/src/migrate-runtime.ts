@@ -84,6 +84,7 @@ import {
 import { MIGRATIONS_DIR } from './schema-version'
 // FORK-SEAM(F-1): the fork's own migration lineage, run after upstream's.
 import { runForkMigrations } from './fork/migrate'
+import { recordForkCatalogue } from './fork/readiness'
 
 export { MigrationPreflightError } from './schema-ops'
 
@@ -327,6 +328,9 @@ export async function runMigrations(
       // Seed the reference data every workspace needs (statuses, roles,
       // permissions). Idempotent — re-running on a seeded workspace is a no-op.
       await seedSystemData(database)
+      // FORK-SEAM(F-1): never certify a failed/interrupted catalogue seed.
+      if (path.resolve(migrationsFolder) === path.resolve(MIGRATIONS_FOLDER))
+        await recordForkCatalogue(sql)
     }
 
     let postconditions: PostconditionReport | null = null

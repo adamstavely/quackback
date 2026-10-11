@@ -83,6 +83,33 @@ The fork's production image is a fork-owned `apps/web/Dockerfile.fork` layered o
 | E-2a  | `apps/web/src/lib/server/storage/s3.ts`, `packages/email/src/ses.ts`                               | Fall back to the AWS default credential chain when static keys are unset                                                                                                                                                                | 04 (conditional: only if IAM roles are mandatory) | planned                                                                                                                                                            |
 | E-4   | `apps/web/src/lib/server/auth/index.ts`                                                            | Don't register the anonymous sign-in plugin when `allowAnonymous=false`                                                                                                                                                                 | 04 (optional)                                     | planned                                                                                                                                                            |
 
+## Portal/banner review corrections (2026-10-11)
+
+These are permanent behavioral seams, owned by the fork platform maintainer.
+They are additional to the original estimate; correctness takes precedence over
+minimizing the count.
+
+- **F-15 — `.github/workflows/docker.yml`:** build the base by digest, then publish
+  `Dockerfile.fork`; verify journal/SQL in the final image before exporting its
+  manifest digest. Validate with final-image startup and packaging checks.
+- **F-16 — `fleet/ensure-schema-current.ts`:** include fork lineage hashes and a
+  catalogue-seed receipt in the pre/post serving checks. Regression:
+  `fork/fleet/__tests__/fork-readiness.db.test.ts` and
+  `fleet/__tests__/ensure-schema-current.test.ts`.
+- **F-17 — `fleet/migrator.ts`:** the `already_current` fast path also requires
+  fork readiness; otherwise run the existing locked executor.
+- **F-18 — `scripts/fleet-migrator.ts`:** register the explicit `fork` release pass
+  so upstream-current active tenants are covered; fork code refuses withheld
+  upstream migrations. Regression: `fork/fleet/__tests__/migrate.test.ts`.
+- **F-1 expanded:** record the catalogue receipt after successful seeding. Fork
+  SQL/hash validation and the receipt helper remain in `packages/db/src/fork`.
+- **F-13 expanded:** add the server-only `@quackback/db/fork/readiness` export and
+  Vitest alias. Do not export filesystem-based readiness through the table barrel.
+
+The status candidate selection, storage fallback, and embed reconnection fixes
+are entirely fork-owned and add no upstream seams. Release instructions are in
+`docs/fork/release-checklist.md`.
+
 ## Generated files (regenerate, never hand-merge)
 
 `apps/web/src/lib/shared/permissions.ts` · `policy/authz-matrix/MATRIX.md` · `migration-contract/CONTRACT.md`
@@ -90,7 +117,7 @@ The fork's production image is a fork-owned `apps/web/Dockerfile.fork` layered o
 
 ## Totals (core phases, excluding conditional / optional / deferred)
 
-Foundations 11 (incl. F-12 SSRF allow-list, a blocker for intranet SSO; F-6 retired — upstream removed Labs) · RBAC 14 (R-10 spans 10 files) · Control tower 3 (+1 conditional) · Tiered support 11 (8 core +
+Foundations 15 (incl. F-12 SSRF allow-list, a blocker for intranet SSO; F-6 retired — upstream removed Labs) · RBAC 14 (R-10 spans 10 files) · Control tower 3 (+1 conditional) · Tiered support 11 (8 core +
 3 hub) · Account actions 0 own (uses T-2's slot; +1 optional, +1 deferred) · Prioritization 11 · Announcements 3.
 
 Per the staff review, these counts are an estimate of merge surface, not a target: add a seam whenever an

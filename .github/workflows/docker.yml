@@ -65,19 +65,46 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push by digest
-        id: build
+      # FORK-SEAM(F-15): publish the fork layer, never the base image alone.
+      - name: Build base image by digest
+        id: base
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: ./apps/web/Dockerfile
           platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_PAIR }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: ./apps/web/Dockerfile.fork
+          build-args: BASE_IMAGE=${{ env.IMAGE }}@${{ steps.base.outputs.digest }}
+          platforms: ${{ matrix.platform }}
           # No tags here — the manifest list (and its tags) is assembled in the
           # merge job; each leg pushes an untagged per-arch image by digest.
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           # Per-arch cache scope so the two runners don't clobber each other.
-          cache-from: type=gha,scope=${{ env.PLATFORM_PAIR }}
-          cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_PAIR }}
+          cache-from: type=gha,scope=fork-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=fork-${{ env.PLATFORM_PAIR }}
+
+      - name: Verify fork migration files in published image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker run --rm --entrypoint bun "${IMAGE}@${DIGEST}" -e '
+            const fs = require("node:fs");
+            const folder = process.env.FORK_MIGRATIONS_FOLDER;
+            if (!folder) throw new Error("Missing FORK_MIGRATIONS_FOLDER");
+            const journal = JSON.parse(fs.readFileSync(folder + "/meta/_journal.json", "utf8"));
+            for (const entry of journal.entries) {
+              if (!fs.existsSync(folder + "/" + entry.tag + ".sql")) throw new Error("Missing fork SQL");
+            }
+          '
 
       - name: Export digest
         env:

@@ -38,10 +38,14 @@ import {
 } from '@/lib/server/fleet/schema-state'
 import { closeControlSql } from '@/lib/server/workspaces/registry'
 
-type Command = 'run' | 'status' | 'enrol' | 'set-target' | 'block' | 'plan'
+// FORK-SEAM(F-18): explicit fork-only release pass for upstream-current tenants.
+import { runForkFleetMigrations } from '@/lib/server/fork/fleet/migrate'
+
+type Command = 'fork' | 'run' | 'status' | 'enrol' | 'set-target' | 'block' | 'plan'
 
 const USAGE = `fleet-migrator <command> [options]
 
+  fork         Reconcile fork SQL and catalogue on upstream-current active workspaces.
   run          Claim workspaces behind their target and reconcile them.
   plan         Report, per workspace, what a run WOULD apply. Touches no schema.
   status       Print cp_workspace_schema_state.
@@ -98,7 +102,10 @@ function parseArgs(argv: string[]): { command: Command; opts: Record<string, str
     opts[token.slice(2)] = value
     i++
   }
-  if (!command || !['run', 'status', 'enrol', 'set-target', 'block', 'plan'].includes(command)) {
+  if (
+    !command ||
+    !['fork', 'run', 'status', 'enrol', 'set-target', 'block', 'plan'].includes(command)
+  ) {
     throw new Error(`unknown command ${command ?? '(none)'}`)
   }
   return { command: command as Command, opts }
@@ -122,6 +129,17 @@ async function main(): Promise<number> {
     throw new Error('QUACKBACK_CONTROL_DATABASE_URL is not set (no control database)')
   }
   const target = latestBundledVersion()
+
+  if (command === 'fork') {
+    const result = await runForkFleetMigrations({
+      workspaceKey: opts.workspace as string | undefined,
+      cohort: opts.cohort as string | undefined,
+    })
+    for (const row of result.outcomes)
+      console.log(`${row.workspaceKey}: ${row.ok ? 'ok' : 'FAILED'} ${row.detail}`)
+    console.log(`fork failures: ${result.failed}`)
+    return result.failed > 0 ? 1 : 0
+  }
 
   if (command === 'status') {
     const rows = await listSchemaState(opts.cohort as string | undefined)

@@ -70,6 +70,10 @@ export default defineConfig({
       '@quackback/db/migrate': path.resolve(__dirname, './packages/db/src/migrate-runtime.ts'),
       '@quackback/db/schema': path.resolve(__dirname, './packages/db/src/schema/index.ts'),
       // FORK-SEAM(F-13): fork tables, ahead of the bare '@quackback/db' alias.
+      '@quackback/db/fork/readiness': path.resolve(
+        __dirname,
+        './packages/db/src/fork/readiness.ts'
+      ),
       '@quackback/db/fork': path.resolve(__dirname, './packages/db/src/fork/index.ts'),
       '@quackback/db/types': path.resolve(__dirname, './packages/db/src/types.ts'),
       '@quackback/db/email/personal-email-domains': path.resolve(

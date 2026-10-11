@@ -60,6 +60,23 @@ export async function runForkMigrations(
 
   const migrations = readMigrationFiles({ migrationsFolder })
   const lastApplied = await forkHighWaterMark(sql)
+  // Drizzle only replays above the high-water mark. Refuse holes or rewrites
+  // rather than silently certifying an incomplete lineage.
+  if (lastApplied !== null) {
+    const applied = await sql.unsafe<{ created_at: string; hash: string }[]>(
+      `SELECT created_at, hash FROM ${FORK_MIGRATIONS_SCHEMA}.${FORK_MIGRATIONS_TABLE}`
+    )
+    for (const migration of migrations.filter((m) => m.folderMillis <= lastApplied)) {
+      if (
+        !applied.some(
+          (a) => Number(a.created_at) === migration.folderMillis && a.hash === migration.hash
+        )
+      )
+        throw new Error(
+          `Fork migration ledger gap or rewrite at ${migration.folderMillis}; repair before serving`
+        )
+    }
+  }
   const pending = migrations.filter((m) => lastApplied === null || lastApplied < m.folderMillis)
   if (pending.length === 0) return { applied: [] }
 

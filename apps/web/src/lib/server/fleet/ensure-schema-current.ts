@@ -19,6 +19,8 @@
  * Uses the session-mode DSN: the advisory lock is session-scoped.
  */
 import type { Sql } from 'postgres'
+// FORK-SEAM(F-16): fork-only releases must pass the same serving gate.
+import { missingForkRequirements } from '@quackback/db/fork/readiness'
 import {
   BUNDLED_MIGRATIONS,
   readAppliedLedger,
@@ -39,7 +41,10 @@ export async function ensureWorkspaceSchemaCurrent(opts: {
   directConnectionString: string
 }): Promise<void> {
   const applied = await readAppliedLedger(opts.sql)
-  const missing = missingBundledMigrations(applied)
+  const missing = [
+    ...missingBundledMigrations(applied),
+    ...(await missingForkRequirements(opts.sql)),
+  ]
   if (missing.length === 0) return
 
   log.warn(
@@ -69,7 +74,10 @@ export async function ensureWorkspaceSchemaCurrent(opts: {
   }
 
   const after = outcome.after ?? (await readAppliedLedger(opts.sql))
-  const stillMissing = missingBundledMigrations(after)
+  const stillMissing = [
+    ...missingBundledMigrations(after),
+    ...(await missingForkRequirements(opts.sql)),
+  ]
   if (stillMissing.length > 0) {
     throw new WorkspaceSchemaFloorRefusal(opts.workspaceKey, {
       ok: false,
