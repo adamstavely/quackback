@@ -262,7 +262,7 @@ export function AnnouncementEditor({
 
   return (
     <Dialog open onOpenChange={(open) => !open && close()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
             {readOnly ? 'Announcement' : isNew ? 'New announcement' : 'Edit announcement'}
@@ -328,7 +328,7 @@ export function AnnouncementEditor({
               <RadioGroup
                 value={kind}
                 onValueChange={(v) => setKind(v as AnnouncementKind)}
-                className="grid grid-cols-2 gap-2 sm:grid-cols-5"
+                className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
               >
                 {ANNOUNCEMENT_KINDS.map((k) => {
                   const Icon = KIND_STYLES[k].icon
@@ -337,9 +337,9 @@ export function AnnouncementEditor({
                       key={k}
                       htmlFor={`${ids}-kind-${k}`}
                       className={cn(
-                        'flex min-h-11 cursor-pointer items-center gap-2 rounded-[var(--radius)] border px-3 py-2 text-sm font-normal has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
+                        'flex min-h-11 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[var(--radius)] border px-2.5 py-2 text-sm font-normal has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
                         kind === k
-                          ? cn(KIND_STYLES[k].surface, 'border-foreground/60 font-semibold')
+                          ? cn(KIND_STYLES[k].surface, 'border-foreground/60')
                           : 'border-border hover:bg-muted/40'
                       )}
                     >
