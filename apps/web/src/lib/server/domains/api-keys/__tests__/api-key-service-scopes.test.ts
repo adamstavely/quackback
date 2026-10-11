@@ -10,6 +10,17 @@ import type { PrincipalId } from '@quackback/ids'
 const mockInsertValues = vi.fn()
 const mockFindFirst = vi.fn()
 
+// FORK-SEAM(R-16): this suite fakes the database, so a key keeps upstream's
+// preset here; the fork's key authority is tested in lib/server/fork/rbac/__tests__.
+vi.mock('@/lib/server/fork/rbac/key-authority', async () => {
+  const { resolveActorPermissions } = await import('@/lib/server/policy/permissions')
+  return {
+    resolveKeyPermissions: async ({ serviceRole }: { serviceRole: 'admin' | 'member' | 'user' }) =>
+      resolveActorPermissions(serviceRole),
+    copyCreatorAssignments: async () => {},
+  }
+})
+
 vi.mock('@/lib/server/db', async (importOriginal) => ({
   // Spread the real db module so tables/operators stay current; override only what this suite drives.
   ...(await importOriginal<typeof import('@/lib/server/db')>()),

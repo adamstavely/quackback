@@ -18,6 +18,8 @@ import type { ConversationAttachment, TiptapContent } from '@/lib/server/db'
 import type { Actor } from '@/lib/server/policy/types'
 import { hasApiScope } from '@/lib/server/domains/api-keys/api-key-scopes'
 import type { McpAuthContext, McpScope } from '../types'
+// FORK-SEAM(R-5)
+import { forkMcpToolGate } from '@/lib/server/fork/rbac/mcp-tool-gate'
 
 // ============================================================================
 // Result wrappers
@@ -204,6 +206,8 @@ export function registerTool<TArgs>(
       if (denied) return denied
     }
     try {
+      // FORK-SEAM(R-5): the caller's custom role, per tool and per argument.
+      await forkMcpToolGate(auth, def.name, args)
       return await def.handler(args)
     } catch (err) {
       return errorResult(err)
@@ -256,6 +260,7 @@ export function mcpAgentActor(auth: McpAuthContext): Actor {
   return {
     principalId: auth.principalId,
     role: auth.role,
+    permissions: auth.permissions, // FORK-SEAM(R-5)
     principalType: principalTypeOf(auth),
     segmentIds: new Set<SegmentId>(),
   }
@@ -271,6 +276,7 @@ export async function mcpMemberActor(auth: McpAuthContext): Promise<Actor> {
   return {
     principalId: auth.principalId,
     role: auth.role,
+    permissions: auth.permissions, // FORK-SEAM(R-5)
     principalType: principalTypeOf(auth),
     segmentIds: await segmentIdsForPrincipal(auth.principalId),
   }

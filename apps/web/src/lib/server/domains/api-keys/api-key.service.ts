@@ -26,6 +26,8 @@ import {
   parseScopesJson,
 } from './api-key-scopes'
 import type { ApiKey, ApiKeyId, CreateApiKeyInput, CreateApiKeyResult } from './api-key.types'
+// FORK-SEAM(R-2)
+import { copyCreatorAssignments } from '@/lib/server/fork/rbac/key-authority'
 export type { ApiKey, ApiKeyId, CreateApiKeyInput, CreateApiKeyResult }
 
 /** API key prefix */
@@ -135,6 +137,8 @@ export async function createApiKey(
     displayName: input.name.trim(),
     serviceMetadata: { kind: 'api_key', apiKeyId: '' }, // Will be updated below
   })
+  // FORK-SEAM(R-2): the key carries the creator's custom role, not the preset.
+  await copyCreatorAssignments(createdById, servicePrincipal.id)
 
   // Store the key
   const [apiKey] = await db

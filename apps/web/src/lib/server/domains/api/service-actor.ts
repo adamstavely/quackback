@@ -17,6 +17,7 @@ export function serviceActorFromApiAuth(auth: ApiAuthContext): Actor {
   return {
     principalId: auth.principalId,
     role: auth.role,
+    permissions: auth.permissions, // FORK-SEAM(R-9)
     principalType: 'service' as const,
     segmentIds: new Set<SegmentId>(),
   }

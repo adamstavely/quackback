@@ -2,7 +2,8 @@
 
 > **Status:** v2 (round-2 revision + staff-review revision + second-pass revision + third-review revision,
 > 2026-09-19) — supersedes
-> `plans/v1/rbac-persona-extensions-plan.md`. Nothing here is implemented.
+> `plans/v1/rbac-persona-extensions-plan.md`. **Phase 1a (custom-role enforcement on REST and MCP) is
+> implemented (2026-10-11); everything else is deferred — see §0d.**
 > **Depends on:** Foundations (fork migration lineage `packages/db/drizzle-fork` + `drizzle.__fork_migrations`,
 > `fork_settings`, shared seams F-1…F-11, `plans/v2/SEAMS.md`) — see `02-fork-conventions.md`, in particular
 > §3.3a (fork-only releases run `seedSystemData`).
@@ -10,6 +11,35 @@
 > D-C9, D-C15, D-C16.
 > **Baseline:** upstream `780a7b577` (fork `main` has no `apps/`/`packages/` diff against it); staff-review
 > additions re-verified against `eb79147`. Every `file:line` below was verified against that tree.
+
+## 0d. Scope and build notes (2026-10-11)
+
+**Scope (owner, D-R14).** Upstream's admin UI already creates custom roles and assigns them
+(`/admin/settings/members` → Roles), so the fork does not ship persona templates. What upstream lacks is
+enforcement outside the dashboard: a custom-role holder acted as a Manager over API keys and MCP. Only that
+(Phase 1a) is built now. Deferred until the plan that needs them: Phase 0 templates and the reconcile path
+(plan 20, tower installs), Phase 1 fork keys (each lands with its feature, e.g. `prioritization.score` with
+plan 50), Phase 2 team-scoped grants and Phase 3 multi-role (plans 30/40), Phase 3t managed principals and
+denial (plan 20). Phase 1b is dropped (D-R6 superseded).
+
+**Re-verified against upstream `origin/main` 7fa9fbff3.** Upstream #706 added `McpAuthContext.permissions`
+and `mcp/resolve-actor.ts` (`resolveMcpActor`: person ∩ key principal ∩ ceiling) for its settings and
+navigation tools only; every gap in §3 was otherwise still open. As built:
+
+- **R-1/R-2 (API keys).** Authority = service principal's set ∩ the creator's *current* set, narrowed per
+  D-R13. A new key copies the creator's workspace-wide roles (granted by the creator, so `seedSystemData`
+  5a keeps them): removing the creator never escalates the key, demoting the creator shrinks it at once.
+  Pre-fork keys keep the preset, capped by their creator. No backfill function is needed (the cap applies
+  to existing keys immediately), so `backfillKeyAuthorityFn` is dropped.
+- **R-3 (MCP).** The set is resolved in `resolveAuthContext` (R-4 folded in) and cut to granted scopes;
+  upstream's `resolveMcpActor` reads it as its ceiling, so upstream's own tools tighten too.
+- **R-5.** `FORK_MCP_TOOL_SPECS` covers all 46 tools as of 7fa9fbff3 (including upstream's newer
+  `upload_file`, `get_settings`, `propose_settings_change`, `navigate_workspace`). Comment tools need no key
+  (D-R6); editing or deleting someone else's comment needs `comment.edit` / `comment.moderate`.
+- **R-11.** As Appendix A.2, plus `quackback://members` closed to portal users.
+- Code: `apps/web/src/lib/server/fork/rbac/` (`key-authority.ts`, `mcp-authority.ts`, `mcp-tool-gate.ts`,
+  `mcp-tool-permissions.ts`, `mcp-resource-gate.ts`), tests alongside. Seams are in `SEAMS.md` (R-16 lists
+  the upstream unit tests that stub the fork modules).
 
 ## 0. Round-2 changes
 

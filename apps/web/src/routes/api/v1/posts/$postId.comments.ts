@@ -157,6 +157,7 @@ export const Route = createFileRoute('/api/v1/posts/$postId/comments')({
           const callerActor = {
             principalId: auth.principalId,
             role: auth.role as import('@/lib/server/policy/types').Role,
+            permissions: auth.permissions, // FORK-SEAM(R-8)
             principalType: callerType === 'service' ? ('service' as const) : ('user' as const),
             segmentIds: callerSegmentIds,
           }

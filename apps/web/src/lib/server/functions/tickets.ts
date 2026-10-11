@@ -123,8 +123,11 @@ export const listTicketsFn = createServerFn({ method: 'GET' })
 export const getTicketFn = createServerFn({ method: 'GET' })
   .validator(z.object({ ticketId: z.string() }))
   .handler(async ({ data }) => {
-    await requireAuth({ permission: PERMISSIONS.TICKET_VIEW })
-    const { getTicket } = await import('@/lib/server/domains/tickets/ticket.service')
+    // FORK-SEAM(R-12): only a ticket the caller can see, like the sibling fns.
+    const ctx = await requireAuth({ permission: PERMISSIONS.TICKET_VIEW })
+    const { assertTicketVisible, getTicket } =
+      await import('@/lib/server/domains/tickets/ticket.service')
+    await assertTicketVisible(data.ticketId as TicketId, await policyActorFromAuth(ctx))
     return getTicket(data.ticketId as TicketId)
   })
 
@@ -360,8 +363,11 @@ export const bulkUpdateTicketsFn = createServerFn({ method: 'POST' })
 export const getTicketLinksFn = createServerFn({ method: 'GET' })
   .validator(z.object({ ticketId: z.string() }))
   .handler(async ({ data }) => {
-    await requireAuth({ permission: PERMISSIONS.TICKET_VIEW })
-    const { getTicket } = await import('@/lib/server/domains/tickets/ticket.service')
+    // FORK-SEAM(R-12): only a ticket the caller can see, like the sibling fns.
+    const ctx = await requireAuth({ permission: PERMISSIONS.TICKET_VIEW })
+    const { assertTicketVisible, getTicket } =
+      await import('@/lib/server/domains/tickets/ticket.service')
+    await assertTicketVisible(data.ticketId as TicketId, await policyActorFromAuth(ctx))
     const { getTrackerForTicket, listLinkedTickets } =
       await import('@/lib/server/domains/tickets/ticket-links.service')
     const ticketId = data.ticketId as TicketId
@@ -768,7 +774,10 @@ export const exportTicketTranscriptFn = createServerFn({ method: 'GET' })
       throw new ForbiddenError('FORBIDDEN', 'Only team members can export a transcript')
     }
     const ticketId = data.ticketId as TicketId
-    const { getTicket } = await import('@/lib/server/domains/tickets/ticket.service')
+    // FORK-SEAM(R-12)
+    const { assertTicketVisible, getTicket } =
+      await import('@/lib/server/domains/tickets/ticket.service')
+    await assertTicketVisible(ticketId, await policyActorFromAuth(ctx))
     const ticket = await getTicket(ticketId)
     const { listTicketMessages } =
       await import('@/lib/server/domains/tickets/ticket-message.service')
