@@ -206,6 +206,7 @@ Examples:
       const votingActor = {
         principalId: auth.principalId,
         role: auth.role,
+        permissions: auth.permissions, // FORK-SEAM(R-5)
         principalType: 'user' as const,
         segmentIds: await segmentIdsForPrincipal(auth.principalId),
       }

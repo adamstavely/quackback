@@ -73,7 +73,9 @@ async function customRole(keys: PermissionKey[]): Promise<RoleId> {
     .from(permissions)
     .where(inArray(permissions.key, keys))
   expect(rows).toHaveLength(keys.length)
-  await testDb.insert(rolePermissions).values(rows.map((row) => ({ roleId: id, permissionId: row.id })))
+  await testDb
+    .insert(rolePermissions)
+    .values(rows.map((row) => ({ roleId: id, permissionId: row.id })))
   return id
 }
 

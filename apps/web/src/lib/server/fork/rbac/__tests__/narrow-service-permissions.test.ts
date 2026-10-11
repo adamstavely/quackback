@@ -26,7 +26,9 @@ describe('narrowServicePermissions (D-R13)', () => {
         PERMISSIONS.CONVERSATION_REPLY
       )
     )
-    expect([...narrowed].sort()).toEqual([PERMISSIONS.TICKET_VIEW, PERMISSIONS.TICKET_VIEW_ALL].sort())
+    expect([...narrowed].sort()).toEqual(
+      [PERMISSIONS.TICKET_VIEW, PERMISSIONS.TICKET_VIEW_ALL].sort()
+    )
   })
 
   it('leaves the Manager preset untouched', async () => {

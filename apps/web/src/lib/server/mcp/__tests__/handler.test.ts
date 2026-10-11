@@ -22,6 +22,10 @@ vi.mock('@/lib/server/fork/rbac/key-authority', async () => {
     copyCreatorAssignments: async () => {},
   }
 })
+vi.mock('@/lib/server/fork/rbac/mcp-authority', () => ({
+  oauthMcpPermissions: async () => undefined,
+  keyMcpPermissions: () => undefined,
+}))
 
 vi.mock('@/lib/server/domains/api-keys/api-key.service', () => ({
   verifyApiKey: vi.fn(),
