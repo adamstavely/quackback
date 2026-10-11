@@ -12,7 +12,7 @@ const devConfig = (overrides = {}) => ({
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
-// FORK-SEAM(R-1): this suite fakes the database, so a key keeps upstream's
+// FORK-SEAM(R-16): this suite fakes the database, so a key keeps upstream's
 // preset here; the fork's key authority is tested in lib/server/fork/rbac/__tests__.
 vi.mock('@/lib/server/fork/rbac/key-authority', async () => {
   const { resolveActorPermissions } = await import('@/lib/server/policy/permissions')

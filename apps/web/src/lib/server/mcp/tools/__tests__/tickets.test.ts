@@ -12,7 +12,7 @@ vi.mock('@/lib/server/domains/tickets/ticket.service', () => ({
   listTickets: (...a: unknown[]) => mockListTickets(...a),
   getTicket: (...a: unknown[]) => mockGetTicket(...a),
   createTicket: (...a: unknown[]) => mockCreateTicket(...a),
-  // FORK-SEAM(R-5): the fork gate checks the caller can see each ticket.
+  // FORK-SEAM(R-16): the fork gate checks the caller can see each ticket.
   assertTicketVisible: async () => {},
 }))
 vi.mock('@/lib/server/domains/tickets/ticket-message.service', () => ({
