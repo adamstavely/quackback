@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { useLocalDateFormatter, type LocalDateFormatter } from '@/components/ui/local-date'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
@@ -73,16 +74,17 @@ const FIELD_ORDER: FieldName[] = [
   'expiresAt',
 ]
 
+const PLACEHOLDER_DATE_FORMAT: Intl.DateTimeFormatOptions = {
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+}
+
 /** Formats a placeholder value the author picked, as plain text in their locale. */
-function formatPlaceholder(name: string, raw: string): string {
-  if (!raw) return raw
-  if (name === 'date') {
-    const date = new Date(`${raw}T00:00:00`)
-    return Number.isNaN(date.getTime())
-      ? raw
-      : date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-  }
-  return raw
+function formatPlaceholder(name: string, raw: string, formatDate: LocalDateFormatter): string {
+  if (!raw || name !== 'date') return raw
+  const date = new Date(`${raw}T00:00:00`)
+  return Number.isNaN(date.getTime()) ? raw : formatDate(date, PLACEHOLDER_DATE_FORMAT)
 }
 
 const PLACEHOLDER_INPUT: Record<string, 'date' | 'time'> = {
@@ -149,14 +151,15 @@ export function AnnouncementEditor({
       : []
   }, [templateId, templates])
 
+  const formatDate = useLocalDateFormatter()
   const filledValues = useMemo(
     () =>
       Object.fromEntries(
         Object.entries(placeholderValues)
           .filter(([, v]) => v.trim())
-          .map(([k, v]) => [k, formatPlaceholder(k, v.trim())])
+          .map(([k, v]) => [k, formatPlaceholder(k, v.trim(), formatDate)])
       ),
-    [placeholderValues]
+    [placeholderValues, formatDate]
   )
   const fill = (text: string) => fillPlaceholders(text, filledValues)
 

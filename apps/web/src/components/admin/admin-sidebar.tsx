@@ -177,11 +177,7 @@ const RAIL_ITEMS: RailItem[] = [
 
 /** The rail items a viewer sees: the products that are on. */
 export function buildRailItems(flags: Partial<FeatureFlags> | undefined): RailItem[] {
-  // FORK-SEAM(F-4): fork admin areas (Announcements) join the rail.
-  return withForkRailItems(
-    RAIL_ITEMS.filter((item) => !item.product || isProductEnabled(flags, item.product)),
-    FORK_RAIL_ITEMS
-  )
+  return RAIL_ITEMS.filter((item) => !item.product || isProductEnabled(flags, item.product))
 }
 
 /**
@@ -318,7 +314,8 @@ export function AdminSidebar({ initialUserData, latestVersion, planNotice }: Adm
   const orgLogo = branding?.logoUrl ?? branding?.headerLogoUrl ?? '/logo.png'
   const orgName = branding?.name ?? 'Quackback'
 
-  const railItems = buildRailItems(flags)
+  // FORK-SEAM(F-4): fork admin areas (Announcements) join the rail.
+  const railItems = withForkRailItems(buildRailItems(flags), FORK_RAIL_ITEMS)
   // Posts and comments waiting for review. Shown on Feedback when there are any.
   const feedbackEnabled = isProductEnabled(flags, 'feedback')
   const canReviewPosts = usePermission(PERMISSIONS.POST_APPROVE)
