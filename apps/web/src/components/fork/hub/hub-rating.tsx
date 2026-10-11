@@ -70,7 +70,7 @@ export function HubRating({ conversationId, value, onRate }: HubRatingProps): Re
       <div
         ref={resultRef}
         tabIndex={-1}
-        className="flex items-center gap-2 rounded-sm focus-visible:outline-2 focus-visible:outline-current"
+        className="flex items-center gap-2 rounded-sm focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current"
       >
         <span className="flex items-center gap-1.5 text-xs font-medium text-success">
           <CheckIcon aria-hidden className="size-3.5" />
@@ -122,7 +122,7 @@ export function HubRating({ conversationId, value, onRate }: HubRatingProps): Re
                   'flex size-11 cursor-pointer items-center justify-center rounded-[var(--radius)] bg-transparent',
                   'outline-none transition-colors',
                   'hover:bg-muted/40',
-                  'focus-visible:outline-2 focus-visible:outline-current focus-visible:outline-offset-2',
+                  'focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current focus-visible:outline-offset-2',
                   'disabled:pointer-events-none disabled:opacity-50'
                 )}
               >
@@ -147,7 +147,10 @@ export function HubRating({ conversationId, value, onRate }: HubRatingProps): Re
         </Button>
         {error ? (
           <p role="alert" className="text-sm text-destructive">
-            Could not save your rating. Please try again.
+            <FormattedMessage
+              id="portal.forkHub.rating.saveFailed"
+              defaultMessage="Could not save your rating. Please try again."
+            />
           </p>
         ) : null}
       </div>
@@ -155,7 +158,17 @@ export function HubRating({ conversationId, value, onRate }: HubRatingProps): Re
   return (
     <div ref={rootRef}>
       <span role="status" className="sr-only">
-        {score !== null ? `Rated ${score} of 5` : pending ? 'Saving rating' : ''}
+        {score !== null
+          ? intl.formatMessage(
+              { id: 'portal.forkHub.rating.recorded', defaultMessage: 'Rated {score} of 5' },
+              { score }
+            )
+          : pending
+            ? intl.formatMessage({
+                id: 'portal.forkHub.rating.saving',
+                defaultMessage: 'Saving rating',
+              })
+            : ''}
       </span>
       {content}
     </div>

@@ -173,9 +173,16 @@ export function HelpCenterHeroSearch({ askAiEnabled = false, locale }: HelpCente
 
       <span role="status" className="sr-only">
         {isSearching
-          ? 'Searching'
+          ? intl.formatMessage({ id: 'portal.forkSearch.searching', defaultMessage: 'Searching' })
           : resultsOpen
-            ? `${results.length} articles found${hasAskRow ? ', or ask AI' : ''}`
+            ? intl.formatMessage(
+                {
+                  id: 'portal.forkSearch.results',
+                  defaultMessage:
+                    '{count, plural, one {# article found} other {# articles found}}{askAi, select, yes {, or ask AI} other {}}',
+                },
+                { count: results.length, askAi: hasAskRow ? 'yes' : 'no' }
+              )
             : ''}
       </span>
       {resultsOpen && (

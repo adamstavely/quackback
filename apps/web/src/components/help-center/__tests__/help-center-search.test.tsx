@@ -134,6 +134,7 @@ describe('HelpCenterHeroSearch Ask AI loading', () => {
   })
 })
 
+// FORK-SEAM(A11Y-3): the hero search is a combobox (seam A11Y-1).
 it('exposes the arrow-selected result and expanded state to assistive technology', async () => {
   const input = await renderHeroSearch({ askAiEnabled: true })
   expect(input.getAttribute('aria-expanded')).toBe('false')

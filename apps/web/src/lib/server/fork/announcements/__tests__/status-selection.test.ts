@@ -1,7 +1,10 @@
 import { expect, it, vi } from 'vitest'
-const state = vi.hoisted(() => ({ candidates: [] as { id: string; kind: string; status: string; scheduledStartAt: Date | null }[], incidents: new Map<string, unknown>() }))
+const state = vi.hoisted(() => ({
+  candidates: [] as { id: string; kind: string; status: string; scheduledStartAt: Date | null }[],
+  incidents: new Map<string, unknown>(),
+}))
 vi.mock('@/lib/server/db', () => ({
-  asc: () => null,
+  desc: () => null,
   and: () => null,
   eq: () => null,
   gt: () => null,
@@ -14,8 +17,9 @@ vi.mock('@/lib/server/db', () => ({
     select: () => ({
       from: () => ({
         where: () => ({
-          orderBy: async () => state.candidates,
-          limit: async (n: number) => state.candidates.slice(0, n),
+          orderBy: () => ({
+            limit: async (n: number) => state.candidates.slice(0, n),
+          }),
         }),
       }),
     }),

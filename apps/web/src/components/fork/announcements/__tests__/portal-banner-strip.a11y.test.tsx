@@ -2,8 +2,12 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
+import { IntlProvider } from 'react-intl'
 import { PortalBannerStrip } from '../portal-banner-strip'
 import type { BannerItem } from '@/lib/shared/fork/announcements/types'
+
+const inIntl = (ui: ReactElement) => <IntlProvider locale="en">{ui}</IntlProvider>
 vi.mock('@tanstack/react-router', () => ({ useRouterState: () => false }))
 const item = (id: string): BannerItem => ({
   id,
@@ -27,7 +31,7 @@ test('blocked storage keeps successive dismissals and keyboard focus', async () 
     throw new Error('blocked')
   })
   const user = userEvent.setup()
-  render(<PortalBannerStrip items={[item('First'), item('Second')]} />)
+  render(inIntl(<PortalBannerStrip items={[item('First'), item('Second')]} />))
   await user.click(screen.getByRole('button', { name: 'Dismiss: First' }))
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Dismiss: Second' }))
   await user.keyboard('{Enter}')
@@ -36,8 +40,8 @@ test('blocked storage keeps successive dismissals and keyboard focus', async () 
   expect(document.activeElement?.textContent).toContain('No more announcements')
 })
 test('removing a focused banner through a feed update restores focus within the strip', async () => {
-  const { rerender } = render(<PortalBannerStrip items={[item('First'), item('Second')]} />)
+  const { rerender } = render(inIntl(<PortalBannerStrip items={[item('First'), item('Second')]} />))
   screen.getByRole('button', { name: 'Dismiss: First' }).focus()
-  rerender(<PortalBannerStrip items={[item('Second')]} />)
+  rerender(inIntl(<PortalBannerStrip items={[item('Second')]} />))
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Dismiss: Second' }))
 })

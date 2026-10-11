@@ -117,7 +117,7 @@ export function HubRow({
       <span className="flex min-w-0 flex-col gap-0.5">
         <Link
           to={titleTo}
-          className="truncate rounded-[var(--radius)] text-[15px] font-medium text-foreground outline-none hover:underline focus-visible:outline-2 focus-visible:outline-current"
+          className="truncate rounded-[var(--radius)] text-[15px] font-medium text-foreground outline-none hover:underline focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current"
         >
           {title}
         </Link>

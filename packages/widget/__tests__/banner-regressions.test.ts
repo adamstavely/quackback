@@ -100,4 +100,8 @@ test('a live update retains link focus, and final dismissal provides a focus des
   dismiss.focus()
   dismiss.click()
   expect(el.shadowRoot!.activeElement?.textContent).toBe('No more announcements.')
+  // Once focus moves on, the message goes and the banner takes no space.
+  ;(el.shadowRoot!.activeElement as HTMLElement).blur()
+  expect(el.shadowRoot!.textContent).not.toContain('No more announcements.')
+  expect(el.hidden).toBe(true)
 })

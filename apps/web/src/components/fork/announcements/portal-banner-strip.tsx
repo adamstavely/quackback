@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { useRouterState } from '@tanstack/react-router'
+import { useIntl } from 'react-intl'
 import type { BannerItem } from '@/lib/shared/fork/announcements/types'
 import { BannerBar } from './banner-bar'
 
@@ -28,6 +29,11 @@ function writeDismissed(next: Record<string, string>): void {
  * when there is something to show, so pages without banners never download it.
  */
 export function PortalBannerStrip({ items }: { items: BannerItem[] }): ReactElement | null {
+  const intl = useIntl()
+  const regionLabel = intl.formatMessage({
+    id: 'portal.forkBanner.region',
+    defaultMessage: 'Announcements',
+  })
   const [dismissed, setDismissed] = useState<Record<string, string>>(readDismissed)
   const [expanded, setExpanded] = useState(false)
   const sectionRef = useRef<HTMLElement>(null)
@@ -71,10 +77,15 @@ export function PortalBannerStrip({ items }: { items: BannerItem[] }): ReactElem
             lastFocused.current = null
         }}
         tabIndex={-1}
-        aria-label="Announcements"
+        aria-label={regionLabel}
         className="sr-only focus:not-sr-only focus:p-4"
       >
-        <span role="status">No more announcements.</span>
+        <span role="status">
+          {intl.formatMessage({
+            id: 'portal.forkBanner.none',
+            defaultMessage: 'No more announcements.',
+          })}
+        </span>
       </section>
     )
 
@@ -99,7 +110,7 @@ export function PortalBannerStrip({ items }: { items: BannerItem[] }): ReactElem
           lastFocused.current = null
       }}
       tabIndex={-1}
-      aria-label="Announcements"
+      aria-label={regionLabel}
       className="w-full"
     >
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 px-4 pt-3 sm:px-6">
@@ -111,11 +122,21 @@ export function PortalBannerStrip({ items }: { items: BannerItem[] }): ReactElem
             type="button"
             aria-expanded={expanded}
             onClick={() => setExpanded((open) => !open)}
-            className="min-h-6 self-start rounded-sm text-xs font-medium text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-current"
+            className="min-h-6 self-start rounded-sm text-xs font-medium text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current"
           >
             {expanded
-              ? 'Show fewer'
-              : `${rest.length} more announcement${rest.length === 1 ? '' : 's'}`}
+              ? intl.formatMessage({
+                  id: 'portal.forkBanner.showFewer',
+                  defaultMessage: 'Show fewer',
+                })
+              : intl.formatMessage(
+                  {
+                    id: 'portal.forkBanner.more',
+                    defaultMessage:
+                      '{count, plural, one {# more announcement} other {# more announcements}}',
+                  },
+                  { count: rest.length }
+                )}
           </button>
         ) : null}
       </div>

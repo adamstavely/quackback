@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import { XMarkIcon } from '@heroicons/react/24/solid'
+import { useIntl } from 'react-intl'
 import { Button } from '@/components/ui/button'
 import { useLocalDateFormatter } from '@/components/ui/local-date'
 import { KIND_PRESETS } from '@/lib/shared/fork/announcements/presets'
@@ -34,6 +35,7 @@ export function BannerBar({
   const style = KIND_STYLES[item.kind]
   const Icon = style.icon
   const formatDate = useLocalDateFormatter()
+  const intl = useIntl()
   const windowText = item.window ? formatWindow(item.window, formatDate) : null
 
   return (
@@ -58,7 +60,7 @@ export function BannerBar({
         {item.link ? (
           <a
             href={item.link.url}
-            className="min-w-0 max-w-full rounded-sm font-medium [overflow-wrap:anywhere] underline underline-offset-2 outline-none hover:no-underline focus-visible:outline-2 focus-visible:outline-current focus-visible:outline-offset-2"
+            className="min-w-0 max-w-full rounded-sm font-medium [overflow-wrap:anywhere] underline underline-offset-2 outline-none hover:no-underline focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current focus-visible:outline-offset-2"
           >
             {item.link.label}
           </a>
@@ -70,7 +72,10 @@ export function BannerBar({
           variant="ghost"
           size="icon-sm"
           className="-my-1 -mr-2 shrink-0 text-foreground hover:bg-foreground/10"
-          aria-label={`Dismiss: ${item.title}`}
+          aria-label={intl.formatMessage(
+            { id: 'portal.forkBanner.dismiss', defaultMessage: 'Dismiss: {title}' },
+            { title: item.title }
+          )}
           onClick={onDismiss}
         >
           <XMarkIcon aria-hidden className="size-4" />

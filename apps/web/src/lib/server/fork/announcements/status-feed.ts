@@ -1,5 +1,5 @@
 import type { StatusIncidentId } from '@quackback/ids'
-import { asc, and, db, eq, gt, gte, inArray, isNull, or, statusIncidents } from '@/lib/server/db'
+import { and, db, desc, eq, gt, gte, inArray, isNull, or, statusIncidents } from '@/lib/server/db'
 import { getStatusSettings } from '@/lib/server/domains/settings/settings.status'
 import { isFeatureEnabled } from '@/lib/server/domains/settings/settings.service'
 import { getPublicStatusIncident, isStatusAudienceGranted } from '@/lib/server/domains/status'
@@ -12,6 +12,12 @@ import type { AnnouncementKind, BannerItem } from '@/lib/shared/fork/announcemen
 /** A resolved incident shows as a green "Resolved" banner for this long. */
 export const RESOLVED_BANNER_MS = 60 * 60 * 1000
 const CANDIDATE_LIMIT = 10
+/**
+ * Bounds the work on each portal page: every incident in view costs a public
+ * read, so the scan stops here, newest first. Far above any real status page,
+ * so in practice every visible incident is ranked before the cap above.
+ */
+const SCAN_LIMIT = 100
 
 export interface StatusBanners {
   items: BannerItem[]
@@ -82,7 +88,8 @@ export async function buildStatusBanners(
         )
       )
     )
-    .orderBy(asc(statusIncidents.id))
+    .orderBy(desc(statusIncidents.id))
+    .limit(SCAN_LIMIT)
 
   const transitions: number[] = []
   const shown: typeof candidates = []

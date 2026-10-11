@@ -10,6 +10,7 @@ import { WorkspaceSchemaFloorRefusal } from '../schema-floor'
 
 const readAppliedLedger = vi.fn()
 const migrateDirect = vi.fn()
+// FORK-SEAM(A11Y-3): fork readiness joins the serving gate (seam F-16).
 const missingFork = vi.fn()
 vi.mock('@quackback/db/fork/readiness', () => ({
   missingForkRequirements: (...args: unknown[]) => missingFork(...args),

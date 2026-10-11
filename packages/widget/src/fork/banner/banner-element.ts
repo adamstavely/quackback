@@ -290,6 +290,12 @@ export class QuackbackBannerElement extends HTMLElement {
         empty.tabIndex = -1
         empty.setAttribute('role', 'status')
         empty.className = 'strip'
+        // Only a focus destination: once focus moves on, nothing is left to show.
+        empty.addEventListener('blur', () => {
+          if (this.visibleItems().length > 0) return
+          empty.remove()
+          this.hidden = true
+        })
         this.qbRoot.appendChild(empty)
         empty.focus()
       }
