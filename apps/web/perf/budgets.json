@@ -90,7 +90,7 @@
       "requests": 135,
       "jsRequests": 130,
       "jsKB": 450,
-      "htmlTransferKB": 18,
+      "htmlTransferKB": 19,
       "componentRenders": 216
     },
     "ui:portal-open-post-with-comments": {
@@ -881,7 +881,7 @@
       "requests": 106,
       "jsRequests": 99,
       "jsKB": 392.8,
-      "htmlTransferKB": 18.3,
+      "htmlTransferKB": 19.3,
       "componentRenders": 771
     },
     "sweep:doc:anon:/changelog": {
