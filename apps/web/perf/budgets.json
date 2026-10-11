@@ -765,7 +765,7 @@
       "jsRequests": 151,
       "jsKB": 460.3,
       "htmlTransferKB": 32.4,
-      "componentRenders": 427
+      "componentRenders": 472
     },
     "sweep:doc:admin:/admin/settings/security/sso/new": {
       "dbQueries": 6,

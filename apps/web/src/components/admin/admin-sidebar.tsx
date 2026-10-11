@@ -66,6 +66,8 @@ import {
   useSessionContext,
   useWorkspaceSettings,
 } from '@/lib/client/hooks/use-root-context'
+// FORK-SEAM(F-4): fork admin areas (Announcements) join the rail.
+import { FORK_RAIL_ITEMS, withForkRailItems } from '@/components/fork/admin-rail'
 
 /** Availability toggle for the account menu (conversation routing). The label shows the
  *  state you'll switch to; the avatar dot shows the current one. */
@@ -312,7 +314,8 @@ export function AdminSidebar({ initialUserData, latestVersion, planNotice }: Adm
   const orgLogo = branding?.logoUrl ?? branding?.headerLogoUrl ?? '/logo.png'
   const orgName = branding?.name ?? 'Quackback'
 
-  const railItems = buildRailItems(flags)
+  // FORK-SEAM(F-4): fork admin areas (Announcements) join the rail.
+  const railItems = withForkRailItems(buildRailItems(flags), FORK_RAIL_ITEMS)
   // Posts and comments waiting for review. Shown on Feedback when there are any.
   const feedbackEnabled = isProductEnabled(flags, 'feedback')
   const canReviewPosts = usePermission(PERMISSIONS.POST_APPROVE)
