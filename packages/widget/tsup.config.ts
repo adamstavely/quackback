@@ -28,4 +28,14 @@ export default defineConfig([
     target: 'es2020',
     outExtension: () => ({ js: '.js' }),
   },
+  // FORK-SEAM(N-3): the announcement banner script, served by /api/fork-announcements/banner.js.
+  {
+    entry: { banner: 'src/fork/banner/banner-queue.ts' },
+    format: ['iife'],
+    globalName: 'QuackbackBannerBundle',
+    minify: true,
+    sourcemap: false,
+    target: 'es2020',
+    outExtension: () => ({ js: '.js' }),
+  },
 ])

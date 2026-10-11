@@ -1,7 +1,7 @@
 import { forkAnnouncementRevision, forkAnnouncements } from '@/lib/server/fork/db'
 import { and, db, eq, isNull, gt, or, sql } from '@/lib/server/db'
 import { tierAllows } from '@/lib/server/policy/access'
-import { isTeamActor, type Actor } from '@/lib/server/policy/types'
+import { ANONYMOUS_ACTOR, isTeamActor, type Actor } from '@/lib/server/policy/types'
 import { readForkFeatures } from '@/lib/server/fork/settings/features'
 import { announcementsConfig } from './settings'
 import { buildStatusBanners } from './status-feed'
@@ -29,15 +29,26 @@ export const DISABLED_FEED: BannerFeed = {
 }
 
 /**
- * The banners one viewer sees on one surface (§4.4). The portal and, later,
- * the embed both read through here, so the two never disagree.
+ * Who a feed is for (§4.4):
+ *   - `actor`: a portal session. Audience is checked per banner with upstream's
+ *     `tierAllows`; team members see everything, as a preview.
+ *   - `everyone`: an embed on an internal app that has not identified its user.
+ *     Every employee may see audience "Everyone" banners, so it gets those and
+ *     never a segment-targeted one; status items are read as an anonymous
+ *     visitor, so they show only when the status page itself is public.
+ */
+export type BannerViewer =
+  { kind: 'actor'; actor: Actor; access: { granted: boolean } } | { kind: 'everyone' }
+
+/**
+ * The banners one viewer sees on one surface (§4.4). The portal and the embed
+ * both read through here, so the two never disagree.
  *
  * The revision is read before the rows, so a response is never labelled newer
  * than its content; an older label only costs the client one extra refetch.
  */
 export async function buildBannerFeed(
-  actor: Actor,
-  access: { granted: boolean },
+  viewer: BannerViewer,
   surface: AnnouncementSurface
 ): Promise<BannerFeed> {
   if (!(await readForkFeatures()).announcements) return DISABLED_FEED
@@ -50,7 +61,11 @@ export async function buildBannerFeed(
   const base = { enabled: true, epoch: rev?.epoch ?? null, revision: rev?.revision ?? 0 }
 
   // Fail closed: only signed-in people (and team members previewing) see banners.
-  if (!access.granted || (actor.principalType !== 'user' && !isTeamActor(actor))) {
+  if (
+    viewer.kind === 'actor' &&
+    (!viewer.access.granted ||
+      (viewer.actor.principalType !== 'user' && !isTeamActor(viewer.actor)))
+  ) {
     return { ...base, nextTransitionAt: null, items: [] }
   }
 
@@ -70,7 +85,9 @@ export async function buildBannerFeed(
 
   const visible = rows.filter((row) => {
     const audience = row.audience as AnnouncementAudience
-    return tierAllows(actor, audience.tier, audience.segmentIds)
+    return viewer.kind === 'everyone'
+      ? audience.tier === 'authenticated'
+      : tierAllows(viewer.actor, audience.tier, audience.segmentIds)
   })
 
   const items: BannerItem[] = []
@@ -98,7 +115,8 @@ export async function buildBannerFeed(
   // Status-page incidents and maintenance, in the same strip (§4.5).
   const config = await announcementsConfig.read()
   if (config.foldInStatus) {
-    const status = await buildStatusBanners(actor, config.statusLeadHours, now)
+    const statusActor = viewer.kind === 'actor' ? viewer.actor : ANONYMOUS_ACTOR
+    const status = await buildStatusBanners(statusActor, config.statusLeadHours, now)
     items.push(...status.items)
     transitions.push(...status.transitions.filter((t) => t > now.getTime()))
   }

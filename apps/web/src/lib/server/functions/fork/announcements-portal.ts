@@ -20,6 +20,6 @@ export const getPortalBannerFn = createServerFn({ method: 'GET' }).handler(
       policyActorFromAuth(auth),
       resolvePortalAccessForRequest(),
     ])
-    return buildBannerFeed(actor, access, 'portal')
+    return buildBannerFeed({ kind: 'actor', actor, access }, 'portal')
   }
 )
