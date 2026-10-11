@@ -44,6 +44,8 @@ import { removeViewerScopedPortalQueries } from '@/lib/client/queries/portal'
 import { useAuthBroadcast } from '@/lib/client/hooks/use-auth-broadcast'
 import { NotificationBell } from '@/components/notifications'
 import { useSessionContext, useWorkspaceSettings } from '@/lib/client/hooks/use-root-context'
+// FORK-SEAM(T-17): the logo links home, and home is the help hub.
+import { PORTAL_HOME_PATH } from '@/lib/shared/fork/portal-home'
 
 interface PortalHeaderProps {
   orgName: string
@@ -288,7 +290,8 @@ export function PortalHeader({
       <div>
         <div className="max-w-6xl mx-auto w-full px-4 sm:px-6">
           <div className="flex h-12 items-center justify-between">
-            <Link to="/" className="portal-header__logo flex items-center gap-2">
+            {/* FORK-SEAM(T-17): the logo links home, and home is the help hub. */}
+            <Link to={PORTAL_HOME_PATH} className="portal-header__logo flex items-center gap-2">
               {orgLogo ? (
                 <img
                   src={orgLogo}
