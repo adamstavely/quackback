@@ -25,6 +25,8 @@ import { getTableConfig } from 'drizzle-orm/pg-core'
 import postgres from 'postgres'
 import * as schema from '../src/schema'
 import { runMigrations } from '../src/migrate-runtime'
+// FORK-SEAM(F-2): fork tables are exempt here; the fork lineage is checked separately.
+import { FORK_DRIFT_EXEMPTIONS } from '../src/fork/drift-exemptions'
 
 /**
  * drizzle-kit 0.31's programmatic pushSchema has two blockers for this use
@@ -314,6 +316,8 @@ const EXEMPTIONS: { reason: string; pattern: RegExp; optional?: boolean }[] = [
     reason: 'presence agent heartbeat index is raw-SQL-owned rename-completion DDL',
     pattern: /^DROP INDEX "presence_stream_agents_idx";?$/,
   },
+  // FORK-SEAM(F-2): fork tables are exempt here; the fork lineage is checked separately.
+  ...FORK_DRIFT_EXEMPTIONS,
 ]
 
 function scratchUrl(): string {

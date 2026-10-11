@@ -26,6 +26,8 @@ import { getClientIp } from '@/lib/server/domains/api/rate-limit'
 import type { AuthContext } from '@/lib/server/functions/auth-helpers'
 import { logger } from '@/lib/server/logger'
 import type { JsonValue } from '@/lib/shared/json'
+// FORK-SEAM(F-9): audit events written by fork features.
+import type { ForkAuditEventType } from '@/lib/server/fork/audit-events'
 
 const log = logger.child({ component: 'audit' })
 
@@ -162,6 +164,8 @@ export type AuditEventType =
   | 'restore.side_effects_settled'
   // Labs: visibility or enablement changed for a registered experiment
   | 'labs.experiment.changed'
+  // FORK-SEAM(F-9): audit events written by fork features.
+  | ForkAuditEventType
 
 export type AuditEventOutcome = 'success' | 'failure'
 

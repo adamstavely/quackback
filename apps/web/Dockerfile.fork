@@ -1,0 +1,14 @@
+# Fork image: upstream's image of the same commit plus the fork migration
+# lineage (plans/v2/02-fork-conventions.md §3.3a). Fork-owned, so upstream's
+# Dockerfile is never edited. Build upstream's image first, then layer this:
+#
+#   docker build -f apps/web/Dockerfile -t quackback-base .
+#   docker build -f apps/web/Dockerfile.fork --build-arg BASE_IMAGE=quackback-base -t quackback .
+#
+# Without this layer the fork lineage has no SQL to apply, and migrations fail
+# with ForkMigrationsFolderMissing rather than booting without fork tables.
+ARG BASE_IMAGE=quackback-base
+FROM ${BASE_IMAGE}
+
+COPY --chown=quackback:nodejs packages/db/drizzle-fork /app/drizzle-fork
+ENV FORK_MIGRATIONS_FOLDER=/app/drizzle-fork
