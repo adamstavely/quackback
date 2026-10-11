@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
+import { useRouterState } from '@tanstack/react-router'
 import type { BannerItem } from '@/lib/shared/fork/announcements/types'
 import { BannerBar } from './banner-bar'
 
@@ -34,8 +35,14 @@ export function PortalBannerStrip({ items }: { items: BannerItem[] }): ReactElem
   // Re-check expiry when the list changes (the feed refetches at each transition).
   useEffect(() => setNow(Date.now()), [items])
 
+  // The status page already shows its own incidents; no banner for them there.
+  const onStatusPage = useRouterState({
+    select: (state) => state.location.pathname.startsWith('/status'),
+  })
+
   const visible = items.filter(
     (item) =>
+      !(onStatusPage && item.source === 'status') &&
       dismissed[item.id] !== item.updatedAt &&
       (item.expiresAt === null || Date.parse(item.expiresAt) > now)
   )
