@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { writeFileSync, mkdtempSync, rmSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { watchConfigFile } from '../watcher'
+import type { LoadResult } from '../loader'
 
 let dir: string
 let path: string
@@ -64,9 +65,9 @@ describe('watchConfigFile', () => {
     expect(events.length).toBe(1)
   })
 
-  it('fires again when content changes', async () => {
+  it('fires again when an atomic replacement changes the content', async () => {
     writeFileSync(path, validYaml)
-    const events: unknown[] = []
+    const events: LoadResult[] = []
     const stop = watchConfigFile(
       path,
       (r) => {
@@ -74,14 +75,55 @@ describe('watchConfigFile', () => {
       },
       { pollIntervalMs: 30 }
     )
-    await wait(50)
-    writeFileSync(
+    try {
+      await vi.waitFor(() => expect(events).toHaveLength(1))
+      expect(events[0]).toMatchObject({
+        kind: 'ok',
+        config: { spec: { workspace: { name: 'Acme' } } },
+      })
+
+      // In-place writeFileSync truncates first. An async read already in flight
+      // can observe that empty intermediate file and legitimately emit an error.
+      // Publish a complete file atomically so this test has exactly two states.
+      const replacement = join(dir, 'replacement.yaml')
+      writeFileSync(replacement, validYaml.replace('Acme', 'Different'))
+      renameSync(replacement, path)
+      await vi.waitFor(() => expect(events).toHaveLength(2))
+      expect(events[1]).toMatchObject({
+        kind: 'ok',
+        config: { spec: { workspace: { name: 'Different' } } },
+      })
+      await wait(90)
+      expect(events).toHaveLength(2)
+    } finally {
+      stop()
+    }
+  })
+
+  it('reports an invalid state and recovers when a valid file replaces it', async () => {
+    writeFileSync(path, '')
+    const events: LoadResult[] = []
+    const stop = watchConfigFile(
       path,
-      `apiVersion: quackback.io/v1\nkind: QuackbackConfig\nspec: { workspace: { name: Different } }\n`
+      (r) => {
+        events.push(r)
+      },
+      { pollIntervalMs: 30 }
     )
-    await wait(80)
-    stop()
-    expect(events.length).toBe(2)
+    try {
+      await vi.waitFor(() => expect(events).toHaveLength(1))
+      expect(events[0]?.kind).toBe('error')
+      const replacement = join(dir, 'replacement.yaml')
+      writeFileSync(replacement, validYaml)
+      renameSync(replacement, path)
+      await vi.waitFor(() => expect(events).toHaveLength(2))
+      expect(events[1]).toMatchObject({
+        kind: 'ok',
+        config: { spec: { workspace: { name: 'Acme' } } },
+      })
+    } finally {
+      stop()
+    }
   })
 
   it('serializes onChange — no concurrent invocations even with rapid changes', async () => {

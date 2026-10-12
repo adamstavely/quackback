@@ -22,7 +22,7 @@
 | F-11 | `apps/web/src/lib/server/fleet/schema-floor.ts`                                                            | First statement of `assertSchemaFloor` checks the fork ledger + catalogue version (`FORK_MIN_SCHEMA_VERSION`)                                                                                                                                                                                                                                                                                                         | 20 (all pooled)                              | planned                                                                                                                                                                                                          |
 | F-12 | `apps/web/src/lib/server/content/ssrf-guard.ts` (+ `events/integrations/webhook/constants.ts` write check) | Env allow-list for intranet CIDRs/hosts; loopback + link-local always blocked (`04-…` E-1)                                                                                                                                                                                                                                                                                                                            | all (blocker for intranet SSO, 40, webhooks) | planned                                                                                                                                                                                                          |
 | F-13 | `packages/db/package.json` (exports), `vitest.config.ts` (alias)                                           | `"./fork"` export and the matching `@quackback/db/fork` test alias, so app code can import fork tables (JSON: registry only)                                                                                                                                                                                                                                                                                          | all                                          | implemented (2026-10-10)                                                                                                                                                                                         |
-| F-14 | `apps/web/perf/budgets.json`                                                                               | `sweep:ui:admin:/admin/settings/security/authentication` `componentRenders` 427 → 472. Upstream's ceiling was already stale (measured 468 on #17, inside the 10% tolerance); the Announcements rail item adds ~4 renders to every admin page, which tipped this one over. Also `htmlTransferKB` for `ui:portal-post-load` 18 → 19 and `sweep:ui:anon:/roadmap` 18.3 → 19.3: the portal banner feed is streamed with the page (≈0.2 KB compressed) instead of costing a separate request, and main already sat at the 5% tolerance (measured 18.9 and 19.1). JSON: registry only                                                                                                                         | 60                                           | implemented (2026-10-11) — re-apply after an upstream sync only if CI's perf job fails on this page; `bun run --cwd apps/web perf --update` lowers ceilings, never raises them                                   |
+| F-14 | `apps/web/perf/budgets.json`                                                                               | `sweep:ui:admin:/admin/settings/security/authentication` `componentRenders` 427 → 472. Upstream's ceiling was already stale (measured 468 on #17, inside the 10% tolerance); the Announcements rail item adds ~4 renders to every admin page, which tipped this one over. Also `htmlTransferKB` for `ui:portal-post-load` 18 → 19 and `sweep:ui:anon:/roadmap` 18.3 → 19.3: the portal banner feed is streamed with the page (≈0.2 KB compressed) instead of costing a separate request, and main already sat at the 5% tolerance; `sweep:ui:admin:/settings/preferences` `jsKB` 370.2 → 378 and `sweep:ui:admin:/support` `htmlTransferKB` 16.4 → 17.4, where upstream's ceilings were already stale before the banner work (376.9 of an allowed 377.6, 17.2 of 17.22) and the banner work's shared icon chunks added ~1 KB JS and ~0.2 KB HTML; `doc:portal-post` `htmlKB` 78.6 → 83 for the portal skip link (A11Y-2; main measured 82.4 against an allowed 82.5) (measured 18.9 and 19.1). JSON: registry only                                                                                                                         | 60                                           | implemented (2026-10-11) — re-apply after an upstream sync only if CI's perf job fails on this page; `bun run --cwd apps/web perf --update` lowers ceilings, never raises them                                   |
 
 Plan seam tables that list a settings-nav entry, an MCP registration line or catalogue
 keys, a scheduled job or audit event types are **satisfied by F-3 / F-4 / F-7 / F-8 / F-9 / F-10 / F-11 / F-12** and are not counted again below.
@@ -84,6 +84,60 @@ The fork's production image is a fork-owned `apps/web/Dockerfile.fork` layered o
 | E-2a  | `apps/web/src/lib/server/storage/s3.ts`, `packages/email/src/ses.ts`                               | Fall back to the AWS default credential chain when static keys are unset                                                                                                                                                                | 04 (conditional: only if IAM roles are mandatory) | planned                                                                                                                                                            |
 | E-4   | `apps/web/src/lib/server/auth/index.ts`                                                            | Don't register the anonymous sign-in plugin when `allowAnonymous=false`                                                                                                                                                                 | 04 (optional)                                     | planned                                                                                                                                                            |
 
+## Portal/banner review corrections (2026-10-11)
+
+These are permanent behavioral seams, owned by the fork platform maintainer.
+They are additional to the original estimate; correctness takes precedence over
+minimizing the count.
+
+- **F-15 — `.github/workflows/docker.yml`:** build the base by digest, then publish
+  `Dockerfile.fork`; verify journal/SQL in the final image before exporting its
+  manifest digest. Validate with final-image startup and packaging checks.
+- **F-16 — `fleet/ensure-schema-current.ts`:** include fork lineage hashes and a
+  catalogue-seed receipt in the pre/post serving checks. Regression:
+  `fork/fleet/__tests__/fork-readiness.db.test.ts` and
+  `fleet/__tests__/ensure-schema-current.test.ts`.
+- **F-17 — `fleet/migrator.ts`:** the `already_current` fast path also requires
+  fork readiness; otherwise run the existing locked executor.
+- **F-18 — `scripts/fleet-migrator.ts`:** register the explicit `fork` release pass
+  so upstream-current active tenants are covered; fork code refuses withheld
+  upstream migrations. Regression: `fork/fleet/__tests__/migrate.test.ts`.
+- **F-1 expanded:** record the catalogue receipt after successful seeding. Fork
+  SQL/hash validation and the receipt helper remain in `packages/db/src/fork`.
+- **F-13 expanded:** add the server-only `@quackback/db/fork/readiness` export and
+  Vitest alias. Do not export filesystem-based readiness through the table barrel.
+
+The status candidate selection, storage fallback, and embed reconnection fixes
+are entirely fork-owned and add no upstream seams. Release instructions are in
+`docs/fork/release-checklist.md`.
+
+## Accessibility review integrations (2026-10-11)
+
+Two additional cross-cutting seam IDs, outside the feature estimates above:
+
+- **A11Y-1 — `components/help-center/help-center-search.tsx` and `ask-ai.tsx`:**
+  expose combobox/listbox/active-option semantics and search status, and use readable
+  result text. Optional `AskAiRow.optionId` leaves other callers unchanged. Owner:
+  fork portal maintainer. Gate: `help-center-search.test.tsx` and assistive-technology
+  verification of the selected result after upstream changes.
+- **A11Y-2 — `routes/_portal.tsx`:** renders the fork `PortalSkipLink`
+  (`components/fork/portal/portal-skip-link.tsx`) and gives the existing main
+  landmark its target id (`PORTAL_MAIN_ID`). Owner: fork portal maintainer. Gate: keyboard bypass on
+  each portal layout upgrade.
+
+- **A11Y-3 — upstream tests:** `components/help-center/__tests__/help-center-search.test.tsx`
+  finds the search box as a combobox and covers the active option;
+  `lib/server/fleet/__tests__/ensure-schema-current.test.ts` mocks fork readiness
+  (`@quackback/db/fork/readiness`) and covers fork-only catch-up.
+
+New copy in these seams and the fork hub/banner goes through react-intl with
+`portal.fork*` ids and English defaults; catalogue entries for the other locales
+arrive with seam T-4.
+
+Other accessibility corrections remain in fork-owned hub/banner files. See
+`docs/fork/accessibility-review.md` for tested criteria and outstanding release
+validation; these changes are not a full WCAG conformance declaration.
+
 ## Generated files (regenerate, never hand-merge)
 
 `apps/web/src/lib/shared/permissions.ts` · `policy/authz-matrix/MATRIX.md` · `migration-contract/CONTRACT.md`
@@ -91,7 +145,7 @@ The fork's production image is a fork-owned `apps/web/Dockerfile.fork` layered o
 
 ## Totals (core phases, excluding conditional / optional / deferred)
 
-Foundations 11 (incl. F-12 SSRF allow-list, a blocker for intranet SSO; F-6 retired — upstream removed Labs) · RBAC 14 (R-10 spans 10 files) · Control tower 3 (+1 conditional) · Tiered support 11 (8 core +
+Foundations 15 (incl. F-12 SSRF allow-list, a blocker for intranet SSO; F-6 retired — upstream removed Labs) · RBAC 14 (R-10 spans 10 files) · Control tower 3 (+1 conditional) · Tiered support 11 (8 core +
 3 hub) · Account actions 0 own (uses T-2's slot; +1 optional, +1 deferred) · Prioritization 11 · Announcements 3.
 
 Per the staff review, these counts are an estimate of merge surface, not a target: add a seam whenever an

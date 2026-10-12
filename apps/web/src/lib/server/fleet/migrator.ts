@@ -77,6 +77,8 @@
 import postgres from 'postgres'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+// FORK-SEAM(F-17): current upstream does not imply current fork.
+import { missingForkRequirements } from '@quackback/db/fork/readiness'
 import { runMigrations, PooledDsnRefused, type MigrationStep } from '@quackback/db/migrate'
 import { connectSessionMode, SessionModeDsnError } from './session-dsn'
 import {
@@ -558,7 +560,7 @@ export async function migrateDirect(
   // has a hole from being reported `already_current`.
   if (replaySet.length === 0) {
     const early = await withProbe(dsn, (sql) => verifySchemaPostconditions(sql))
-    if (early.ok) {
+    if (early.ok && (await withProbe(dsn, missingForkRequirements)).length === 0) {
       return {
         ...base,
         after: before,

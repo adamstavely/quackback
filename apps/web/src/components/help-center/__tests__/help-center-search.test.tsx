@@ -69,7 +69,7 @@ async function renderHeroSearch({ askAiEnabled }: { askAiEnabled: boolean }) {
       </IntlProvider>
     </QueryClientProvider>
   )
-  const input = screen.getByRole('searchbox')
+  const input = screen.getByRole('combobox')
   if (askAiEnabled) {
     await waitFor(() => expect(input.getAttribute('placeholder')).toBe(ASK_PLACEHOLDER))
   } else {
@@ -132,4 +132,21 @@ describe('HelpCenterHeroSearch Ask AI loading', () => {
     await waitFor(() => expect(document.body.textContent).toContain(ANSWER.answer), LOAD)
     expect(loads.run).toBe(1)
   })
+})
+
+// FORK-SEAM(A11Y-3): the hero search is a combobox (seam A11Y-1).
+it('exposes the arrow-selected result and expanded state to assistive technology', async () => {
+  const input = await renderHeroSearch({ askAiEnabled: true })
+  expect(input.getAttribute('aria-expanded')).toBe('false')
+  fireEvent.change(input, { target: { value: 'billing' } })
+  await screen.findByRole('listbox')
+  fireEvent.keyDown(input, { key: 'ArrowDown' })
+  const activeId = input.getAttribute('aria-activedescendant')!
+  const option = document.getElementById(activeId)!
+  expect(option.getAttribute('role')).toBe('option')
+  expect(option.getAttribute('aria-selected')).toBe('true')
+  expect(input.getAttribute('aria-expanded')).toBe('true')
+  fireEvent.keyDown(input, { key: 'Escape' })
+  expect(input.getAttribute('aria-expanded')).toBe('false')
+  expect(input.hasAttribute('aria-activedescendant')).toBe(false)
 })

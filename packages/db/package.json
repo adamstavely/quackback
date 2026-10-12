@@ -11,6 +11,7 @@
     "./client": "./src/client.ts",
     "./schema": "./src/schema/index.ts",
     "./fork": "./src/fork/index.ts",
+    "./fork/readiness": "./src/fork/readiness.ts",
     "./schema/statuses": "./src/schema/statuses.ts",
     "./migrate": "./src/migrate-runtime.ts",
     "./queries/public": "./src/queries/public.ts",

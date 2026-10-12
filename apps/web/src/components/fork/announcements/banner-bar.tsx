@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import { XMarkIcon } from '@heroicons/react/24/solid'
+import { useIntl } from 'react-intl'
 import { Button } from '@/components/ui/button'
 import { useLocalDateFormatter } from '@/components/ui/local-date'
 import { KIND_PRESETS } from '@/lib/shared/fork/announcements/presets'
@@ -34,6 +35,7 @@ export function BannerBar({
   const style = KIND_STYLES[item.kind]
   const Icon = style.icon
   const formatDate = useLocalDateFormatter()
+  const intl = useIntl()
   const windowText = item.window ? formatWindow(item.window, formatDate) : null
 
   return (
@@ -48,7 +50,7 @@ export function BannerBar({
     >
       <Icon aria-hidden className={cn('mt-0.5 size-5 shrink-0', style.iconColor)} />
       <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-x-4">
-        <p className="min-w-0 sm:flex-1">
+        <p className="min-w-0 sm:flex-1 [overflow-wrap:anywhere]">
           {/* The kind in words, so it never rests on colour or icon alone (SC 1.4.1). */}
           <span className="sr-only">{preset.label}: </span>
           <span className="font-semibold">{item.title}</span>
@@ -58,7 +60,7 @@ export function BannerBar({
         {item.link ? (
           <a
             href={item.link.url}
-            className="shrink-0 rounded-sm font-medium underline underline-offset-2 outline-none hover:no-underline focus-visible:ring-2 focus-visible:ring-ring"
+            className="min-w-0 max-w-full rounded-sm font-medium [overflow-wrap:anywhere] underline underline-offset-2 outline-none hover:no-underline focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current focus-visible:outline-offset-2"
           >
             {item.link.label}
           </a>
@@ -70,7 +72,10 @@ export function BannerBar({
           variant="ghost"
           size="icon-sm"
           className="-my-1 -mr-2 shrink-0 text-foreground hover:bg-foreground/10"
-          aria-label={`Dismiss: ${item.title}`}
+          aria-label={intl.formatMessage(
+            { id: 'portal.forkBanner.dismiss', defaultMessage: 'Dismiss: {title}' },
+            { title: item.title }
+          )}
           onClick={onDismiss}
         >
           <XMarkIcon aria-hidden className="size-4" />

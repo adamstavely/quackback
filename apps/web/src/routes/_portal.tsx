@@ -40,6 +40,8 @@ import { resolvePortalOgImageUrl } from '@/lib/shared/portal-og-image'
 import { shownName } from '@/lib/shared/greeting-name'
 // FORK-SEAM(N-1): announcement banners under the portal header.
 import { PortalAnnouncementsBanner } from '@/components/fork/announcements/portal-banner'
+// FORK-SEAM(A11Y-2): skip link and its target.
+import { PORTAL_MAIN_ID, PortalSkipLink } from '@/components/fork/portal/portal-skip-link'
 
 /**
  * Portal documents may be framed same-origin only — the admin Branding page
@@ -403,6 +405,8 @@ function PortalLayout() {
               {customCss && (
                 <style dangerouslySetInnerHTML={{ __html: escapeInlineStyle(customCss) }} />
               )}
+              {/* FORK-SEAM(A11Y-2): keyboard bypass for repeated portal navigation. */}
+              <PortalSkipLink />
               <PortalHeader
                 orgName={workspaceName}
                 orgLogo={brandingData?.logoUrl ?? null}
@@ -414,7 +418,7 @@ function PortalLayout() {
               />
               {/* FORK-SEAM(N-1): announcement banners under the portal header. */}
               <PortalAnnouncementsBanner />
-              <main className="flex-1 w-full flex flex-col">
+              <main id={PORTAL_MAIN_ID} tabIndex={-1} className="flex-1 w-full flex flex-col">
                 <FileViewerProvider onJumpToMessage={scrollToMessage}>
                   <Outlet />
                 </FileViewerProvider>

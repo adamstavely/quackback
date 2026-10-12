@@ -66,12 +66,16 @@ function PortalBannerFeed(): ReactElement | null {
 
   // Dismissals are in localStorage, which the server cannot read: show banners after mount.
   const [mounted, setMounted] = useState(false)
+  const [hasShown, setHasShown] = useState(false)
+  useEffect(() => {
+    if (data?.enabled && data.items.length > 0) setHasShown(true)
+  }, [data])
   useEffect(() => setMounted(true), [])
 
-  if (!mounted || !data?.enabled || data.items.length === 0) return null
+  if (!mounted || (!hasShown && (!data?.enabled || data.items.length === 0))) return null
   return (
     <Suspense fallback={null}>
-      <PortalBannerStrip items={data.items} />
+      <PortalBannerStrip items={data?.enabled ? data.items : []} />
     </Suspense>
   )
 }

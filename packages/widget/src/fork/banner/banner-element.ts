@@ -80,6 +80,7 @@ export class QuackbackBannerElement extends HTMLElement {
   private readonly qbRoot: HTMLDivElement
   private readonly themeSheet: CSSStyleSheet | null
   private feed: EmbedFeed | null = null
+  private dismissed: Record<string, string> = {}
   private expanded = false
   private rendered = ''
   private source: EventSource | null = null
@@ -162,6 +163,7 @@ export class QuackbackBannerElement extends HTMLElement {
       this.scheduleTransition()
       this.render()
       if (!next.enabled) this.closeStream()
+      else this.openStream()
     } catch {
       // Network trouble: keep what is shown; the stream or the next refresh tries again.
     }
@@ -253,7 +255,7 @@ export class QuackbackBannerElement extends HTMLElement {
 
   private visibleItems(): BannerItem[] {
     if (!this.feed?.enabled) return []
-    const dismissed = readDismissed()
+    const dismissed = { ...readDismissed(), ...this.dismissed }
     const now = Date.now()
     return this.feed.items.filter(
       (item) =>
@@ -263,7 +265,8 @@ export class QuackbackBannerElement extends HTMLElement {
   }
 
   private dismiss(item: BannerItem): void {
-    writeDismissed({ ...readDismissed(), [item.id]: item.updatedAt })
+    this.dismissed[item.id] = item.updatedAt
+    writeDismissed({ ...readDismissed(), ...this.dismissed })
     this.render()
   }
 
@@ -275,9 +278,29 @@ export class QuackbackBannerElement extends HTMLElement {
     if (signature === this.rendered) return
     this.rendered = signature
 
+    const focused = this.root.activeElement as HTMLElement | null
+    const focusedId = focused?.closest<HTMLElement>('[data-banner-id]')?.dataset.bannerId
+    const focusedClass = focused?.className
     this.qbRoot.replaceChildren()
-    this.hidden = items.length === 0
-    if (items.length === 0) return
+    this.hidden = items.length === 0 && !focused
+    if (items.length === 0) {
+      if (focused) {
+        const empty = document.createElement('p')
+        empty.textContent = 'No more announcements.'
+        empty.tabIndex = -1
+        empty.setAttribute('role', 'status')
+        empty.className = 'strip'
+        // Only a focus destination: once focus moves on, nothing is left to show.
+        empty.addEventListener('blur', () => {
+          if (this.visibleItems().length > 0) return
+          empty.remove()
+          this.hidden = true
+        })
+        this.qbRoot.appendChild(empty)
+        empty.focus()
+      }
+      return
+    }
 
     const strip = document.createElement('section')
     strip.className = 'strip'
@@ -301,12 +324,24 @@ export class QuackbackBannerElement extends HTMLElement {
       strip.appendChild(more)
     }
     this.qbRoot.appendChild(strip)
+    if (focused) {
+      const matchingBar = Array.from(strip.querySelectorAll<HTMLElement>('[data-banner-id]')).find(
+        (bar) => bar.dataset.bannerId === focusedId
+      )
+      const selector =
+        focusedClass === 'link' ? '.link' : focusedClass === 'more' ? '.more' : '.dismiss'
+      const replacement =
+        (focusedClass === 'more' ? strip : matchingBar)?.querySelector<HTMLElement>(selector) ??
+        strip.querySelector<HTMLElement>('.dismiss, .more')
+      replacement?.focus()
+    }
   }
 
   private renderItem(item: BannerItem): HTMLElement {
     const preset = KIND_PRESETS[item.kind] ?? KIND_PRESETS.info
     const bar = document.createElement('div')
     bar.className = `bar kind-${item.kind}`
+    bar.dataset.bannerId = item.id
     bar.setAttribute('role', preset.role)
     bar.appendChild(icon(ICONS[item.kind] ?? ICONS.info, 'icon'))
 

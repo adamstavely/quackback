@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useId, useState, useRef, useCallback, useEffect } from 'react'
 import { useIntl } from 'react-intl'
 import { MagnifyingGlassIcon, ArrowRightIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
@@ -30,6 +30,7 @@ interface HelpCenterHeroSearchProps {
 
 export function HelpCenterHeroSearch({ askAiEnabled = false, locale }: HelpCenterHeroSearchProps) {
   const intl = useIntl()
+  const resultsId = useId()
   const [query, setQuery] = useState('')
   const [showResults, setShowResults] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -121,6 +122,9 @@ export function HelpCenterHeroSearch({ askAiEnabled = false, locale }: HelpCente
         defaultMessage: 'Search articles...',
       })
 
+  // FORK-SEAM(A11Y-1): expose the same active option keyboard navigation uses.
+  const resultsOpen = !answerOpen && showResults && (results.length > 0 || hasAskRow)
+
   return (
     <div ref={containerRef} role="search" className="relative w-full">
       <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted pl-5 pr-2 shadow-lg transition-[color,box-shadow] focus-within:border-ring focus-within:ring-4 focus-within:ring-ring/20">
@@ -128,6 +132,13 @@ export function HelpCenterHeroSearch({ askAiEnabled = false, locale }: HelpCente
         <input
           id="hc-search"
           type="search"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={resultsOpen}
+          aria-controls={resultsOpen ? resultsId : undefined}
+          aria-activedescendant={
+            resultsOpen && selectedIndex >= 0 ? `${resultsId}-${selectedIndex}` : undefined
+          }
           aria-label={placeholderText}
           placeholder={placeholderText}
           value={query}
@@ -160,19 +171,47 @@ export function HelpCenterHeroSearch({ askAiEnabled = false, locale }: HelpCente
         )}
       </div>
 
-      {!answerOpen && showResults && (results.length > 0 || hasAskRow) && (
-        <div className="absolute top-full left-0 right-0 mt-2 rounded-xl border border-border bg-popover shadow-lg z-50 overflow-hidden">
+      <span role="status" className="sr-only">
+        {isSearching
+          ? intl.formatMessage({ id: 'portal.forkSearch.searching', defaultMessage: 'Searching' })
+          : resultsOpen
+            ? intl.formatMessage(
+                {
+                  id: 'portal.forkSearch.results',
+                  defaultMessage:
+                    '{count, plural, one {# article found} other {# articles found}}{askAi, select, yes {, or ask AI} other {}}',
+                },
+                { count: results.length, askAi: hasAskRow ? 'yes' : 'no' }
+              )
+            : ''}
+      </span>
+      {resultsOpen && (
+        <div
+          id={resultsId}
+          role="listbox"
+          aria-label={placeholderText}
+          className="absolute top-full left-0 right-0 mt-2 rounded-xl border border-border bg-popover shadow-lg z-50 overflow-hidden"
+        >
           {hasAskRow && (
             <div className={`p-1.5 ${results.length > 0 ? 'border-b border-border/60' : ''}`}>
-              <AskAiRow query={query} onSelect={triggerAsk} highlighted={selectedIndex === 0} />
+              <AskAiRow
+                query={query}
+                onSelect={triggerAsk}
+                highlighted={selectedIndex === 0}
+                optionId={`${resultsId}-0`}
+              />
             </div>
           )}
           {results.length > 0 && (
-            <ul className="py-1">
+            <ul role="presentation" className="py-1">
               {results.map((result, idx) => (
-                <li key={result.id}>
+                <li role="presentation" key={result.id}>
                   <button
                     type="button"
+                    id={`${resultsId}-${idx + askRowOffset}`}
+                    role="option"
+                    aria-selected={selectedIndex === idx + askRowOffset}
+                    tabIndex={-1}
                     onClick={() => handleResultClick(result)}
                     data-highlighted={selectedIndex === idx + askRowOffset || undefined}
                     className={`w-full text-left px-4 py-3 transition-colors ${
@@ -186,7 +225,7 @@ export function HelpCenterHeroSearch({ askAiEnabled = false, locale }: HelpCente
                       {result.category.name}
                     </div>
                     {result.content && (
-                      <div className="text-xs text-muted-foreground/70 mt-1 line-clamp-2">
+                      <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
                         <HighlightedText text={contentPreview(result.content, 150)} query={query} />
                       </div>
                     )}
