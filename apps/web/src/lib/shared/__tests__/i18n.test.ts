@@ -9,6 +9,7 @@ import {
   DEFAULT_LOCALE,
   isViewerMessage,
   loadAreaMessages,
+  seedAreaMessages,
   loadMessages,
   loadPortalMessages,
   loadViewerMessages,
@@ -109,6 +110,16 @@ describe('normalizeLocale', () => {
     expect(normalizeLocale('th-TH')).toBe('th')
     expect(normalizeLocale('TH-th')).toBe('th')
   })
+  it('maps Ukrainian tags to uk', () => {
+    expect(normalizeLocale('uk')).toBe('uk')
+    expect(normalizeLocale('uk-UA')).toBe('uk')
+    expect(normalizeLocale('UK-ua')).toBe('uk')
+  })
+  it('keeps "uk" (Ukrainian) and "en-GB" (British English) apart', () => {
+    // "uk" is the ISO 639-1 language code for Ukrainian, not a region subtag —
+    // British English arrives as "en-GB" and strips to "en", never to "uk".
+    expect(normalizeLocale('en-GB')).toBe('en')
+  })
   it('maps every Portuguese tag to pt-br, the only Portuguese catalog', () => {
     expect(normalizeLocale('pt-BR')).toBe('pt-br')
     expect(normalizeLocale('pt')).toBe('pt-br')
@@ -204,6 +215,9 @@ describe('SUPPORTED_LOCALES', () => {
   it('includes pl', () => {
     expect(SUPPORTED_LOCALES).toContain('pl')
   })
+  it('includes uk', () => {
+    expect(SUPPORTED_LOCALES).toContain('uk')
+  })
   it('DEFAULT_LOCALE is en', () => {
     expect(DEFAULT_LOCALE).toBe('en')
   })
@@ -291,7 +305,11 @@ describe('setup wizard strings', () => {
   // the wizard renders them.
   it('are rendered by the wizard alone', () => {
     const src = join(__dirname, '../../..')
-    const wizardDirs = ['routes/onboarding', 'components/onboarding/goal-selector']
+    const wizardDirs = [
+      'routes/onboarding',
+      'components/onboarding/goal-selector',
+      'components/onboarding/setup-steps',
+    ]
     const offenders: string[] = []
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -321,7 +339,7 @@ describe('Copilot and search strings', () => {
     expect(Object.keys(seeded).filter(isAskMessage)).toEqual([])
     // The sidebar Search row renders on every admin page.
     expect(seeded['ask.search.row']).toBe(all['ask.search.row'])
-    expect(ask['ask.chat.newChat']).toBe(all['ask.chat.newChat'])
+    expect(ask['ask.composer.jumpTo']).toBe(all['ask.composer.jumpTo'])
     expect(ask['ask.destination.settings_portal']).toBe(all['ask.destination.settings_portal'])
     expect(Object.keys(ask).every(isAskMessage)).toBe(true)
   })
@@ -348,6 +366,32 @@ describe('admin seed', () => {
     expect(tour['onboarding.tour.next']).toBe(all['onboarding.tour.next'])
     expect(Object.keys(tour).every(isTourMessage)).toBe(true)
     expect(Object.keys(tour).length).toBeGreaterThan(20)
+  })
+})
+
+describe('public pages in English', () => {
+  // As on admin pages: the code holds every message's English, so no page in
+  // English seeds a catalog (see useIntlSetup, which then loads nothing either).
+  it('seed nothing on the portal, widget, unsubscribe page or setup wizard', async () => {
+    expect(await loadPortalMessages(DEFAULT_LOCALE)).toEqual({})
+    expect(await loadWidgetMessages(DEFAULT_LOCALE)).toEqual({})
+    expect(await loadUnsubscribeMessages(DEFAULT_LOCALE)).toEqual({})
+    expect(await loadOnboardingMessages(DEFAULT_LOCALE)).toEqual({})
+    expect(await seedAreaMessages(DEFAULT_LOCALE, 'helpCenter')).toEqual({})
+  })
+
+  it('seed the same slices as before in any other language', async () => {
+    for (const load of [
+      loadPortalMessages,
+      loadWidgetMessages,
+      loadUnsubscribeMessages,
+      loadOnboardingMessages,
+    ]) {
+      expect(Object.keys(await load('de')).length).toBeGreaterThan(10)
+    }
+    expect(await seedAreaMessages('de', 'helpCenter')).toEqual(
+      await loadAreaMessages('de', 'helpCenter')
+    )
   })
 })
 
