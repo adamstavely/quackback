@@ -1,4 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
+import { getRequestHeaders } from '@tanstack/react-start/server'
+import { z } from 'zod'
 import type { TrustPage } from '@/lib/shared/fork/trust/portal'
 
 /**
@@ -25,3 +27,49 @@ export const getTrustPageFn = createServerFn({ method: 'GET' }).handler(
     return { status: 'ok', content: await buildTrustPageContent(await policyActorFromAuth(ctx)) }
   }
 )
+
+/**
+ * A signed-in employee asks for a restricted document (D-TS3). The request is
+ * theirs only: the principal comes from the session, never the request body.
+ */
+export const requestTrustDocumentAccessFn = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      documentId: z.string().uuid(),
+      reason: z.string().trim().max(500).optional(),
+    })
+  )
+  .handler(async ({ data }) => {
+    const { isForkFeatureEnabled } = await import('@/lib/server/fork/settings/features')
+    const { NotFoundError, UnauthorizedError, ForbiddenError } = await import('@/lib/shared/errors')
+    if (!(await isForkFeatureEnabled('trust'))) {
+      throw new NotFoundError('TRUST_OFF', 'This page is not available')
+    }
+    const { getOptionalAuth, hasAuthCredentials, policyActorFromAuth } = await import(
+      '@/lib/server/functions/auth-helpers'
+    )
+    const ctx = hasAuthCredentials() ? await getOptionalAuth() : null
+    if (!ctx?.principal || ctx.principal.type === 'anonymous') {
+      throw new UnauthorizedError('Sign in to request access')
+    }
+    const { resolvePortalAccessForRequest } = await import(
+      '@/lib/server/functions/portal-access'
+    )
+    if (!(await resolvePortalAccessForRequest()).granted) {
+      throw new ForbiddenError('FORBIDDEN', 'You cannot request this document')
+    }
+    const [{ actorFromAuth }, { requestDocumentAccess }] = await Promise.all([
+      import('@/lib/server/audit/log'),
+      import('@/lib/server/fork/trust/access.service'),
+    ])
+    await requestDocumentAccess(
+      {
+        principalId: ctx.principal.id,
+        audit: actorFromAuth(ctx),
+        headers: getRequestHeaders(),
+        actor: await policyActorFromAuth(ctx),
+      },
+      data.documentId,
+      data.reason || null
+    )
+  })

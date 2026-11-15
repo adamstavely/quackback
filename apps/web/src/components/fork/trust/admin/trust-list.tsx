@@ -12,6 +12,8 @@ export interface TrustListRow {
   meta?: ReactNode
   leading?: ReactNode
   badges?: ReactNode
+  /** Row-specific actions (e.g. upload), shown before move/edit/delete. */
+  actions?: ReactNode
 }
 
 const errorText = (error: unknown) =>
@@ -73,6 +75,7 @@ export function TrustList({
                 </div>
               ) : null}
             </div>
+            {row.actions ? <div className="flex shrink-0 items-center gap-1">{row.actions}</div> : null}
             {canManage ? (
               <div className="flex shrink-0 items-center gap-0.5">
                 <Button

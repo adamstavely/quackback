@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react'
+import { useId, useRef, useState, type ReactElement } from 'react'
 import { toast } from 'sonner'
 import {
   CheckCircleIcon,
@@ -11,7 +11,12 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/shared/confirm-dialog'
-import { useDeleteTrustItem, useSaveTrustItem } from '@/lib/client/fork/trust'
+import {
+  trustDocumentHref,
+  useDeleteTrustItem,
+  useSaveTrustItem,
+  useUploadTrustDocumentFile,
+} from '@/lib/client/fork/trust'
 import type { ControlStatus, TrustEntity, TrustItemInput } from '@/lib/shared/fork/trust/schema'
 import type { TrustAdminData } from '@/lib/shared/fork/trust/types'
 import { TrustItemDialog, type TrustField, type TrustFormValues } from './trust-item-dialog'
@@ -526,7 +531,7 @@ export function DocumentsView({
     <TrustSection
       id="trust-documents"
       title="Documents"
-      description="Policies, reports and questionnaires. Uploading files arrives with the next phase."
+      description="Policies, reports and questionnaires. A document shows on the page once it has a file and is published."
       action={canManage ? <AddButton label="Add group" onClick={() => openGroup(null)} /> : null}
     >
       {data.documentGroups.length === 0 ? (
@@ -564,6 +569,21 @@ export function DocumentsView({
                     {d.fileName ? null : <Badge variant="secondary">No file yet</Badge>}
                   </>
                 ),
+                actions: (
+                  <>
+                    {d.fileName ? (
+                      <a
+                        href={trustDocumentHref(d.id)}
+                        className="text-xs font-medium text-foreground underline underline-offset-4 hover:no-underline"
+                      >
+                        {`Download ${d.fileName}`}
+                      </a>
+                    ) : null}
+                    {canManage ? (
+                      <UploadFileButton documentId={d.id} title={d.title} replace={!!d.fileName} />
+                    ) : null}
+                  </>
+                ),
               }))}
             deleteCopy={(row) => ({
               title: `Delete ${row.title}?`,
@@ -582,5 +602,55 @@ export function DocumentsView({
         fields={editor.editing?.entity === 'documentGroup' ? groupFields : documentFields}
       />
     </TrustSection>
+  )
+}
+
+/** Upload or replace a document's file. A real button opens the file picker. */
+function UploadFileButton({
+  documentId,
+  title,
+  replace,
+}: {
+  documentId: string
+  title: string
+  replace: boolean
+}): ReactElement {
+  const inputId = useId()
+  const input = useRef<HTMLInputElement>(null)
+  const upload = useUploadTrustDocumentFile()
+  return (
+    <>
+      <input
+        ref={input}
+        id={inputId}
+        type="file"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        accept=".pdf,.docx,.xlsx,.pptx,.txt,.csv,.zip"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          if (!file) return
+          upload.mutate(
+            { documentId, file },
+            {
+              onSuccess: () => toast.success(replace ? 'File replaced' : 'File uploaded'),
+              onError: (error) => toast.error(error instanceof Error ? error.message : 'Upload failed'),
+            }
+          )
+        }}
+      />
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={upload.isPending}
+        aria-label={`${replace ? 'Replace file for' : 'Upload file for'} ${title}`}
+        onClick={() => input.current?.click()}
+      >
+        {upload.isPending ? 'Uploading…' : replace ? 'Replace file' : 'Upload file'}
+      </Button>
+    </>
   )
 }

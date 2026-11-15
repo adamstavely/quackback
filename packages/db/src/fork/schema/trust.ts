@@ -11,7 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { typeIdColumnNullable } from '@quackback/ids/drizzle'
+import { typeIdColumn, typeIdColumnNullable } from '@quackback/ids/drizzle'
 import { principal } from '../../schema/auth'
 
 /**
@@ -166,5 +166,51 @@ export const forkTrustSubprocessors = pgTable(
     check('fork_trust_subprocessors_name_check', sql`char_length(${t.name}) <= 120`),
     check('fork_trust_subprocessors_purpose_check', sql`char_length(${t.purpose}) <= 300`),
     check('fork_trust_subprocessors_location_check', sql`char_length(${t.location}) <= 120`),
+  ]
+)
+
+/**
+ * A person's request for a restricted document (D-TS3, phase 3). The grant is
+ * an approved row whose `expires_at` is still ahead; expiry is checked at read
+ * time, so nothing has to flip a row. `ticket_id` is the private support
+ * request it opened, when support tickets are on.
+ */
+export const forkTrustAccessRequests = pgTable(
+  'fork_trust_access_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => forkTrustDocuments.id, { onDelete: 'cascade' }),
+    requesterPrincipalId: typeIdColumn('principal')('requester_principal_id')
+      .notNull()
+      .references(() => principal.id, { onDelete: 'cascade' }),
+    state: text('state').notNull().default('pending'),
+    reason: text('reason'),
+    ticketId: text('ticket_id'),
+    decisionNote: text('decision_note'),
+    decidedByPrincipalId: typeIdColumnNullable('principal')('decided_by_principal_id').references(
+      () => principal.id,
+      { onDelete: 'set null' }
+    ),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('fork_trust_access_requests_requester_idx').on(t.requesterPrincipalId, t.documentId),
+    index('fork_trust_access_requests_state_idx').on(t.state, t.createdAt),
+    uniqueIndex('fork_trust_access_requests_pending_uq')
+      .on(t.documentId, t.requesterPrincipalId)
+      .where(sql`${t.state} = 'pending'`),
+    check(
+      'fork_trust_access_requests_state_check',
+      sql`${t.state} IN ('pending', 'approved', 'declined', 'revoked')`
+    ),
+    check(
+      'fork_trust_access_requests_reason_check',
+      sql`${t.reason} IS NULL OR char_length(${t.reason}) <= 500`
+    ),
   ]
 )

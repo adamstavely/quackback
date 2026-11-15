@@ -35,6 +35,33 @@ export interface TrustPageContent {
     website: string | null
   }[]
   faq: { id: string; title: string; description: string | null; href: string }[]
+  documentGroups: TrustPageDocumentGroup[]
+}
+
+/**
+ * What the viewer can do with a document: download it now (an open document,
+ * or a restricted one they hold an approval for, until `expiresAt`), ask for
+ * it, or wait on a request. `declined` may ask again.
+ */
+export type TrustPageDocumentAction =
+  | { kind: 'download'; expiresAt: string | null }
+  | { kind: 'request' }
+  | { kind: 'pending' }
+  | { kind: 'declined' }
+
+export interface TrustPageDocument {
+  id: string
+  title: string
+  description: string | null
+  restricted: boolean
+  fileName: string
+  action: TrustPageDocumentAction
+}
+
+export interface TrustPageDocumentGroup {
+  id: string
+  name: string
+  documents: TrustPageDocument[]
 }
 
 /**

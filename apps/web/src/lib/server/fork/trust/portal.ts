@@ -1,15 +1,23 @@
+import type { PrincipalId } from '@quackback/ids'
 import {
   forkTrustComplianceItems,
   forkTrustControlGroups,
   forkTrustControls,
+  forkTrustDocumentGroups,
+  forkTrustDocuments,
   forkTrustSubprocessors,
 } from '@/lib/server/fork/db'
-import { asc, db } from '@/lib/server/db'
+import { and, asc, db, eq, isNotNull } from '@/lib/server/db'
 import type { Actor } from '@/lib/server/policy/types'
 import { DEFAULT_LOCALE } from '@/lib/shared/i18n'
 import { hcArticlePath } from '@/lib/shared/help-center-url'
 import type { ControlStatus } from '@/lib/shared/fork/trust/schema'
-import type { TrustPageContent } from '@/lib/shared/fork/trust/portal'
+import type {
+  TrustPageContent,
+  TrustPageDocumentAction,
+  TrustPageDocumentGroup,
+} from '@/lib/shared/fork/trust/portal'
+import { accessForViewer } from './access.service'
 import { trustConfig } from './settings'
 
 /**
@@ -60,6 +68,7 @@ export async function buildTrustPageContent(viewer: Actor): Promise<TrustPageCon
       website: s.website,
     })),
     faq: config.faqCategoryId ? await faqArticles(config.faqCategoryId, viewer) : [],
+    documentGroups: await documentGroups(viewer.principalId ?? null),
   }
 }
 
@@ -78,4 +87,42 @@ async function faqArticles(categoryId: string, viewer: Actor) {
     // A deleted or hidden category shows no FAQ rather than breaking the page.
     return []
   }
+}
+
+/** Published documents that have a file, grouped, with what this viewer can do. */
+async function documentGroups(principalId: PrincipalId | null): Promise<TrustPageDocumentGroup[]> {
+  const [groups, docs] = await Promise.all([
+    db.select().from(forkTrustDocumentGroups).orderBy(asc(forkTrustDocumentGroups.position)),
+    db
+      .select()
+      .from(forkTrustDocuments)
+      .where(and(eq(forkTrustDocuments.published, true), isNotNull(forkTrustDocuments.storageKey)))
+      .orderBy(asc(forkTrustDocuments.position)),
+  ])
+  const restrictedIds = docs.filter((d) => d.access === 'restricted').map((d) => d.id)
+  const access = principalId ? await accessForViewer(principalId, restrictedIds) : new Map()
+  const actionFor = (doc: (typeof docs)[number]): TrustPageDocumentAction => {
+    if (doc.access === 'open') return { kind: 'download', expiresAt: null }
+    const state = access.get(doc.id)
+    if (state?.state === 'granted') return { kind: 'download', expiresAt: state.expiresAt }
+    if (state?.state === 'pending') return { kind: 'pending' }
+    if (state?.state === 'declined') return { kind: 'declined' }
+    return { kind: 'request' }
+  }
+  return groups
+    .map((g) => ({
+      id: g.id,
+      name: g.name,
+      documents: docs
+        .filter((d) => d.groupId === g.id)
+        .map((d) => ({
+          id: d.id,
+          title: d.title,
+          description: d.description,
+          restricted: d.access === 'restricted',
+          fileName: d.fileName ?? 'document',
+          action: actionFor(d),
+        })),
+    }))
+    .filter((g) => g.documents.length > 0)
 }
