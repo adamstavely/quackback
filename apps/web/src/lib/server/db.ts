@@ -172,6 +172,7 @@ export {
   oauthClient,
   oauthClientRelations,
   oauthClientAssertion,
+  deviceCode,
   oauthClientResource,
   oauthClientResourceRelations,
   oauthConsent,
@@ -257,6 +258,7 @@ export {
   channelAccounts,
   channelThreads,
   emailSendingDomains,
+  emailSesTenants,
   // Schema tables - office hours + SLA (support platform §4.6)
   officeHoursSchedules,
   slaPolicies,
@@ -476,6 +478,14 @@ export {
   // Schema tables - assistant pending actions
   assistantPendingActions,
   ASSISTANT_PENDING_ACTION_STATUSES,
+  APPROVAL_RISKS,
+  APPROVAL_REQUEST_CHANNELS,
+  APPROVAL_DECISION_CHANNELS,
+  APPROVAL_EXECUTION_STATES,
+  type ApprovalRisk,
+  type ApprovalRequestChannel,
+  type ApprovalDecisionChannel,
+  type ApprovalExecutionState,
   // Schema tables - assistant tool-call audit log
   assistantToolCalls,
   ASSISTANT_TOOL_CALL_STATUSES,
@@ -541,9 +551,15 @@ export type { PermissionKey, PermissionCategory, SystemRoleKey } from '@quackbac
 export type {
   ChannelAccount,
   EmailSendingDomain,
+  EmailSesTenant,
   ChannelAccountConfig,
   SendingDomainDnsRecord,
   SendingDomainOwnershipRecord,
+  SendingDomainKeyRecord,
+  SendingDomainProofRecord,
+  SendingDomainDkimMode,
+  SendingDomainRecordCheck,
+  SendingDomainPreflight,
 } from '@quackback/db'
 export type { OfficeHoursSchedule, OfficeHoursInterval } from '@quackback/db'
 export type { ChangelogSubscriptionSource } from '@quackback/db'
