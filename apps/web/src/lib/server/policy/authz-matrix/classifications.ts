@@ -71,10 +71,163 @@ const DYNAMIC_PERMISSION = (
   why: string
 ): Classification => ({ intent: 'DYNAMIC_PERMISSION', resolvesToAny, why })
 
+/** The permission each settings registry area needs, to read and to write. */
+const SETTINGS_REGISTRY_PERMISSIONS = [
+  PERMISSIONS.SETTINGS_MANAGE,
+  PERMISSIONS.SETTINGS_BRANDING,
+  PERMISSIONS.OFFICE_HOURS_MANAGE,
+  PERMISSIONS.CHANGELOG_MANAGE,
+]
+
 export const BARE_GATE_CLASSIFICATIONS: Record<string, Classification> = {
+  // Personal API keys: any teammate manages their own keys. A personal key acts
+  // as its creator, so it can never hold more than they do.
+  'lib/server/functions/personal-api-keys.ts::fetchMyApiKeysFn': END_USER(
+    'self-service: lists personal API keys of the caller; team members only (inline isTeamMember), and the key is filtered to kind personal and createdById = caller'
+  ),
+  'lib/server/functions/personal-api-keys.ts::createMyApiKeyFn': END_USER(
+    'self-service: creates a personal API key for the caller, refused while the workspace policy is off; team members only (inline isTeamMember), and the key is filtered to kind personal and createdById = caller'
+  ),
+  'lib/server/functions/personal-api-keys.ts::renameMyApiKeyFn': END_USER(
+    'self-service: renames one of personal API keys of the caller; team members only (inline isTeamMember), and the key is filtered to kind personal and createdById = caller'
+  ),
+  'lib/server/functions/personal-api-keys.ts::rotateMyApiKeyFn': END_USER(
+    'self-service: rotates one of personal API keys of the caller; team members only (inline isTeamMember), and the key is filtered to kind personal and createdById = caller'
+  ),
+  'lib/server/functions/personal-api-keys.ts::revokeMyApiKeyFn': END_USER(
+    'self-service: revokes one of personal API keys of the caller; team members only (inline isTeamMember), and the key is filtered to kind personal and createdById = caller'
+  ),
+  'lib/server/functions/assistant-connectors.ts::createConnectorFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'either AI permission opens it, and assigning to an agent also requires that agent AI permission'
+  ),
+  'lib/server/functions/assistant-connectors.ts::deleteConnectorFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-connectors.ts::getConnectorFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-connectors.ts::listConnectorsFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-connectors.ts::refreshConnectorFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-connectors.ts::startConnectorOAuthFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-connectors.ts::updateConnectorFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'either AI permission opens it, and assigning to an agent also requires that agent AI permission'
+  ),
+  'lib/server/functions/assistant-documents.ts::deleteAssistantDocumentFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-documents.ts::listAssistantDocumentsFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-documents.ts::uploadAssistantDocumentFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-guidance-stats.ts::getGuidanceRuleStatsFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-guidance.ts::createGuidanceRuleFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'the check requires the AI permission of the agent the rule or tool rules belong to'
+  ),
+  'lib/server/functions/assistant-guidance.ts::deleteGuidanceRuleFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'the check requires the AI permission of the agent the rule or tool rules belong to'
+  ),
+  'lib/server/functions/assistant-guidance.ts::listAssistantToolsFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-guidance.ts::listGuidanceRulesFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-guidance.ts::reorderGuidanceRulesFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'the check requires the AI permission of the agent the rule or tool rules belong to'
+  ),
+  'lib/server/functions/assistant-guidance.ts::updateGuidanceRuleFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'the check requires the AI permission of the agent the rule or tool rules belong to'
+  ),
+  'lib/server/functions/assistant-settings.ts::getAssistantSettingsFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-settings.ts::updateAssistantToolRulesFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'the check requires the AI permission of the agent the rule or tool rules belong to'
+  ),
+  'lib/server/functions/assistant-skills.ts::createSkillFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'either AI permission opens it, and assigning to an agent also requires that agent AI permission'
+  ),
+  'lib/server/functions/assistant-skills.ts::deleteSkillFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-skills.ts::listSkillsFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-skills.ts::updateSkillFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'either AI permission opens it, and assigning to an agent also requires that agent AI permission'
+  ),
+  'lib/server/functions/assistant-snippets.ts::createSnippetFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-snippets.ts::deleteSnippetFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-snippets.ts::listSnippetsFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-snippets.ts::updateSnippetFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-web-sources.ts::addWebSourceFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-web-sources.ts::deleteWebSourceFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-web-sources.ts::listWebSourcesFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
+  'lib/server/functions/assistant-web-sources.ts::setWebSourceEnabledFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.AI_CUSTOMER_MANAGE, PERMISSIONS.AI_TEAMMATE_MANAGE],
+    'shared AI settings: a holder of either AI permission may use them'
+  ),
   'lib/server/functions/website-branding.ts::startAutomaticWebsiteBrandingFn': DYNAMIC_PERMISSION(
     [PERMISSIONS.SETTINGS_MANAGE],
-    'lookup and logo writes require current settings management; color writes additionally require branding permission'
+    'the lookup only records an offer and requires current settings management, rechecked after the fetch'
+  ),
+  'lib/server/functions/website-branding.ts::lookupWebsiteBrandingFn': DYNAMIC_PERMISSION(
+    [PERMISSIONS.SETTINGS_MANAGE],
+    'Find logo looks up a typed website through the safe fetch and records an offer; requires current settings management, rechecked after the fetch'
   ),
   'lib/server/functions/website-branding.ts::getAutomaticWebsiteBrandingStatusFn':
     DYNAMIC_PERMISSION(
@@ -93,57 +246,49 @@ export const BARE_GATE_CLASSIFICATIONS: Record<string, Classification> = {
     [PERMISSIONS.SETTINGS_MANAGE],
     'Not now closes the offer and requires current settings management'
   ),
-  'lib/server/functions/ask-search.ts::searchAskEntitiesFn': DYNAMIC_PERMISSION(
+  'routes/api/v1/settings/index.ts::GET': DYNAMIC_PERMISSION(
+    SETTINGS_REGISTRY_PERMISSIONS,
+    'the key needs the read:settings scope; the list holds only the areas whose permission the key holds'
+  ),
+  'routes/api/v1/settings/$area.ts::GET': DYNAMIC_PERMISSION(
+    SETTINGS_REGISTRY_PERMISSIONS,
+    'the key needs the read:settings scope and the permission of the area read, checked again in the registry'
+  ),
+  'routes/api/v1/settings/$area.ts::PATCH': DYNAMIC_PERMISSION(
+    SETTINGS_REGISTRY_PERMISSIONS,
+    'the key needs the write:settings scope and the permission of the area changed, checked again in the registry and again when an approval is decided'
+  ),
+  'routes/api/v1/settings/receipts.$receiptId.undo.ts::POST': DYNAMIC_PERMISSION(
+    SETTINGS_REGISTRY_PERMISSIONS,
+    'the key needs the write:settings scope and the permission of every area the receipt changed'
+  ),
+  'lib/server/functions/ask-search.ts::searchWorkspaceFn': DYNAMIC_PERMISSION(
     [
       PERMISSIONS.POST_VIEW_PRIVATE,
       PERMISSIONS.HELP_CENTER_MANAGE,
       PERMISSIONS.CHANGELOG_VIEW_DRAFT,
       PERMISSIONS.CHANGELOG_MANAGE,
       PERMISSIONS.CONVERSATION_VIEW,
+      PERMISSIONS.CONVERSATION_VIEW_ALL,
       PERMISSIONS.TICKET_VIEW,
+      PERMISSIONS.TICKET_VIEW_ALL,
+      PERMISSIONS.PEOPLE_VIEW,
+      PERMISSIONS.MEMBER_VIEW,
+      PERMISSIONS.COMPANY_VIEW,
     ],
-    'team dashboard search checks each product permission and scopes every entity query to the actor'
-  ),
-  'lib/server/functions/workspace-copilot.ts::getWorkspaceCopilotAvailabilityFn': END_USER(
-    'returns only whether this caller has Copilot permission and the enabled capability'
-  ),
-  'lib/server/functions/workspace-copilot.ts::listWorkspaceCopilotThreadsFn': DYNAMIC_PERMISSION(
-    [PERMISSIONS.COPILOT_USE],
-    'human team member with Copilot permission reads only their own threads'
-  ),
-  'lib/server/functions/workspace-copilot.ts::createWorkspaceCopilotThreadFn': DYNAMIC_PERMISSION(
-    [PERMISSIONS.COPILOT_USE],
-    'human team member creates only their own thread after the capability gate'
-  ),
-  'lib/server/functions/workspace-copilot.ts::getWorkspaceCopilotThreadFn': DYNAMIC_PERMISSION(
-    [PERMISSIONS.COPILOT_USE],
-    'human team member with Copilot permission must own the requested thread'
-  ),
-  'lib/server/functions/workspace-copilot.ts::applyWorkspaceSettingsProposalFn': DYNAMIC_PERMISSION(
-    [
-      PERMISSIONS.COPILOT_USE,
-      PERMISSIONS.SETTINGS_MANAGE,
-      PERMISSIONS.SETTINGS_BRANDING,
-      PERMISSIONS.OFFICE_HOURS_MANAGE,
-      PERMISSIONS.CHANGELOG_MANAGE,
-    ],
-    'caller owns the proposal thread and holds every current permission required by its selected changes'
-  ),
-  'lib/server/functions/workspace-copilot.ts::undoWorkspaceSettingsProposalFn': DYNAMIC_PERMISSION(
-    [
-      PERMISSIONS.COPILOT_USE,
-      PERMISSIONS.SETTINGS_MANAGE,
-      PERMISSIONS.SETTINGS_BRANDING,
-      PERMISSIONS.OFFICE_HOURS_MANAGE,
-      PERMISSIONS.CHANGELOG_MANAGE,
-    ],
-    'caller owns the proposal thread and holds every current permission required to restore its applied changes'
+    "team dashboard search: each kind needs its page permission and reads through that kind's row visibility (posts, conversations, tickets, help center audience, changelog drafts) for the effective actor, full text and semantic alike"
   ),
   // Anyone signed in acts only on their OWN address here: the principal comes
   // from the session, never from the request, so there is no object whose
   // visibility could be checked and no permission that would mean anything.
   // Abuse is bounded by the rate limiter rather than by authorization, because
   // the risk is mailing a stranger, not reading someone else's data.
+  'lib/server/functions/device-auth.ts::lookupDeviceCodeFn': END_USER(
+    'a signed-in person opens a device sign-in code; the code binds to the first account that looks it up and no other account can settle it'
+  ),
+  'lib/server/functions/device-auth.ts::decideDeviceCodeFn': END_USER(
+    'a signed-in person approves or denies a code only they opened; the grant is narrowed to what the client asked for'
+  ),
   'lib/server/functions/contact-email.ts::getEmailChangeStateFn': END_USER(
     'reads only the caller own address state'
   ),
@@ -155,6 +300,11 @@ export const BARE_GATE_CLASSIFICATIONS: Record<string, Classification> = {
   ),
   'lib/server/functions/contact-email.ts::confirmEmailChangeFn': END_USER(
     'writes the caller own address, gated on a code proving they hold it'
+  ),
+  // Signing in again reads only the caller's own sign-in: their address, their
+  // linked providers and whether their session is fresh. Nothing is written.
+  'lib/server/functions/sign-in-again.ts::getSignInAgainOptionsFn': END_USER(
+    'reads how the caller signs in and whether they signed in recently'
   ),
   // Assistant proposals are item-scoped after authentication. Reads/rejections
   // require visibility of the concrete parent; approval additionally checks
@@ -415,7 +565,6 @@ export const BARE_GATE_CLASSIFICATIONS: Record<string, Classification> = {
     ],
     'field-scoped post PATCH — assertApiPermissions authorizes per changed field'
   ),
-
   // Bulk inbox action: the permission depends on the action (assign vs tag vs
   // status), so the gate is bare and the per-action permission is asserted at
   // runtime, identical to performing each action through its single-conversation fn.
@@ -558,6 +707,31 @@ export const BARE_GATE_CLASSIFICATIONS: Record<string, Classification> = {
 const NOT_A_GATE = (why: string): Classification => ({ intent: 'NOT_A_GATE', why })
 
 export const INLINE_CLASSIFICATIONS: Record<string, Classification> = {
+  'lib/server/functions/personal-api-keys.ts::fetchMyApiKeysFn::isTeamMember': {
+    intent: 'SECONDARY_GATE',
+    roleBar: 'team',
+    why: 'personal API keys are for team members only; a portal user is refused',
+  },
+  'lib/server/functions/personal-api-keys.ts::createMyApiKeyFn::isTeamMember': {
+    intent: 'SECONDARY_GATE',
+    roleBar: 'team',
+    why: 'personal API keys are for team members only; a portal user is refused',
+  },
+  'lib/server/functions/personal-api-keys.ts::renameMyApiKeyFn::isTeamMember': {
+    intent: 'SECONDARY_GATE',
+    roleBar: 'team',
+    why: 'personal API keys are for team members only; a portal user is refused',
+  },
+  'lib/server/functions/personal-api-keys.ts::rotateMyApiKeyFn::isTeamMember': {
+    intent: 'SECONDARY_GATE',
+    roleBar: 'team',
+    why: 'personal API keys are for team members only; a portal user is refused',
+  },
+  'lib/server/functions/personal-api-keys.ts::revokeMyApiKeyFn::isTeamMember': {
+    intent: 'SECONDARY_GATE',
+    roleBar: 'team',
+    why: 'personal API keys are for team members only; a portal user is refused',
+  },
   // Real access decisions the requireAuth/withApiKeyAuth scan does NOT cover —
   // surfaced precisely because a stray change here would widen access silently.
   'routes/api/chat/stream.ts::GET::isTeamMember': {
@@ -590,9 +764,6 @@ export const INLINE_CLASSIFICATIONS: Record<string, Classification> = {
   // Behavior refinements sitting behind an already-present entry gate.
   'lib/server/functions/admin.ts::checkOnboardingState::isAdmin': NOT_A_GATE(
     'race-safe first-user promotion — not an access check'
-  ),
-  'lib/server/functions/onboarding.ts::ensureBootstrapAdmin::isAdmin': NOT_A_GATE(
-    'promotes an existing non-admin principal during bootstrap — not an access check'
   ),
   'routes/api/widget/identify.ts::POST::isTeamMember': NOT_A_GATE(
     'skips overwriting a teammate dashboard profile from the host-app JWT; identify still mints a widget-scoped customer session'

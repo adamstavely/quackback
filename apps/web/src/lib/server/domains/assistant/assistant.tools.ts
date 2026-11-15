@@ -19,9 +19,9 @@ import { toolPermissions } from './tool-permissions'
  */
 import { createHash } from 'node:crypto'
 import { toolDefinition } from '@tanstack/ai'
-import { DomainException } from '@/lib/shared/errors'
 import { can } from '@/lib/server/policy/authorize'
 import { logger } from '@/lib/server/logger'
+import { assistantAttribution, runWithAuditAttribution } from '@/lib/server/audit/attribution'
 import type { ConversationId, TicketId } from '@quackback/ids'
 import type { AssistantToolContext, AssistantToolSpec } from './assistant.toolspec'
 import { resolveToolSpecs, isNoParentResult, NO_CONVERSATION_NOTE } from './assistant.toolspec'
@@ -32,6 +32,7 @@ import {
   type AssistantToolCall,
 } from './tool-audit'
 import { proposePendingAction, type AssistantPendingAction } from './pending-actions.service'
+import type { PendingActionRequester } from './pending-action-decisions'
 import { describeEnabledKnowledgeSources } from './retrieval-sources'
 
 const log = logger.child({ component: 'assistant-tools' })
@@ -83,6 +84,10 @@ export function knowledgeSearchToolName(ctx: Pick<AssistantToolContext, 'role' |
 
 const PENDING_APPROVAL_NOTE =
   'A teammate must approve this action; tell the customer it has been requested.'
+// A customer conversation is handed to the team once the turn ends with a
+// filed proposal (see assistant.orchestrator.ts), so Quinn says who picks it up.
+const PENDING_HANDOFF_NOTE =
+  'A teammate must confirm this action, and this conversation is being passed to the team. Tell the customer it has been requested and a teammate will pick it up.'
 const CONNECTOR_ALLOW_NOTE =
   'The teammate sees an Allow or Skip card for this call. Say what you want to look up and stop; nothing was fetched yet.'
 const DENIED_NOTE = 'This action is not permitted for the assistant.'
@@ -194,6 +199,24 @@ function resolveIdempotencyKey(
 }
 
 /**
+ * Who files a proposal from an assistant turn: the assistant itself, for the
+ * teammate it works for when there is one. The assistant can never decide its
+ * own request; the teammate, like any qualified person, can.
+ */
+function assistantRequester(ctx: AssistantToolContext): PendingActionRequester {
+  const person = ctx.actor.principalType === 'user' ? ctx.actor.principalId : null
+  return {
+    // A turn whose assistant identity is the person themselves has no agent
+    // principal of its own to record.
+    requestedById:
+      ctx.assistantPrincipalId && ctx.assistantPrincipalId !== person
+        ? ctx.assistantPrincipalId
+        : null,
+    onBehalfOfPrincipalId: person,
+  }
+}
+
+/**
  * Run one tool call through the execution pipeline. `mode` arrives already
  * fully resolved (see `resolveEffectiveToolMode`); this function does no
  * further gating of its own, it only carries out what the mode says.
@@ -223,47 +246,6 @@ async function runWithPipeline(
     return { simulated: true, summary: spec.summarize(args, ctx) }
   }
 
-  if (mode === 'propose' && spec.name === 'propose_settings_change' && isHomeTurn(ctx)) {
-    const { enqueueWorkspaceSettingsProposal } =
-      await import('./workspace-settings-actions.service')
-    const { settingsProposalInputSchema } =
-      await import('@/lib/shared/assistant/settings-proposals')
-    let pending: Awaited<ReturnType<typeof enqueueWorkspaceSettingsProposal>>
-    try {
-      pending = await enqueueWorkspaceSettingsProposal(
-        ctx.actor,
-        settingsProposalInputSchema.parse(args).changes,
-        ctx.workspaceThreadKey!,
-        ctx.latestCustomerMessageId ?? undefined
-      )
-    } catch (error) {
-      if (!(error instanceof DomainException)) throw error
-      ctx.ledger.toolOutcomes.push({ name: spec.name, outcome: 'failed' })
-      return { status: 'denied', note: error.message }
-    }
-    ctx.ledger.proposedActions = ctx.ledger.proposedActions.filter(
-      (action) => action.id !== pending.id
-    )
-    ctx.ledger.proposedActions.push({
-      id: pending.id,
-      toolName: pending.toolName,
-      summary: pending.summary,
-      label: spec.label,
-    })
-    ctx.ledger.toolOutcomes.push({ name: spec.name, outcome: 'proposed' })
-    return {
-      status: 'pending_approval',
-      note: [
-        PENDING_APPROVAL_NOTE,
-        RETRIEVED_CONTENT_NOTE,
-        JSON.stringify({
-          proposal: pending.args,
-          preparationNotes: pending.preparationNotes ?? [],
-        }),
-      ].join('\n'),
-    }
-  }
-
   if (mode === 'propose') {
     const summary = spec.summarize(args, ctx)
     // Polymorphic parent (unified inbox §3.3): whichever item this turn is
@@ -282,6 +264,7 @@ async function runWithPipeline(
       args: args as Record<string, unknown>,
       summary,
       originRole: ctx.role,
+      requester: assistantRequester(ctx),
       // Same-shaped key as the autonomous branch's claim below: a synthesis
       // retry that re-runs this exact write-tool call for the same turn
       // dedupes onto the first proposal row instead of inserting a duplicate
@@ -302,6 +285,8 @@ async function runWithPipeline(
       toolName: spec.name,
       summary,
       label: spec.label,
+      // What a decision on it must name, for a surface that posts its own card.
+      ...(pending.argsDigest ? { contentHash: pending.argsDigest } : {}),
       ...(spec.connector
         ? {
             connector: spec.connector,
@@ -312,7 +297,12 @@ async function runWithPipeline(
     ctx.ledger.toolOutcomes.push({ name: spec.name, outcome: 'proposed' })
     return {
       status: 'pending_approval',
-      note: spec.connector && isHomeTurn(ctx) ? CONNECTOR_ALLOW_NOTE : PENDING_APPROVAL_NOTE,
+      note:
+        spec.connector && isHomeTurn(ctx)
+          ? CONNECTOR_ALLOW_NOTE
+          : ctx.role === 'customer_support' && 'conversationId' in parent
+            ? PENDING_HANDOFF_NOTE
+            : PENDING_APPROVAL_NOTE,
     }
   }
 
@@ -385,7 +375,12 @@ async function executeAndFinalize(
 ): Promise<{ ok: true; result: unknown } | { ok: false; error: string }> {
   const startedAt = Date.now()
   try {
-    const result = await spec.execute(args, ctx)
+    // Whatever the tool changes is the assistant's change, made for the
+    // teammate it is acting for, if any.
+    const result = await runWithAuditAttribution(
+      assistantAttribution({ assistantName: ctx.assistantName, actor: ctx.actor }),
+      () => spec.execute(args, ctx)
+    )
     // Defense in depth alongside the `parents` catalogue gate (assembleAssistantToolset):
     // a tool that reports it found no parent to act on (see `NO_CONVERSATION_NOTE`)
     // is never a successful execution, even if it somehow ran — most notably

@@ -2,12 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 
 const state = vi.hoisted(() => ({
-  flags: {} as Record<string, boolean>,
   reads: [] as string[],
-  proposals: [] as unknown[],
-}))
-vi.mock('@/lib/server/domains/settings/settings.service', () => ({
-  isFeatureEnabled: async (flag: string) => state.flags[flag] === true,
+  changes: [] as unknown[],
+  change: { status: 'noop', revision: 'rev' } as Record<string, unknown>,
 }))
 vi.mock('../../resolve-actor', () => ({
   resolveMcpActor: async (_auth: unknown, scope: string) => ({ scope }),
@@ -18,10 +15,18 @@ vi.mock('@/lib/server/domains/assistant/settings-proposals.service', () => ({
     return { area, settings: {} }
   },
 }))
-vi.mock('@/lib/server/domains/assistant/workspace-settings-actions.service', () => ({
-  enqueueWorkspaceSettingsProposal: async (_actor: unknown, changes: unknown) => {
-    state.proposals.push(changes)
-    return { id: 'assistant_action_1', args: { changes } }
+vi.mock('@/lib/server/domains/settings-registry/service', () => ({
+  readSettingsArea: async (_actor: unknown, area: string) => ({
+    id: area,
+    revision: 'rev',
+    locked: [],
+    gates: { permission: 'settings.branding' },
+    value: {},
+  }),
+  listSettingsAreas: async () => [{ id: 'branding', revision: 'rev' }],
+  changeSettingsArea: async (_caller: unknown, area: string, input: unknown) => {
+    state.changes.push({ area, input })
+    return state.change
   },
 }))
 
@@ -30,7 +35,7 @@ import type { McpAuthContext } from '../../types'
 
 type Handler = (args: Record<string, unknown>) => Promise<CallToolResult>
 
-function collect(): Map<string, Handler> {
+function collect(overrides: Partial<McpAuthContext> = {}): Map<string, Handler> {
   const handlers = new Map<string, Handler>()
   const fakeServer = {
     tool: (name: string, _d: string, _s: unknown, _a: unknown, handler: Handler) => {
@@ -43,8 +48,11 @@ function collect(): Map<string, Handler> {
       principalId: 'principal_member',
       name: 'Acme',
       role: 'member',
+      // A member whose custom role grants the settings areas these tools touch.
+      permissions: new Set(['settings.branding', 'settings.manage']),
       authMethod: 'oauth',
       scopes: ['read:settings', 'write:settings'],
+      ...overrides,
     } as unknown as McpAuthContext
   )
   return handlers
@@ -53,35 +61,77 @@ function collect(): Map<string, Handler> {
 const text = (result: CallToolResult) => (result.content[0] as { text: string }).text
 
 beforeEach(() => {
-  state.flags = {}
   state.reads = []
-  state.proposals = []
+  state.changes = []
+  state.change = { status: 'noop', revision: 'rev' }
 })
 
-describe('settings MCP tools follow Copilot on Home', () => {
-  it('refuse to read or propose while the flag is off', async () => {
-    const tools = collect()
-    const read = await tools.get('get_settings')!({ area: 'branding' })
-    const propose = await tools.get('propose_settings_change')!({
-      changes: [{ area: 'messenger', patch: { enabled: true } }],
-    })
-    for (const result of [read, propose]) {
-      expect(result.isError).toBe(true)
-      expect(text(result)).toContain('Settings → Labs')
-    }
-    expect(state.reads).toEqual([])
-    expect(state.proposals).toEqual([])
-  })
-
-  it('work once the flag is on', async () => {
-    state.flags = { copilotHome: true }
+describe('settings MCP tools', () => {
+  it('read and update with no feature flag', async () => {
     const tools = collect()
     expect((await tools.get('get_settings')!({ area: 'branding' })).isError).not.toBe(true)
     expect(state.reads).toEqual(['read:settings:branding'])
-    const propose = await tools.get('propose_settings_change')!({
-      changes: [{ area: 'messenger', patch: { enabled: true } }],
+    const update = await tools.get('update_settings')!({
+      area: 'portal',
+      patch: { displayName: 'Acme' },
+      dry_run: true,
     })
-    expect(propose.isError).not.toBe(true)
-    expect(state.proposals).toEqual([[{ area: 'messenger', patch: { enabled: true } }]])
+    expect(update.isError).not.toBe(true)
+  })
+
+  it('lists the areas with no area given, and an area with its revision', async () => {
+    const tools = collect()
+    expect(JSON.parse(text(await tools.get('get_settings')!({})))).toMatchObject({
+      areas: [{ id: 'branding', revision: 'rev' }],
+    })
+    expect(JSON.parse(text(await tools.get('get_settings')!({ area: 'branding' })))).toMatchObject({
+      area: 'branding',
+      revision: 'rev',
+      locked: [],
+    })
+    expect(
+      JSON.parse(text(await tools.get('get_settings')!({ area: 'branding' })))
+    ).not.toHaveProperty('risk')
+  })
+
+  it('update_settings needs a revision unless it is a dry run', async () => {
+    const tools = collect()
+    const refused = await tools.get('update_settings')!({
+      area: 'portal',
+      patch: { displayName: 'Acme' },
+    })
+    expect(refused.isError).toBe(true)
+    expect(text(refused)).toContain('IF_MATCH_REQUIRED')
+    expect(state.changes).toEqual([])
+
+    await tools.get('update_settings')!({
+      area: 'portal',
+      patch: { displayName: 'Acme' },
+      dry_run: true,
+    })
+    expect(state.changes).toEqual([
+      {
+        area: 'portal',
+        input: { patch: { displayName: 'Acme' }, expectedRevision: undefined, dryRun: true },
+      },
+    ])
+  })
+
+  it('update_settings applies a change and returns its receipt', async () => {
+    const receipt = { id: 'audit_1', area: 'messenger', revision: 'rev2', undoable: true }
+    state.change = { status: 'applied', receipt }
+    const result = await collect().get('update_settings')!({
+      area: 'messenger',
+      patch: { enabled: true },
+      expected_revision: 'rev',
+    })
+    expect(JSON.parse(text(result))).toMatchObject({ status: 'applied', receipt })
+  })
+
+  it('never offers a settings card, in the app or to an outside client', () => {
+    const outside = collect({ auditAttribution: { channel: 'mcp' } as never })
+    expect(outside.has('update_settings')).toBe(true)
+    expect(outside.has('propose_settings_change')).toBe(false)
+    expect(collect().has('propose_settings_change')).toBe(false)
   })
 })
