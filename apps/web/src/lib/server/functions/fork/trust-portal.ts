@@ -45,16 +45,13 @@ export const requestTrustDocumentAccessFn = createServerFn({ method: 'POST' })
     if (!(await isForkFeatureEnabled('trust'))) {
       throw new NotFoundError('TRUST_OFF', 'This page is not available')
     }
-    const { getOptionalAuth, hasAuthCredentials, policyActorFromAuth } = await import(
-      '@/lib/server/functions/auth-helpers'
-    )
+    const { getOptionalAuth, hasAuthCredentials, policyActorFromAuth } =
+      await import('@/lib/server/functions/auth-helpers')
     const ctx = hasAuthCredentials() ? await getOptionalAuth() : null
     if (!ctx?.principal || ctx.principal.type === 'anonymous') {
       throw new UnauthorizedError('Sign in to request access')
     }
-    const { resolvePortalAccessForRequest } = await import(
-      '@/lib/server/functions/portal-access'
-    )
+    const { resolvePortalAccessForRequest } = await import('@/lib/server/functions/portal-access')
     if (!(await resolvePortalAccessForRequest()).granted) {
       throw new ForbiddenError('FORBIDDEN', 'You cannot request this document')
     }

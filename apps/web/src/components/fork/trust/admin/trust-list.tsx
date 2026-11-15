@@ -75,7 +75,9 @@ export function TrustList({
                 </div>
               ) : null}
             </div>
-            {row.actions ? <div className="flex shrink-0 items-center gap-1">{row.actions}</div> : null}
+            {row.actions ? (
+              <div className="flex shrink-0 items-center gap-1">{row.actions}</div>
+            ) : null}
             {canManage ? (
               <div className="flex shrink-0 items-center gap-0.5">
                 <Button

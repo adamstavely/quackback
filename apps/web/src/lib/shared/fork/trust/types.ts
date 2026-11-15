@@ -65,9 +65,7 @@ export interface TrustAdminData {
 
 /** What one viewer may do with a restricted document (phase 3). */
 export type TrustDocumentAccess =
-  | { state: 'granted'; expiresAt: string | null }
-  | { state: 'pending' }
-  | { state: 'declined' }
+  { state: 'granted'; expiresAt: string | null } | { state: 'pending' } | { state: 'declined' }
 
 export interface TrustAccessRequest {
   id: string

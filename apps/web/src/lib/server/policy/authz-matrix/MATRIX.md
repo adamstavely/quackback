@@ -105,7 +105,7 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 
 ## 2. Surfaces and their enforced authorization
 
-### Server functions (`requireAuth`) — 756 surfaces
+### Server functions (`requireAuth`) — 758 surfaces
 
 | Surface | Enforces |
 | --- | --- |
@@ -439,6 +439,8 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 | `lib/server/functions/fork/trust.ts`::reorderTrustItemsFn | trust.manage |
 | `lib/server/functions/fork/trust.ts`::updateTrustConfigFn | trust.manage |
 | `lib/server/functions/fork/trust.ts`::setTrustEnabledFn | settings.manage |
+| `lib/server/functions/fork/trust.ts`::listTrustAccessRequestsFn | trust.view |
+| `lib/server/functions/fork/trust.ts`::decideTrustAccessRequestFn | trust.approve |
 | `lib/server/functions/going-live.ts`::getMessengerInstallStatusFn | settings.manage |
 | `lib/server/functions/going-live.ts`::readyMessengerInstallFn | settings.manage |
 | `lib/server/functions/going-live.ts`::sendMessengerInstallInstructionsFn | settings.manage |
@@ -866,7 +868,7 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 | `lib/server/functions/workspace-copilot.ts`::undoWorkspaceSettingsProposalFn | DYNAMIC (copilot.use | settings.manage | settings.branding | office_hours.manage | changelog.manage) |
 | `lib/server/functions/workspace-wipe.ts`::wipeCloudWorkspaceFn | END_USER (any authenticated) |
 
-### Public REST API (`withApiKeyAuth`) — 127 surfaces
+### Public REST API (`withApiKeyAuth`) — 128 surfaces
 
 | Surface | Enforces |
 | --- | --- |
@@ -875,6 +877,7 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 | `routes/api/export.companies.ts`::GET | company.view |
 | `routes/api/export.ts`::GET | post.export |
 | `routes/api/export.users.ts`::handleExportUsers | people.view |
+| `routes/api/fork-trust/documents/$documentId.file.ts`::handleTrustDocumentUpload | trust.manage |
 | `routes/api/v1/apps/boards.ts`::GET | PUBLIC (any valid key) |
 | `routes/api/v1/apps/link.ts`::POST | post.vote_on_behalf |
 | `routes/api/v1/apps/linked.ts`::GET | integration.view |
@@ -1079,7 +1082,7 @@ Key scopes are enforced: an API key holds exactly its stored scopes (owner permi
 
 ## 4. Entry points without a requireAuth/key gate
 
-233 of 1101 entry points hold no `requireAuth` / `withApiKeyAuth` / `requireTeamAuth` gate.
+235 of 1106 entry points hold no `requireAuth` / `withApiKeyAuth` / `requireTeamAuth` gate.
 Each is expected to be intentionally public, a pre-auth flow, a signature-verified webhook, or a handler that delegates auth (e.g. the MCP route).
 **Adding a row here is an access-control change** — confirm the new entry point is meant to be reachable without a gate.
 
@@ -1110,6 +1113,7 @@ Each is expected to be intentionally public, a pre-auth flow, a signature-verifi
 | `lib/server/functions/fork/announcements-portal.ts`::getPortalBannerFn | server-fn |
 | `lib/server/functions/fork/hub.ts`::getMyHubFeedbackFn | server-fn |
 | `lib/server/functions/fork/trust-portal.ts`::getTrustPageFn | server-fn |
+| `lib/server/functions/fork/trust-portal.ts`::requestTrustDocumentAccessFn | server-fn |
 | `lib/server/functions/help-center-redirect-rules.ts`::resolveHelpCenterRedirectFn | server-fn |
 | `lib/server/functions/help-center.ts`::getPublicArticleBySlugFn | server-fn |
 | `lib/server/functions/help-center.ts`::getPublicArticlePageFn | server-fn |
@@ -1239,6 +1243,7 @@ Each is expected to be intentionally public, a pre-auth flow, a signature-verifi
 | `routes/api/fork-announcements/embed/everyone[.]json.ts`::GET | route |
 | `routes/api/fork-announcements/embed/inter[.]woff2.ts`::GET | route |
 | `routes/api/fork-announcements/stream.ts`::GET | route |
+| `routes/api/fork-trust/documents/$documentId.ts`::GET | route |
 | `routes/api/health.live.ts`::GET | route |
 | `routes/api/health.ready.ts`::GET | route |
 | `routes/api/health.ts`::GET | route |

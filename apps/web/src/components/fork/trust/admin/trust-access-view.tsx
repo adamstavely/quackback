@@ -129,12 +129,7 @@ export function TrustAccessView({ grantDays }: { grantDays: number }): ReactElem
               row(
                 r,
                 canApprove && r.state === 'approved' ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setRevoking(r)}
-                  >
+                  <Button type="button" size="sm" variant="outline" onClick={() => setRevoking(r)}>
                     Revoke
                   </Button>
                 ) : null
@@ -175,11 +170,16 @@ export function TrustAccessView({ grantDays }: { grantDays: number }): ReactElem
                 ]
               : [{ name: 'note', label: 'Reason, for the requester', kind: 'textarea', max: 500 }]
           }
-          initial={deciding.decision === 'approve' ? { days: String(grantDays), note: '' } : { note: '' }}
+          initial={
+            deciding.decision === 'approve' ? { days: String(grantDays), note: '' } : { note: '' }
+          }
           submitLabel={deciding.decision === 'approve' ? 'Approve' : 'Decline'}
           onSubmit={async (values) => {
             const days = Number(values.days)
-            if (deciding.decision === 'approve' && (!Number.isInteger(days) || days < 1 || days > 365)) {
+            if (
+              deciding.decision === 'approve' &&
+              (!Number.isInteger(days) || days < 1 || days > 365)
+            ) {
               throw new Error('Enter a whole number of days from 1 to 365.')
             }
             await decide.mutateAsync({

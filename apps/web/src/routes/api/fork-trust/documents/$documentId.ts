@@ -17,9 +17,8 @@ export async function handleTrustDocumentDownload({
   request: Request
   params: { documentId: string }
 }): Promise<Response> {
-  const { getOptionalAuth, hasAuthCredentials } = await import(
-    '@/lib/server/functions/auth-helpers'
-  )
+  const { getOptionalAuth, hasAuthCredentials } =
+    await import('@/lib/server/functions/auth-helpers')
   const ctx = hasAuthCredentials() ? await getOptionalAuth() : null
   if (!ctx?.principal || ctx.principal.type === 'anonymous') {
     return Response.json({ error: 'Sign in to download this document' }, { status: 401 })

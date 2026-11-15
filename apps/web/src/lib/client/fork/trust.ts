@@ -9,7 +9,10 @@ import {
   setTrustEnabledFn,
   updateTrustConfigFn,
 } from '@/lib/server/functions/fork/trust'
-import { getTrustPageFn, requestTrustDocumentAccessFn } from '@/lib/server/functions/fork/trust-portal'
+import {
+  getTrustPageFn,
+  requestTrustDocumentAccessFn,
+} from '@/lib/server/functions/fork/trust-portal'
 
 export const trustKeys = {
   admin: () => ['fork', 'trust', 'admin'] as const,

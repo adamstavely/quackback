@@ -636,7 +636,8 @@ function UploadFileButton({
             { documentId, file },
             {
               onSuccess: () => toast.success(replace ? 'File replaced' : 'File uploaded'),
-              onError: (error) => toast.error(error instanceof Error ? error.message : 'Upload failed'),
+              onError: (error) =>
+                toast.error(error instanceof Error ? error.message : 'Upload failed'),
             }
           )
         }}

@@ -47,15 +47,20 @@ export async function accessForViewer(
       )
     )
     .orderBy(desc(forkTrustAccessRequests.createdAt))
+  // A live approval wins, then an open request, then a decline (they may ask again).
+  const rank = { granted: 3, pending: 2, declined: 1 } as const
   const now = new Date()
   for (const row of rows) {
-    if (result.has(row.documentId)) continue // newest first: the latest decides
-    if (isLiveGrant(row, now)) {
-      result.set(row.documentId, { state: 'granted', expiresAt: row.expiresAt?.toISOString() ?? null })
-    } else if (row.state === 'pending') {
-      result.set(row.documentId, { state: 'pending' })
-    } else if (row.state === 'declined') {
-      result.set(row.documentId, { state: 'declined' })
+    const next: TrustDocumentAccess | null = isLiveGrant(row, now)
+      ? { state: 'granted', expiresAt: row.expiresAt?.toISOString() ?? null }
+      : row.state === 'pending'
+        ? { state: 'pending' }
+        : row.state === 'declined'
+          ? { state: 'declined' }
+          : null
+    const current = result.get(row.documentId)
+    if (next && (!current || rank[next.state] > rank[current.state])) {
+      result.set(row.documentId, next)
     }
   }
   return result
@@ -98,9 +103,8 @@ async function audit(
 
 /** The hidden ticket type access requests are filed under; made on first use. */
 async function accessTicketType(): Promise<TicketTypeId> {
-  const { createTicketType, listTicketTypes } = await import(
-    '@/lib/server/domains/tickets/ticket-type.service'
-  )
+  const { createTicketType, listTicketTypes } =
+    await import('@/lib/server/domains/tickets/ticket-type.service')
   const existing = (await listTicketTypes()).find((t) => t.slug === TICKET_TYPE_SLUG)
   if (existing) return existing.id as TicketTypeId
   const created = await createTicketType({
@@ -152,8 +156,13 @@ export async function requestDocumentAccess(
       return created!
     })
   } catch (error) {
-    if (String((error as { code?: string }).code ?? (error as Error).message).includes('23505')) {
-      throw new ConflictError('TRUST_ACCESS_PENDING', 'Your request is already waiting for a decision')
+    const code =
+      (error as { code?: string }).code ?? (error as { cause?: { code?: string } }).cause?.code
+    if (code === '23505') {
+      throw new ConflictError(
+        'TRUST_ACCESS_PENDING',
+        'Your request is already waiting for a decision'
+      )
     }
     throw error
   }
@@ -177,7 +186,10 @@ export async function requestDocumentAccess(
       .set({ ticketId: ticket.id })
       .where(eq(forkTrustAccessRequests.id, row.id))
   } catch (error) {
-    log.warn({ err: error, requestId: row.id }, 'trust access request saved without a support ticket')
+    log.warn(
+      { err: error, requestId: row.id },
+      'trust access request saved without a support ticket'
+    )
   }
 }
 
@@ -248,7 +260,11 @@ export async function decideAccessRequest(
     }
     const now = new Date()
     const state =
-      input.decision === 'approve' ? 'approved' : input.decision === 'decline' ? 'declined' : 'revoked'
+      input.decision === 'approve'
+        ? 'approved'
+        : input.decision === 'decline'
+          ? 'declined'
+          : 'revoked'
     const [updated] = await tx
       .update(forkTrustAccessRequests)
       .set({
@@ -272,7 +288,14 @@ export async function decideAccessRequest(
         : input.decision === 'decline'
           ? 'fork_trust.access_declined'
           : 'fork_trust.access_revoked'
-    await audit(tx, writer, event, id, { state: row.state }, { state, expiresAt: updated!.expiresAt, note })
+    await audit(
+      tx,
+      writer,
+      event,
+      id,
+      { state: row.state },
+      { state, expiresAt: updated!.expiresAt, note }
+    )
     const [doc] = await tx
       .select({ title: forkTrustDocuments.title })
       .from(forkTrustDocuments)
@@ -292,7 +315,8 @@ async function answerTicket(
   note: string | null
 ): Promise<void> {
   try {
-    const { sendTicketMessage } = await import('@/lib/server/domains/tickets/ticket-message.service')
+    const { sendTicketMessage } =
+      await import('@/lib/server/domains/tickets/ticket-message.service')
     const message =
       request.state === 'approved'
         ? `Your request for "${title}" is approved. You can download it from the Trust & Security page until ${request.expiresAt?.toISOString().slice(0, 10)}.`

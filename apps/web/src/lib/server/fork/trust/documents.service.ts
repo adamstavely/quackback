@@ -48,7 +48,8 @@ export async function attachDocumentFile(
     .from(forkTrustDocuments)
     .where(eq(forkTrustDocuments.id, documentId))
     .limit(1)
-  if (!existing) throw new NotFoundError('TRUST_DOCUMENT_NOT_FOUND', 'That document no longer exists')
+  if (!existing)
+    throw new NotFoundError('TRUST_DOCUMENT_NOT_FOUND', 'That document no longer exists')
 
   const { deleteObject, generateStorageKey, uploadObject } = await import('@/lib/server/storage/s3')
   const fileName = file.fileName.slice(-200) || `document.${TRUST_FILE_TYPES[file.contentType]}`

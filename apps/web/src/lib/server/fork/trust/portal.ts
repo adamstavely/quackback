@@ -10,6 +10,7 @@ import {
 import { and, asc, db, eq, isNotNull } from '@/lib/server/db'
 import type { Actor } from '@/lib/server/policy/types'
 import { DEFAULT_LOCALE } from '@/lib/shared/i18n'
+import { PERMISSIONS } from '@/lib/shared/permissions'
 import { hcArticlePath } from '@/lib/shared/help-center-url'
 import type { ControlStatus } from '@/lib/shared/fork/trust/schema'
 import type {
@@ -68,7 +69,10 @@ export async function buildTrustPageContent(viewer: Actor): Promise<TrustPageCon
       website: s.website,
     })),
     faq: config.faqCategoryId ? await faqArticles(config.faqCategoryId, viewer) : [],
-    documentGroups: await documentGroups(viewer.principalId ?? null),
+    documentGroups: await documentGroups(
+      viewer.principalId ?? null,
+      viewer.permissions?.has(PERMISSIONS.TRUST_VIEW) ?? false
+    ),
   }
 }
 
@@ -90,7 +94,11 @@ async function faqArticles(categoryId: string, viewer: Actor) {
 }
 
 /** Published documents that have a file, grouped, with what this viewer can do. */
-async function documentGroups(principalId: PrincipalId | null): Promise<TrustPageDocumentGroup[]> {
+/** `staff` (trust.view) may always download, as the download route allows. */
+async function documentGroups(
+  principalId: PrincipalId | null,
+  staff: boolean
+): Promise<TrustPageDocumentGroup[]> {
   const [groups, docs] = await Promise.all([
     db.select().from(forkTrustDocumentGroups).orderBy(asc(forkTrustDocumentGroups.position)),
     db
@@ -102,7 +110,7 @@ async function documentGroups(principalId: PrincipalId | null): Promise<TrustPag
   const restrictedIds = docs.filter((d) => d.access === 'restricted').map((d) => d.id)
   const access = principalId ? await accessForViewer(principalId, restrictedIds) : new Map()
   const actionFor = (doc: (typeof docs)[number]): TrustPageDocumentAction => {
-    if (doc.access === 'open') return { kind: 'download', expiresAt: null }
+    if (doc.access === 'open' || staff) return { kind: 'download', expiresAt: null }
     const state = access.get(doc.id)
     if (state?.state === 'granted') return { kind: 'download', expiresAt: state.expiresAt }
     if (state?.state === 'pending') return { kind: 'pending' }
