@@ -113,16 +113,16 @@
 
 ## Trust & Security (`70-trust-security.md`)
 
-| ID    | Decision                                                                                               | Status |
-| ----- | ------------------------------------------------------------------------------------------------------ | ------ |
-| D-TS1 | Direction A, full trust center (owner, 2026-11-14).                                                    | ✅     |
-| D-TS2 | Audience: any signed-in employee; no per-section segment gating in v1.                                 | ✅     |
-| D-TS3 | Restricted documents: the request becomes a private support request; an admin approves for a set time. | ✅     |
-| D-TS4 | Controls entered by hand now, shaped for a compliance tool to push statuses later.                     | ✅     |
-| D-TS5 | One page per app (per workspace).                                                                      | ✅     |
-| D-TS6 | Styled with platform components and tokens only, so each app's branding carries through.               | ✅     |
-| D-TS7 | Nav tab: configuration link (no code) or one small seam for an in-app tab with active highlighting.    | ⏳     |
-| D-TS8 | "Updates" are fork-owned posts with their own subscribers, not changelog entries.                      | ✅     |
+| ID    | Decision                                                                                                                                               | Status |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| D-TS1 | Direction A, full trust center (owner, 2026-11-14).                                                                                                    | ✅     |
+| D-TS2 | Audience: any signed-in employee; no per-section segment gating in v1.                                                                                 | ✅     |
+| D-TS3 | Restricted documents: the request becomes a private support request; an admin approves for a set time.                                                 | ✅     |
+| D-TS4 | Controls entered by hand now, shaped for a compliance tool to push statuses later.                                                                     | ✅     |
+| D-TS5 | One page per app (per workspace).                                                                                                                      | ✅     |
+| D-TS6 | Styled with platform components and tokens only, so each app's branding carries through.                                                               | ✅     |
+| D-TS7 | Nav tab: one small seam (T-19) so a nav link item pointing at the portal itself renders as an in-app tab with active highlighting (owner, 2026-11-14). | ✅     |
+| D-TS8 | "Updates" are fork-owned posts with their own subscribers, not changelog entries.                                                                      | ✅     |
 
 ## Announcements (`60-announcements-banner.md`)
 

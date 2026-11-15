@@ -33,7 +33,7 @@ Tabs: Overview (the canvas artboard), Documents, Controls, Subprocessors, Update
 | D-TS4 | Controls: entered by hand now; the data model and an API are shaped so a compliance tool can push statuses later (phase 5).                                                               |
 | D-TS5 | One page per app (per workspace), like the rest of the portal. The control tower may fill pages in later.                                                                                 |
 | D-TS6 | Styling: platform components and tokens only (Inter, `bg-card`, `border-border`, `rounded-panel`, pill buttons, the workspace's `primary`), so each app's branding carries through.       |
-| D-TS7 | Nav tab: ⏳ see §6 — a config link (no code) or one small seam for a real tab with active highlighting.                                                                                   |
+| D-TS7 | Nav tab: Option 2 in §6 — one small seam (T-19) for an in-app tab with active highlighting. |
 | D-TS8 | "Updates" are fork-owned posts with their own subscribers, not changelog entries (changelog subscribers would otherwise get trust emails, and the changelog list has no category filter). |
 
 ## 3. What upstream already gives us (verified on `main`)
@@ -85,12 +85,12 @@ Principal re-point on merge (F-5) for requester and subscriber columns.
   `aria-current`, status never by colour alone (icon + text), visible focus (`outline-solid`), 24 px targets.
 - **i18n:** copy through react-intl (`portal.forkTrust.*`) with English defaults; catalogue entries with T-4.
 
-## 6. Nav tab (D-TS7, owner to choose)
+## 6. Nav tab (D-TS7: Option 2 chosen)
 
 - **Option 1 — configuration, no code.** Admin adds a link item in Settings › Portal › Navigation. Upstream only
   accepts an absolute `https://…/trust` URL, renders it as a plain link (full page reload) and never highlights
   it as the current tab.
-- **Option 2 — one small seam (recommended for a top-level page).** In `components/public/portal-header.tsx`,
+- **Option 2 — one small seam, seam T-19 (chosen).** In `components/public/portal-header.tsx`,
   render a link item whose URL is the portal's own origin as an in-app tab (router link + active highlight).
   Generic (any same-origin link item benefits), a few lines, registered in `SEAMS.md` with a test.
 
@@ -115,5 +115,5 @@ Rough size: phases 1–4 about 3 weeks; phase 5 about 3 days.
 
 ## 9. Seams
 
-None new for phases 1–5 beyond list entries in existing seams (F-4 rail item, F-5 re-point, F-7 keys, F-9
-audit types) — unless Option 2 in §6 is chosen (one new seam in `portal-header.tsx`).
+One new seam, T-19 in `components/public/portal-header.tsx` (§6), shipped with phase 2. Otherwise only list entries
+in existing seams (F-4 rail item, F-5 re-point, F-7 keys, F-9 audit types).
