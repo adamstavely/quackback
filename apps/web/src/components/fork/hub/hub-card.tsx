@@ -19,6 +19,8 @@ interface HubCardHeaderProps {
   description?: string
   /** Quiet link to the full page. */
   viewAll?: HubCardLink
+  /** No rule underneath: the short status card is too small to need one. */
+  plain?: boolean
 }
 
 /**
@@ -32,9 +34,15 @@ export function HubCardHeader({
   title,
   description,
   viewAll,
+  plain = false,
 }: HubCardHeaderProps): ReactElement {
   return (
-    <div className="mb-1 flex flex-wrap items-center gap-4 border-b border-border/60 pb-4">
+    <div
+      className={cn(
+        'flex flex-wrap items-center gap-4',
+        !plain && 'mb-1 border-b border-border/60 pb-4'
+      )}
+    >
       <div className="flex min-w-0 flex-col gap-1">
         <h2 id={headingId} className="text-xl font-semibold tracking-tight text-foreground">
           {title}

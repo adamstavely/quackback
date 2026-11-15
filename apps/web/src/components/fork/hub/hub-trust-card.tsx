@@ -6,6 +6,7 @@ import { useIntl } from 'react-intl'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { LocalDate } from '@/components/ui/local-date'
+import { cn } from '@/lib/shared/utils'
 import type { TrustHubSummary } from '@/lib/server/functions/fork/trust-portal'
 
 /**
@@ -13,13 +14,20 @@ import type { TrustHubSummary } from '@/lib/server/functions/fork/trust-portal'
  * under a short status card, a summary of controls and documents. Signed-out
  * viewers see the card without numbers. The button is the only focus stop.
  */
-export function HubTrustCard({ summary }: { summary: TrustHubSummary | null }): ReactElement {
+export function HubTrustCard({
+  summary,
+  className,
+}: {
+  summary: TrustHubSummary | null
+  /** Grid placement on the hub; the card fills its cell. */
+  className?: string
+}): ReactElement {
   const intl = useIntl()
   const m = (id: string, defaultMessage: string, values?: Record<string, string | number>) =>
     intl.formatMessage({ id: `portal.forkHub.trust.${id}`, defaultMessage }, values)
   return (
-    <Card className="h-full">
-      <CardContent className="flex h-full flex-col gap-4 p-6 sm:p-7">
+    <Card className={cn('h-full', className)}>
+      <CardContent className="flex flex-1 flex-col gap-4 p-6 sm:p-7">
         <div className="flex items-center gap-3">
           <span className="flex size-12 shrink-0 items-center justify-center rounded-[var(--radius)] bg-primary/10">
             <ShieldCheckIcon aria-hidden className="size-6 text-primary" />
