@@ -31,7 +31,10 @@ const PendingActionInput = z.object({ pendingActionId: z.string() })
 // owned by another approval-flow change and shouldn't gain new exports for
 // this) — the reshape is a few fields, so a local copy is cheaper than
 // coupling the two files.
-function toDTO(row: AssistantPendingAction): AssistantPendingActionDTO {
+function toDTO(
+  row: AssistantPendingAction,
+  decision: Pick<AssistantPendingActionDTO, 'argsDigest'>
+): AssistantPendingActionDTO {
   return {
     id: row.id,
     conversationId: row.conversationId,
@@ -49,6 +52,7 @@ function toDTO(row: AssistantPendingAction): AssistantPendingActionDTO {
     decidedAt: row.decidedAt?.toISOString() ?? null,
     executedAt: row.executedAt?.toISOString() ?? null,
     result: (row.result as AssistantPendingActionDTO['result']) ?? null,
+    ...decision,
   }
 }
 
@@ -62,11 +66,15 @@ export const getAssistantPendingActionFn = createServerFn({ method: 'GET' })
     // Row-level authz (unified inbox §3.3): see this file's doc comment —
     // the base gate above only confirms conversation.view SOMEWHERE.
     const actor = await policyActorFromAuth(auth)
-    await assertPendingWorkspaceParent(row, actor)
+    assertPendingWorkspaceParent(row)
     if (row.conversationId) {
       await assertConversationViewable(row.conversationId, actor)
     } else if (row.ticketId) {
       await assertTicketVisible(row.ticketId, actor)
     }
-    return toDTO(row)
+    // Showing a request stores the digest of what is shown, which is the one
+    // a decision on it must name.
+    const { decisionFieldsForDisplay } =
+      await import('@/lib/server/domains/assistant/pending-action-decisions')
+    return toDTO(row, await decisionFieldsForDisplay(row))
   })
