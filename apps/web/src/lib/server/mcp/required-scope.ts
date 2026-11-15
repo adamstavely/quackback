@@ -48,7 +48,7 @@ export const TOOL_SCOPES: Readonly<Record<string, McpScope>> = {
   upload_file: 'write:chat',
   widget_install_status: 'read:feedback',
   get_settings: 'read:settings',
-  propose_settings_change: 'write:settings',
+  update_settings: 'write:settings',
   // FORK-SEAM(T-21): the fork's MCP tools.
   ...FORK_MCP_TOOL_SCOPES,
 }

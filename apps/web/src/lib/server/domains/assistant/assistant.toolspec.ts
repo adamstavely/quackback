@@ -107,7 +107,7 @@ export interface AssistantCitation {
  * run created a real row, so every one of them is reported).
  */
 export interface AssistantProposedAction {
-  /** The `assistant_pending_actions` row id, for the approval queue / copilot card to look up. */
+  /** The `assistant_pending_actions` row id, for the copilot card to look up. */
   id: string
   toolName: string
   /** `spec.summarize(args)` at proposal time, same text the inbox note card shows. */
@@ -117,6 +117,8 @@ export interface AssistantProposedAction {
   label: string
   connector?: { name: string; initials: string }
   argsPreview?: Record<string, string>
+  /** The digest of the request as filed, which a decision on it must name. */
+  contentHash?: string
 }
 
 export interface AssistantToolOutcome {
@@ -173,7 +175,7 @@ export interface AssistantToolLedger {
   /** Set only by the report_inability control tool. */
   inabilityReport: { reason: AssistantInabilityReason } | null
   /**
-   * Pending actions this run's write-tool calls turned into approval-queue
+   * Pending actions this run's write-tool calls turned into pending-action
    * rows (P2-C.4), in call order. Populated by the approval branch of
    * `runWithPipeline` (assistant.tools.ts); cleared per attempt alongside
    * `sources`/`searchCalls` so a retry doesn't double-report an earlier

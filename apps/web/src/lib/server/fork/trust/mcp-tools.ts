@@ -4,11 +4,12 @@ import type { McpAuthContext } from '@/lib/server/mcp/types'
 import { jsonResult, registerTool, WRITE } from '@/lib/server/mcp/tools/helpers'
 import { CONTROL_STATUSES, controlExternalIdSchema } from '@/lib/shared/fork/trust/schema'
 import { FORK_MCP_TOOL_SCOPES } from '@/lib/server/fork/mcp/tool-scopes'
+import { PERMISSIONS } from '@/lib/shared/permissions'
 
 /**
  * The controls feed over MCP (plans/v2/70-trust-security.md §5, phase 5), the
  * twin of `PUT /api/fork-trust/controls/{externalId}`. Team callers need
- * `trust.manage` (FORK_MCP_TOOL_SPECS); the scope follows that permission's
+ * `trust.manage` (declared below, checked by upstream's registerTool); the scope follows that permission's
  * category, as the REST route's does.
  */
 export function registerTrustTools(server: McpServer, auth: McpAuthContext): void {
@@ -37,6 +38,7 @@ Examples:
     annotations: { ...WRITE, idempotentHint: true },
     scope: FORK_MCP_TOOL_SCOPES.set_trust_control_status,
     teamOnly: true,
+    permissions: [PERMISSIONS.TRUST_MANAGE],
     handler: async (args) => {
       const { setIntegrationControlStatus } = await import('./feed.service')
       const result = await setIntegrationControlStatus(
