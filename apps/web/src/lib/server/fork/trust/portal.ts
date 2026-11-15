@@ -134,3 +134,22 @@ async function documentGroups(
     }))
     .filter((g) => g.documents.length > 0)
 }
+
+/** Counts for the hub card: controls in place of those that apply, and published documents. */
+export async function buildTrustHubSummary() {
+  const [config, controls, docs] = await Promise.all([
+    trustConfig.read(),
+    db.select({ status: forkTrustControls.status }).from(forkTrustControls),
+    db
+      .select({ id: forkTrustDocuments.id })
+      .from(forkTrustDocuments)
+      .where(and(eq(forkTrustDocuments.published, true), isNotNull(forkTrustDocuments.storageKey))),
+  ])
+  const applicable = controls.filter((c) => c.status !== 'not_applicable')
+  return {
+    controlsInPlace: applicable.filter((c) => c.status === 'in_place').length,
+    controlsTotal: applicable.length,
+    documents: docs.length,
+    reviewedAt: config.controlsReviewedAt,
+  }
+}

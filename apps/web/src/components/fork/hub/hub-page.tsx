@@ -8,6 +8,8 @@ import { HubActionCard } from './hub-action-card'
 import { HubFeedbackCard, type HubFeedbackItem } from './hub-feedback-card'
 import { HubRequestsCard, type HubRequest } from './hub-requests-card'
 import { HubStatusCard, type HubStatusComponent } from './hub-status-card'
+import { HubTrustCard } from './hub-trust-card'
+import type { TrustHubSummary } from '@/lib/server/functions/fork/trust-portal'
 
 interface HubPageProps {
   workspaceName: string
@@ -23,6 +25,8 @@ interface HubPageProps {
     maintenanceStartsAt?: string | null
     maintenanceEndsAt?: string | null
   }
+  /** Set when Trust & Security is on (plan 70): a short status card, then the trust card. */
+  trust?: { summary: TrustHubSummary | null } | null
   onRate: (conversationId: string, score: number) => Promise<void>
 }
 
@@ -41,6 +45,7 @@ export function HubPage({
   requests,
   feedback,
   status,
+  trust,
   onRate,
 }: HubPageProps): ReactElement {
   const intl = useIntl()
@@ -127,7 +132,24 @@ export function HubPage({
               })}
             />
           </div>
-          {status.enabled ? (
+          {trust ? (
+            <div className="flex flex-col gap-6">
+              {status.enabled ? (
+                <HubStatusCard
+                  compact
+                  hasIssue={status.hasIssue}
+                  headline={status.headline}
+                  detail={status.detail}
+                  components={status.components}
+                  maintenanceStartsAt={status.maintenanceStartsAt}
+                  maintenanceEndsAt={status.maintenanceEndsAt}
+                />
+              ) : null}
+              <div className="grow">
+                <HubTrustCard summary={trust.summary} />
+              </div>
+            </div>
+          ) : status.enabled ? (
             <HubStatusCard
               hasIssue={status.hasIssue}
               headline={status.headline}

@@ -15,7 +15,8 @@ export interface HubCardLink {
 interface HubCardHeaderProps {
   headingId: string
   title: string
-  description: string
+  /** Omitted on the short status card, where the heading says enough. */
+  description?: string
   /** Quiet link to the full page. */
   viewAll?: HubCardLink
 }
@@ -38,7 +39,7 @@ export function HubCardHeader({
         <h2 id={headingId} className="text-xl font-semibold tracking-tight text-foreground">
           {title}
         </h2>
-        <p className="text-[13px] text-muted-foreground">{description}</p>
+        {description ? <p className="text-[13px] text-muted-foreground">{description}</p> : null}
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-3.5">
         {viewAll ? (

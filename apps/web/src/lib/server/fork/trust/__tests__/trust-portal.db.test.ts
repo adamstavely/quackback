@@ -1,14 +1,19 @@
 /** The portal page's content: groups hold their own controls, in order; only public fields. */
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import { createDbTestFixture, testDb } from '@/lib/server/__tests__/db-test-fixture'
-import { forkTrustControlGroups, forkTrustControls } from '@/lib/server/fork/db'
+import {
+  forkTrustControlGroups,
+  forkTrustControls,
+  forkTrustDocumentGroups,
+  forkTrustDocuments,
+} from '@/lib/server/fork/db'
 
 vi.mock('@/lib/server/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/server/db')>()),
   db: (await import('@/lib/server/__tests__/db-test-fixture')).testDb,
 }))
 
-const { buildTrustPageContent } = await import('../portal')
+const { buildTrustHubSummary, buildTrustPageContent } = await import('../portal')
 
 const fixture = await createDbTestFixture({
   probe: async (db) => {
@@ -50,6 +55,27 @@ describe.skipIf(!fixture.available)('trust page content (real Postgres)', () => 
       ['description', 'id', 'name', 'status'].sort()
     )
     expect(content.faq).toEqual([])
+  })
+})
+
+describe.skipIf(!fixture.available)('trust hub summary (real Postgres)', () => {
+  it('counts applicable controls and published documents that have a file', async () => {
+    const [group] = await testDb.insert(forkTrustControlGroups).values({ name: 'G' }).returning()
+    await testDb.insert(forkTrustControls).values([
+      { groupId: group!.id, name: 'A', status: 'in_place' },
+      { groupId: group!.id, name: 'B', status: 'in_place' },
+      { groupId: group!.id, name: 'C', status: 'in_progress' },
+      { groupId: group!.id, name: 'D', status: 'not_applicable' },
+    ])
+    const [docs] = await testDb.insert(forkTrustDocumentGroups).values({ name: 'R' }).returning()
+    await testDb.insert(forkTrustDocuments).values([
+      { groupId: docs!.id, title: 'Live', published: true, storageKey: 'fork-trust/a.pdf' },
+      { groupId: docs!.id, title: 'No file', published: true },
+      { groupId: docs!.id, title: 'Draft', published: false, storageKey: 'fork-trust/b.pdf' },
+    ])
+
+    const summary = await buildTrustHubSummary()
+    expect(summary).toMatchObject({ controlsInPlace: 2, controlsTotal: 3, documents: 1 })
   })
 })
 
