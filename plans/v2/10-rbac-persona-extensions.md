@@ -45,7 +45,7 @@ navigation tools only; every gap in §3 was otherwise still open. As built:
 
 | Change | Driven by |
 | --- | --- |
-| Custom-roles-on-REST/MCP fix is a **permanent fork patch**; not offered upstream. R-1…R-5 are permanent seams. | D1, D3 (Q18) |
+| Custom-roles-on-REST/MCP fix was a **permanent fork patch** until upstream v0.15.0 shipped the same enforcement; R-1, R-2, R-3, R-5 retired (D-U1). | D1, D3 (Q18), D-U1 |
 | Seat-exempt Phase 4, seam R-7 (`seat-usage.ts`) and the `seat_exempt` column **removed**. | D-R1, D4 |
 | `fork_role_flags` → **`fork_role_templates`** (template identity only; still needed because custom roles have no semantic key, `role.service.ts:262-263`). | D-R1 |
 | Phase 3 multi-role is **in scope** (no longer deferrable). | D-R4 |

@@ -43,6 +43,7 @@ const LOCALE_LABELS: Record<string, string> = {
   nl: 'Nederlands',
   pl: 'Polski',
   th: 'ภาษาไทย',
+  uk: 'Українська',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -131,7 +132,7 @@ export function ArticleTranslationsDialog({
             <span className="text-xs text-muted-foreground">
               <FormattedMessage
                 id="admin.helpCenter.autoTranslatePaused"
-                defaultMessage="Paused: AI allowance used up"
+                defaultMessage="Paused: AI usage for this period is used up. Upgrade your plan for more."
               />
             </span>
           )}

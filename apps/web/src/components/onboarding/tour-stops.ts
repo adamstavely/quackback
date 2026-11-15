@@ -14,7 +14,6 @@ import { PERMISSIONS } from '@/lib/shared/permissions'
 export const MAX_TOUR_STOPS = 5
 
 export type TourStopId =
-  | 'copilot'
   | 'feedback'
   | 'feedback-private'
   | 'roadmap'
@@ -44,8 +43,6 @@ export interface TourStop {
 
 /** What the stops are chosen from. Gathered once, when the tour starts. */
 export interface TourContext {
-  /** Home leads with the Copilot chat. */
-  copilotOnHome?: boolean
   goals: readonly OnboardingOutcome[]
   feedbackPrivate: boolean
   /** The modules that are on now, so one switched on after setup is in the tour. */
@@ -64,39 +61,32 @@ export interface TourContext {
 }
 
 const COPY = {
-  copilot: {
-    lead: { id: 'onboarding.tour.stop.copilot.lead', defaultMessage: 'Copilot.' },
-    line: {
-      id: 'onboarding.tour.stop.copilot.line',
-      defaultMessage: 'Ask anything, or tell it what to change. Nothing changes until you apply.',
-    },
-  },
   feedback: {
     lead: { id: 'onboarding.tour.stop.feedback.lead', defaultMessage: 'Feedback.' },
     line: {
       id: 'onboarding.tour.stop.feedback.line',
-      defaultMessage: 'Ideas from customers land here. Share the board link to get the first one.',
+      defaultMessage: 'Posts from customers land here. Share the board link to get the first one.',
     },
   },
   'feedback-private': {
     lead: { id: 'onboarding.tour.stop.feedback.lead', defaultMessage: 'Feedback.' },
     line: {
       id: 'onboarding.tour.stop.feedbackPrivate.line',
-      defaultMessage: 'Ideas from your team land here. Only teammates can see this board.',
+      defaultMessage: 'Posts from your team land here. Only teammates can see this board.',
     },
   },
   roadmap: {
     lead: { id: 'onboarding.tour.stop.roadmap.lead', defaultMessage: 'Roadmap.' },
     line: {
       id: 'onboarding.tour.stop.roadmap.line',
-      defaultMessage: 'Move ideas along to show what is coming next.',
+      defaultMessage: 'Move posts along to show what is coming next.',
     },
   },
   changelog: {
     lead: { id: 'onboarding.tour.stop.changelog.lead', defaultMessage: 'Changelog.' },
     line: {
       id: 'onboarding.tour.stop.changelog.line',
-      defaultMessage: 'Tell customers what shipped, and close the loop on their ideas.',
+      defaultMessage: 'Tell customers what shipped, and close the loop on their posts.',
     },
   },
   support: {
