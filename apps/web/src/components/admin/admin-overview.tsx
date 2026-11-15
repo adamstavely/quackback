@@ -202,24 +202,6 @@ export function OverviewDashboard({
   )
 }
 
-/**
- * The workspace's counts on their own: a teammate's Home under Copilot, where
- * the owner's launch plan would be.
- */
-export function OverviewCounts() {
-  const overview = useQuery(adminOverviewQueries.get())
-  if (overview.data?.hasRealData === false) {
-    return <ModuleEmptyStates sections={overview.data.sections} />
-  }
-  return (
-    <CountsCard
-      metrics={overview.data?.metrics ?? []}
-      loading={overview.isPending}
-      onFilter={() => {}}
-    />
-  )
-}
-
 function CountsCard({
   metrics,
   loading,
@@ -262,10 +244,10 @@ const METRIC_LABELS: Record<OverviewMetric['key'], MessageDescriptor> = {
     id: 'admin.overview.metric.waiting',
     defaultMessage: 'Conversations waiting for reply',
   },
-  feedback: { id: 'admin.overview.metric.feedback', defaultMessage: 'Ideas to review' },
+  feedback: { id: 'admin.overview.metric.feedback', defaultMessage: 'Posts to review' },
   complete: {
     id: 'admin.overview.metric.complete',
-    defaultMessage: 'Ideas shipped, not announced',
+    defaultMessage: 'Posts shipped, not announced',
   },
   helpCenter: {
     id: 'admin.overview.metric.helpCenter',
@@ -287,7 +269,7 @@ const EMPTY_MODULES: Array<{ key: ModuleKey; to: string; message: MessageDescrip
     to: '/admin/feedback',
     message: {
       id: 'admin.overview.empty.feedback',
-      defaultMessage: 'No ideas yet. They land in <link>Feedback</link>.',
+      defaultMessage: 'No posts yet. They land in <link>Feedback</link>.',
     },
   },
   {
