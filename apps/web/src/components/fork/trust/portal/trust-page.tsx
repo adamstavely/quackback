@@ -194,10 +194,12 @@ function ControlRow({
   status,
   name,
   description,
+  checkedAt,
 }: {
   status: ControlStatus
   name: string
   description?: string | null
+  checkedAt?: string | null
 }): ReactElement {
   const intl = useIntl()
   const s = STATUS[status]
@@ -211,6 +213,12 @@ function ControlRow({
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="text-foreground [overflow-wrap:anywhere]">{name}</span>
         {description ? <span className="text-xs text-muted-foreground">{description}</span> : null}
+        {checkedAt ? (
+          <span className="text-xs text-muted-foreground">
+            {t(intl, 'controls.checked', 'Checked automatically')}{' '}
+            <LocalDate date={checkedAt} options={{ dateStyle: 'medium', timeStyle: 'short' }} />
+          </span>
+        ) : null}
       </span>
     </li>
   )
@@ -378,7 +386,13 @@ export function TrustControls({ content }: { content: TrustPageContent }): React
           </div>
           <ul className="grid grid-cols-1 gap-x-8 gap-y-3 md:grid-cols-2">
             {group.controls.map((c) => (
-              <ControlRow key={c.id} status={c.status} name={c.name} description={c.description} />
+              <ControlRow
+                key={c.id}
+                status={c.status}
+                name={c.name}
+                description={c.description}
+                checkedAt={c.checkedAt}
+              />
             ))}
           </ul>
         </section>

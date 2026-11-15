@@ -52,7 +52,7 @@ describe.skipIf(!fixture.available)('trust page content (real Postgres)', () => 
       expect.objectContaining({ name: 'Later', status: 'in_progress' }),
     ])
     expect(Object.keys(content.controlGroups[0]!.controls[0]!).sort()).toEqual(
-      ['description', 'id', 'name', 'status'].sort()
+      ['checkedAt', 'description', 'id', 'name', 'status'].sort()
     )
     expect(content.faq).toEqual([])
   })

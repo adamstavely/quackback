@@ -257,6 +257,12 @@ export const FORK_MCP_TOOL_SPECS: Readonly<Record<string, McpToolSpec>> = {
   // ── widget.ts ───────────────────────────────────────────────────────────
   widget_install_status: { base: needs(P.INTEGRATION_VIEW) },
 
+  // ── fork tools (seam T-21) ──────────────────────────────────────────────
+  set_trust_control_status: {
+    base: needs(P.TRUST_MANAGE),
+    inert: ['externalId', 'status', 'checkedAt'],
+  },
+
   // ── settings.ts / navigation.ts: upstream gates these on the caller's
   //    permission set itself (resolveMcpActor, navigation entries) ────────
   get_settings: { base: 'none', inert: ['area'] },

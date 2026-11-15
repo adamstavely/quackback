@@ -59,6 +59,7 @@ export async function buildTrustPageContent(viewer: Actor): Promise<TrustPageCon
           name: c.name,
           description: c.description,
           status: c.status as ControlStatus,
+          checkedAt: c.source === 'integration' ? (c.lastCheckedAt?.toISOString() ?? null) : null,
         })),
     })),
     subprocessors: subprocessors.map((s) => ({

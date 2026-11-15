@@ -9,6 +9,8 @@ export interface TrustPageControl {
   name: string
   description: string | null
   status: ControlStatus
+  /** When a monitoring tool last checked it; null for controls kept by hand. */
+  checkedAt: string | null
 }
 
 export interface TrustPageControlGroup {

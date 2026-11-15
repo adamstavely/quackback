@@ -26,6 +26,8 @@ export interface TrustControl extends Ordered {
   description: string | null
   status: ControlStatus
   source: 'manual' | 'integration'
+  /** Set when a monitoring tool feeds this control's status (phase 5). */
+  externalId: string | null
   lastCheckedAt: string | null
 }
 

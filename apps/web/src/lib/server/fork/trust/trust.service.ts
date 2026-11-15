@@ -181,14 +181,32 @@ async function fieldsFor(tx: Transaction, input: TrustItem): Promise<Record<stri
       }
     case 'controlGroup':
       return { name: values.name, description: values.description }
-    case 'control':
+    case 'control': {
       await assertExists(tx, 'controlGroup', values.groupId, 'That control group no longer exists')
+      const externalId = values.externalId ?? null
+      if (externalId) {
+        const [taken] = await tx
+          .select({ id: forkTrustControls.id })
+          .from(forkTrustControls)
+          .where(eq(forkTrustControls.externalId, externalId))
+          .limit(1)
+        if (taken && taken.id !== values.id) {
+          throw new ConflictError(
+            'TRUST_EXTERNAL_ID_TAKEN',
+            'Another control already uses that integration ID'
+          )
+        }
+      }
       return {
         groupId: values.groupId,
         name: values.name,
         description: values.description,
         status: values.status,
+        // An integration ID hands the status to the tool that feeds it (phase 5).
+        externalId,
+        source: externalId ? 'integration' : 'manual',
       }
+    }
     case 'subprocessor':
       return {
         name: values.name,
