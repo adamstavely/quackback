@@ -47,8 +47,10 @@ vi.mock('@/lib/server/functions/onboarding-progress', () => ({
     return { ok: true }
   },
 }))
-vi.mock('@/lib/client/hooks/use-root-context', () => ({ useFeatureFlags: () => hoisted.flags }))
-vi.mock('@/lib/client/use-permissions', () => ({ usePermissions: () => hoisted.permissions }))
+vi.mock('@/lib/client/hooks/use-root-context', () => ({
+  useFeatureFlags: () => hoisted.flags,
+  usePermissions: () => hoisted.permissions,
+}))
 
 import { ProductTourProvider, useProductTour, type TourEndAction } from '../product-tour'
 
@@ -169,7 +171,7 @@ describe('guided tour', () => {
     const start = await startTour()
 
     expect(dialog()).toHaveTextContent(
-      'Feedback. Ideas from customers land here. Share the board link to get the first one.'
+      'Feedback. Posts from customers land here. Share the board link to get the first one.'
     )
     expect(dialog()).toHaveTextContent('1 of 4')
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull()
@@ -268,7 +270,7 @@ describe('guided tour', () => {
     expect(screen.queryByRole('button', { name: 'Put Messenger on your site' })).toBeNull()
   })
 
-  it('has no stops on a phone without Copilot on Home', async () => {
+  it('has no stops on a phone', async () => {
     hoisted.narrow = true
     mount()
     await act(async () => {
