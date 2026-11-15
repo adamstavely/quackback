@@ -131,6 +131,11 @@ export const PERMISSIONS = {
   STATUS_PAGE_PUBLISH: 'status_page.publish',
   ANNOUNCEMENT_VIEW: 'announcement.view',
   ANNOUNCEMENT_MANAGE: 'announcement.manage',
+
+  // help_center
+  TRUST_VIEW: 'trust.view',
+  TRUST_MANAGE: 'trust.manage',
+  TRUST_APPROVE: 'trust.approve',
 } as const
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
@@ -233,6 +238,7 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<SystemRoleKey, PermissionKey[]> = {
     PERMISSIONS.SUGGESTION_MANAGE,
     PERMISSIONS.STATUS_PAGE_PUBLISH,
     PERMISSIONS.ANNOUNCEMENT_VIEW,
+    PERMISSIONS.TRUST_VIEW,
   ],
 }
 
@@ -343,4 +349,7 @@ export const PERMISSION_CATALOGUE: ReadonlyArray<{
   { key: PERMISSIONS.STATUS_PAGE_PUBLISH, category: 'status_page' },
   { key: PERMISSIONS.ANNOUNCEMENT_VIEW, category: 'status_page' },
   { key: PERMISSIONS.ANNOUNCEMENT_MANAGE, category: 'status_page' },
+  { key: PERMISSIONS.TRUST_VIEW, category: 'help_center' },
+  { key: PERMISSIONS.TRUST_MANAGE, category: 'help_center' },
+  { key: PERMISSIONS.TRUST_APPROVE, category: 'help_center' },
 ]

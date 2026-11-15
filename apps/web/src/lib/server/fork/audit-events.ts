@@ -10,3 +10,8 @@ export type ForkAuditEventType =
   | 'fork_announcement.deleted'
   | 'fork_announcement.config_updated'
   | 'fork_announcement.templates_updated'
+  | 'fork_trust.created'
+  | 'fork_trust.updated'
+  | 'fork_trust.deleted'
+  | 'fork_trust.reordered'
+  | 'fork_trust.config_updated'

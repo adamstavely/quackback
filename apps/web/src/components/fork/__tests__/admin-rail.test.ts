@@ -21,4 +21,9 @@ describe('admin rail with fork items (seam F-4)', () => {
     const hrefs = items.map((item) => item.href)
     expect(hrefs.indexOf('/admin/announcements')).toBe(hrefs.indexOf('/admin/status') + 1)
   })
+
+  it('puts Trust & Security right after Announcements', () => {
+    const hrefs = items.map((item) => item.href)
+    expect(hrefs.indexOf('/admin/trust')).toBe(hrefs.indexOf('/admin/announcements') + 1)
+  })
 })

@@ -1,8 +1,8 @@
-import { FlagIcon } from '@heroicons/react/24/solid'
+import { FlagIcon, ShieldCheckIcon } from '@heroicons/react/24/solid'
 
 /**
  * Fork areas in the admin rail (seam F-4 in `components/admin/admin-sidebar.tsx`).
- * Each item sits after the upstream item named by `after`, or before Analytics
+ * Each item sits after the item named by `after` (upstream's, or an earlier fork item), or before Analytics
  * when that item is hidden. Fork labels are English (D-N1); `labelId` falls
  * back to `label` because the fork adds no catalogue entries.
  */
@@ -13,6 +13,13 @@ export const FORK_RAIL_ITEMS = [
     href: '/admin/announcements',
     icon: FlagIcon,
     after: '/admin/status',
+  },
+  {
+    label: 'Trust & Security',
+    labelId: 'admin.nav.forkTrust',
+    href: '/admin/trust',
+    icon: ShieldCheckIcon,
+    after: '/admin/announcements',
   },
 ]
 

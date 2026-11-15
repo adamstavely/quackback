@@ -7,6 +7,7 @@ import { z } from 'zod'
  */
 export const forkFeaturesSchema = z.object({
   announcements: z.boolean().default(false),
+  trust: z.boolean().default(false),
 })
 
 export type ForkFeatures = z.output<typeof forkFeaturesSchema>
