@@ -56,7 +56,7 @@ export const forkAnnouncements = pgTable(
     index('fork_announcements_live_idx').on(t.status, t.publishAt, t.expiresAt),
     check(
       'fork_announcements_kind_check',
-      sql`${t.kind} IN ('info', 'warning', 'critical', 'maintenance', 'success')`
+      sql`${t.kind} IN ('info', 'warning', 'critical', 'maintenance', 'success', 'tip')`
     ),
     check(
       'fork_announcements_status_check',

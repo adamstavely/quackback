@@ -1,6 +1,13 @@
 /** Announcement banners (plans/v2/60-announcements-banner.md). Shared by admin, portal and server. */
 
-export const ANNOUNCEMENT_KINDS = ['info', 'warning', 'critical', 'maintenance', 'success'] as const
+export const ANNOUNCEMENT_KINDS = [
+  'info',
+  'warning',
+  'critical',
+  'maintenance',
+  'success',
+  'tip',
+] as const
 export type AnnouncementKind = (typeof ANNOUNCEMENT_KINDS)[number]
 
 export const ANNOUNCEMENT_STATUSES = ['draft', 'published', 'archived'] as const

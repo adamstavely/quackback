@@ -21,7 +21,7 @@
 
 | Change | Driver |
 | --- | --- |
-| `severity` column → `kind` (`info`, `warning`, `critical`, `maintenance`, `success`) with **fixed presets** (colour tokens, icon, layout, dismiss/aria defaults) in code; authors only pick a kind and type text (+ optional link). No custom colours. | D-N4 |
+| `severity` column → `kind` (`info`, `warning`, `critical`, `maintenance`, `success`, `tip` — D-N16) with **fixed presets** (colour tokens, icon, layout, dismiss/aria defaults) in code; authors only pick a kind and type text (+ optional link). No custom colours. | D-N4 |
 | Saved **text templates** (`fork_settings` key `announcement_templates`) with `{placeholder}` substitution done **in the editor at authoring time**; stored announcements are plain text only. | D-N4 |
 | Embed/portal chrome strings are English literals in `components/fork/**`; **locale seam dropped** (9 files), open item N-1 removed, no `init({ labels })`. | D-N1 |
 | **Anonymous audience removed.** `audience.tier ∈ authenticated \| segments`; feed fails closed for non-`user` actors. The anonymous, edge-cached `active.json` is **removed**. Embed exchanges the host's signed widget identity JWT (`ssoToken`) for a short-lived viewer token and reads an authenticated, `no-store` feed. N-3 and N-6 closed. **Partly reversed by the intranet revision** (D-E3): a cached, identity-free feed serves audience-all items; identity is needed only for segment items. | D-N5 (superseded) |
@@ -98,7 +98,7 @@ Source: `REVIEW-2026-09-19-SECOND-PASS.md` R2-8. Body sections below are rewritt
 
 | #   | Requirement |
 | --- | --- |
-| R1  | Publish time-sensitive alerts of a fixed **kind** (info, warning, critical, maintenance, success) with optional link, schedule and expiry; styling comes from the kind's preset only. |
+| R1  | Publish time-sensitive alerts of a fixed **kind** (info, warning, critical, maintenance, success, tip) with optional link, schedule and expiry; styling comes from the kind's preset only. |
 | R2  | Render in the **portal** (above `<main>`) and as an **embeddable banner** on internal (intranet) apps: audience-all items for every employee without identification; segment-targeted items only when the host identifies the viewer. |
 | R3  | App-specific: rows live in the workspace's own DB; every read resolves the workspace per `Host`. |
 | R4  | Central management from the control tower (single app or broadcast), attributable to the human (D-C2); Fleet owners and Fleet Agents may publish (D-N8). |
@@ -210,7 +210,7 @@ module-state roots.
   **`customCss` is not applied in the embed**: arbitrary author CSS targets portal markup, and injecting it into
   another team's internal app (even into a shadow root) is unscoped risk. Consequence: per-app `customCss`
   overrides of the `--fork-*` kind tokens show in the portal but the embed uses the default kind colours.
-  Sort rank: critical > maintenance (active) > warning > info > success.
+  Sort rank: critical > maintenance (active) > warning > info > success > tip (D-N16).
 - **Saved templates** (`fork_settings` key `announcement_templates`, zod-validated, ≤ 50 entries):
   `{ id: uuid, name, kind, title, body?, linkUrl?, linkLabel? }`. When the key is absent, three code-defined
   starters are offered ("Scheduled maintenance {date} {time}", "Investigating: {service}", "Resolved: {service}");

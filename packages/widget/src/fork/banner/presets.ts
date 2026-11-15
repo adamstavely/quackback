@@ -2,7 +2,7 @@
  * Mirror of apps/web/src/lib/shared/fork/announcements/presets.ts (the widget
  * package cannot import the app). A test in the app asserts the two agree.
  */
-export type BannerKind = 'info' | 'warning' | 'critical' | 'maintenance' | 'success'
+export type BannerKind = 'info' | 'warning' | 'critical' | 'maintenance' | 'success' | 'tip'
 
 export interface KindPreset {
   label: string
@@ -16,4 +16,5 @@ export const KIND_PRESETS: Record<BannerKind, KindPreset> = {
   warning: { label: 'Warning', rank: 2, role: 'status' },
   info: { label: 'Information', rank: 3, role: 'status' },
   success: { label: 'Resolved', rank: 4, role: 'status' },
+  tip: { label: 'Pro Tip', rank: 5, role: 'status' },
 }

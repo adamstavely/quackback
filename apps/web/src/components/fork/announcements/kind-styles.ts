@@ -3,6 +3,7 @@ import {
   CheckCircleIcon,
   ExclamationTriangleIcon,
   InformationCircleIcon,
+  LightBulbIcon,
   WrenchScrewdriverIcon,
   XCircleIcon,
 } from '@heroicons/react/24/solid'
@@ -13,7 +14,9 @@ import type { AnnouncementKind } from '@/lib/shared/fork/announcements/types'
  * (`components/portal/status/status-colors.ts`), so a kind reads the same in
  * every workspace: the platform's `destructive`, `warning` and `success` tokens,
  * and the same blue and violet the platform uses for informational and
- * maintenance states. The icon carries the meaning too, so colour is never the
+ * maintenance states. Pro Tip is a lightbulb gold with no platform token or
+ * palette shade at that lightness, so it is written out (oklch, the same values
+ * as the embed's `--qb-tip`); its hue sits well clear of Warning's amber. The icon carries the meaning too, so colour is never the
  * only cue (SC 1.4.1).
  */
 export interface KindStyle {
@@ -49,5 +52,10 @@ export const KIND_STYLES: Record<AnnouncementKind, KindStyle> = {
     icon: CheckCircleIcon,
     surface: 'border-success/35 bg-success/10',
     iconColor: 'text-success',
+  },
+  tip: {
+    icon: LightBulbIcon,
+    surface: 'border-[oklch(0.65_0.13_89)]/40 bg-[oklch(0.65_0.13_89)]/10',
+    iconColor: 'text-[oklch(0.541_0.111_87.7)] dark:text-[oklch(0.819_0.14_91.4)]',
   },
 }

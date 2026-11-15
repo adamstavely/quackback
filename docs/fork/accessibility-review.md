@@ -37,6 +37,9 @@ workspace theme, host app, SSO provider, or complete support process.
   rather than a translucent ring. Search result highlighting no longer uses the
   low-contrast gold text. Embedded default banner text measured 15.63:1–17.33:1
   across all five kinds in light/dark modes, using Chromium-rendered sRGB colors.
+  The later Pro Tip kind (lightbulb gold) keeps foreground text; its icon was
+  computed, not browser-measured, at about 4.4:1 (light) and 7.5:1 (dark)
+  against its tinted surface, above the 3:1 non-text minimum.
   Custom themes remain a separate validation requirement.
 - **Bypass / target size (2.4.1, 2.5.8):** portal navigation has a keyboard-visible
   Skip to content link. More and Change controls have a minimum 24-pixel height;
