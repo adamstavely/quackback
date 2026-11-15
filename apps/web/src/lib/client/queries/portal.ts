@@ -1,6 +1,6 @@
 import { queryOptions, useQuery, type QueryClient } from '@tanstack/react-query'
 import type { PrincipalId, RoadmapId, PostStatusId, BoardId } from '@quackback/ids'
-import type { RespondedFilter } from '@/lib/shared/types/filters'
+import type { PublicFeedView, PublicPostSort, RespondedFilter } from '@/lib/shared/types/filters'
 import {
   fetchPublicBoards,
   fetchPublicPosts,
@@ -21,7 +21,9 @@ import {
  * internal tag ids redacted for non-team viewers. The board list holds only
  * the boards the viewer's segments and role can see. Notifications belong to the
  * signed-in viewer outright, and the portal loader reads the bell's unread
- * count back through `ensureQueryData`.
+ * count back through `ensureQueryData`. The public status reads
+ * (`statusKeys.public()`) hide segment-restricted services and the incidents
+ * that touch only them.
  */
 export const VIEWER_SCOPED_PORTAL_QUERY_KEYS: readonly (readonly string[])[] = [
   ['portal', 'tags'],
@@ -33,6 +35,7 @@ export const VIEWER_SCOPED_PORTAL_QUERY_KEYS: readonly (readonly string[])[] = [
   ['portal', 'roadmapPosts'],
   ['publicPosts'],
   ['notifications'],
+  ['status', 'public'],
 ]
 
 /**
@@ -74,7 +77,7 @@ export const portalQueries = {
   portalData: (params: {
     boardSlug?: string
     search?: string
-    sort: 'top' | 'new' | 'trending'
+    sort: PublicPostSort
     statusSlugs?: string[]
     tagIds?: string[]
     userId?: string
@@ -83,6 +86,7 @@ export const portalQueries = {
     responded?: RespondedFilter
     owner?: string
     segmentIds?: string[]
+    view?: PublicFeedView
   }) =>
     queryOptions({
       queryKey: [
@@ -99,6 +103,7 @@ export const portalQueries = {
         params.responded,
         params.owner,
         params.segmentIds,
+        params.view,
       ],
       queryFn: async () => {
         const { userId: _cacheKeyOnly, ...input } = params
@@ -132,7 +137,7 @@ export const portalQueries = {
   /**
    * List posts for a board with filtering
    */
-  posts: (filters: { boardSlug?: string; search?: string; sort: 'top' | 'new' | 'trending' }) =>
+  posts: (filters: { boardSlug?: string; search?: string; sort: PublicPostSort }) =>
     queryOptions({
       queryKey: ['portal', 'posts', filters],
       queryFn: () => fetchPublicPosts({ data: filters }),

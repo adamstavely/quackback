@@ -8,11 +8,10 @@ import { FormattedMessage, useIntl } from 'react-intl'
 import { htmlLangDir } from '@/lib/shared/document-locale'
 import type { SupportedLocale } from '@/lib/shared/i18n'
 import { railControlClass } from '@/components/admin/rail-item'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ComponentType } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import {
-  ChatBubbleLeftIcon,
   ChatBubbleLeftRightIcon,
   MapIcon,
   UsersIcon,
@@ -51,7 +50,6 @@ import {
 } from '@/lib/server/functions/owner-workspaces'
 import { friendlySiblingAddress, WorkspaceSwitcher } from '@/components/admin/workspace-switcher'
 import { usePermission } from '@/lib/client/hooks/use-permission'
-import { usePermissions } from '@/lib/client/use-permissions'
 import {
   buildNavSections,
   canOpenSettings,
@@ -63,8 +61,10 @@ import { ENTITY_ICONS } from '@/components/admin/entity-icon'
 import {
   useBillingEnabled,
   useCloudEnabled,
+  useGithubStarPrompt,
   useSessionContext,
   useWorkspaceSettings,
+  usePermissions,
 } from '@/lib/client/hooks/use-root-context'
 // FORK-SEAM(F-4): fork admin areas (Announcements) join the rail.
 import { FORK_RAIL_ITEMS, withForkRailItems } from '@/components/fork/admin-rail'
@@ -98,10 +98,21 @@ interface AdminSidebarProps {
   planNotice?: PlanNotice | null
 }
 
+type RailIcon = ComponentType<{ className?: string }>
+
+/** Drawn here for the same reason: Help's GitHub link must not pull in a shared icon file. */
+function GitHubStarIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+      <path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z" />
+    </svg>
+  )
+}
+
 interface RailItem {
   label: string
   href: string
-  icon: typeof ChatBubbleLeftIcon
+  icon: RailIcon
   /** Active on this path only, not on the pages under it. */
   exact?: boolean
   /** The catalogue id of the label, so the rail reads in the workspace language. */
@@ -198,7 +209,11 @@ const railLinkProps = (exact: boolean) => ({
 const MOBILE_LINK_CLASS =
   'flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-colors text-muted-foreground/80 hover:text-foreground hover:bg-muted/50'
 
-function NavItem({
+/**
+ * One rail link. Called, not rendered as a component: it holds no state, so a
+ * component of its own would only add a render to every item on every page.
+ */
+function railItem({
   href,
   icon: Icon,
   label,
@@ -210,7 +225,7 @@ function NavItem({
   tour,
 }: {
   href: string
-  icon: typeof ChatBubbleLeftIcon
+  icon: RailIcon
   label: string
   /** The guided tour's name for this item. */
   tour?: string
@@ -226,6 +241,7 @@ function NavItem({
 }) {
   return (
     <Link
+      key={href}
       to={href}
       onClick={onClick}
       data-admin-rail-item=""
@@ -258,11 +274,11 @@ function MobileNavLink({
   badgeLabel,
 }: {
   href: string
-  icon: typeof ChatBubbleLeftIcon
+  icon: RailIcon
   label: string
   onClick: () => void
   exact?: boolean
-  badge?: number | null
+  badge?: string | number | null
   badgeLabel?: string
 }) {
   return (
@@ -298,15 +314,15 @@ export function AdminSidebar({ initialUserData, latestVersion, planNotice }: Adm
   const settings = useWorkspaceSettings()
   const billingEnabled = useBillingEnabled()
   const cloudEnabled = useCloudEnabled()
+  const githubStarPrompt = useGithubStarPrompt()
   const permissions = usePermissions()
 
   const flags = settings?.featureFlags as FeatureFlags | undefined
   // Settings is offered to anyone who can open at least one of its pages; the
   // rest would only reach an access-denied page.
   const showSettings = useMemo(
-    () =>
-      canOpenSettings(buildNavSections(flags, Boolean(billingEnabled), cloudEnabled), permissions),
-    [flags, billingEnabled, cloudEnabled, permissions]
+    () => canOpenSettings(buildNavSections(flags, Boolean(billingEnabled)), permissions),
+    [flags, billingEnabled, permissions]
   )
   // The org's own logo (resolved in brandingData by the root loader, same source
   // PortalBrandMark uses); fall back to the Quackback mark when none is set.
@@ -404,18 +420,17 @@ export function AdminSidebar({ initialUserData, latestVersion, planNotice }: Adm
               <SearchTrigger tour className={railControlClass()} />
             </div>
             <nav data-tour="products" className="flex flex-col gap-0.5 px-2">
-              {railItems.map((item) => (
-                <NavItem
-                  key={item.href}
-                  href={item.href}
-                  icon={item.icon}
-                  label={intl.formatMessage({ id: item.labelId, defaultMessage: item.label })}
-                  exact={item.exact}
-                  badge={itemBadge(item)}
-                  badgeLabel={itemBadgeLabel(item)}
-                  tour={item.tour}
-                />
-              ))}
+              {railItems.map((item) =>
+                railItem({
+                  href: item.href,
+                  icon: item.icon,
+                  label: intl.formatMessage({ id: item.labelId, defaultMessage: item.label }),
+                  exact: item.exact,
+                  badge: itemBadge(item),
+                  badgeLabel: itemBadgeLabel(item),
+                  tour: item.tour,
+                })
+              )}
             </nav>
 
             {/* Spacer */}
@@ -427,16 +442,15 @@ export function AdminSidebar({ initialUserData, latestVersion, planNotice }: Adm
               {planNotice && <PlanNoticeQuiet notice={planNotice} />}
               <LaunchPlanDock />
               {/* Settings (admin-only) */}
-              {showSettings && (
-                <NavItem
-                  href="/admin/settings"
-                  icon={Cog6ToothIcon}
-                  label={intl.formatMessage({
+              {showSettings &&
+                railItem({
+                  href: '/admin/settings',
+                  icon: Cog6ToothIcon,
+                  label: intl.formatMessage({
                     id: 'admin.nav.settings',
                     defaultMessage: 'Settings',
-                  })}
-                />
-              )}
+                  }),
+                })}
 
               {billingEnabled && siblings.length > 0 ? (
                 <WorkspaceSwitcher siblings={siblings} onOpen={(id) => openSibling.mutate(id)} />
@@ -517,6 +531,21 @@ export function AdminSidebar({ initialUserData, latestVersion, planNotice }: Adm
                       <FormattedMessage id="admin.help.whatsNew" defaultMessage="What's new" />
                     </a>
                   </DropdownMenuItem>
+                  {githubStarPrompt ? (
+                    <DropdownMenuItem asChild>
+                      <a
+                        href="https://github.com/QuackbackIO/quackback"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <GitHubStarIcon className="mr-2 h-4 w-4" />
+                        <FormattedMessage
+                          id="admin.starPrompt.star"
+                          defaultMessage="Star on GitHub"
+                        />
+                      </a>
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuSeparator />
                   <div className="px-2 py-1.5 flex flex-col gap-1">
                     <span className="text-xs text-muted-foreground/60">v{__APP_VERSION__}</span>
@@ -718,6 +747,17 @@ export function AdminSidebar({ initialUserData, latestVersion, planNotice }: Adm
                 <DocumentTextIcon className="h-5 w-5" />
                 <FormattedMessage id="admin.help.whatsNew" defaultMessage="What's new" />
               </a>
+              {githubStarPrompt ? (
+                <a
+                  href="https://github.com/QuackbackIO/quackback"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm text-muted-foreground/80 hover:text-foreground hover:bg-muted/50 transition-colors"
+                >
+                  <GitHubStarIcon className="h-5 w-5" />
+                  <FormattedMessage id="admin.starPrompt.star" defaultMessage="Star on GitHub" />
+                </a>
+              ) : null}
               {cloudEnabled && (
                 <button
                   type="button"
