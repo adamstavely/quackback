@@ -36,6 +36,8 @@ interface HubStatusCardProps {
    * the overall state and any maintenance, without the component list.
    */
   compact?: boolean
+  /** Grid placement on the hub; the card fills its cell. */
+  className?: string
 }
 
 /**
@@ -54,15 +56,24 @@ export function HubStatusCard({
   maintenanceStartsAt,
   maintenanceEndsAt,
   compact = false,
+  className,
 }: HubStatusCardProps): ReactElement {
   const intl = useIntl()
   const ordered = [...components].sort((a, b) => Number(b.degraded) - Number(a.degraded))
   const StateIcon = hasIssue ? ExclamationTriangleIcon : CheckCircleIcon
 
   return (
-    <Card className={compact ? undefined : 'h-full'}>
-      <CardContent className={cn('flex flex-col gap-4 p-6 sm:p-7', !compact && 'h-full')}>
+    <Card className={cn('h-full', className)}>
+      <CardContent
+        className={cn(
+          'flex flex-1 flex-col',
+          // The short form matches the action cards beside it: same padding,
+          // content centred, so the row stays their height.
+          compact ? 'justify-center gap-3 p-6' : 'gap-4 p-6 sm:p-7'
+        )}
+      >
         <HubCardHeader
+          plain={compact}
           headingId="hub-status-heading"
           title={intl.formatMessage({
             id: 'portal.forkHub.status.title',
@@ -88,8 +99,13 @@ export function HubStatusCard({
         <div
           aria-live="polite"
           className={cn(
-            'flex items-center gap-3 rounded-[var(--radius)] border p-3.5',
-            hasIssue ? 'border-destructive/25 bg-destructive/5' : 'border-success/25 bg-success/5'
+            'flex items-center gap-3',
+            // The short form is a plain line; the full card keeps the tinted panel.
+            !compact && 'rounded-[var(--radius)] border p-3.5',
+            !compact &&
+              (hasIssue
+                ? 'border-destructive/25 bg-destructive/5'
+                : 'border-success/25 bg-success/5')
           )}
         >
           <StateIcon
