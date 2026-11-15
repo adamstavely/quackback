@@ -20,6 +20,7 @@ releases keep merging cleanly.
 | 40  | [`40-support-account-actions.md`](40-support-account-actions.md)     | Tier-gated actions on accounts in connected customer apps, with request→approve. |
 | 50  | [`50-prioritization-scoring.md`](50-prioritization-scoring.md)       | RICE (BRICE pending) scoring on posts, with Reach derived from votes.        |
 | 60  | [`60-announcements-banner.md`](60-announcements-banner.md)           | Announcements banner (portal + embed), folding in live status incidents.     |
+| 70  | [`70-trust-security.md`](70-trust-security.md)                       | Trust & Security portal page: compliance, documents with access requests, controls, subprocessors, updates, FAQ. |
 
 ## Implementation roadmap
 
