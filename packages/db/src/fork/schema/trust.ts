@@ -214,3 +214,43 @@ export const forkTrustAccessRequests = pgTable(
     ),
   ]
 )
+
+/**
+ * Short dated posts on the Updates tab (phase 4, D-TS8). Publishing notifies
+ * subscribers once: `notified_at` is claimed in the same statement that finds
+ * it empty, so a second publish, or an unpublish and republish, never re-sends.
+ */
+export const forkTrustUpdates = pgTable(
+  'fork_trust_updates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    linkUrl: text('link_url'),
+    linkLabel: text('link_label'),
+    status: text('status').notNull().default('draft'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    notifiedAt: timestamp('notified_at', { withTimezone: true }),
+    ...audit(),
+  },
+  (t) => [
+    index('fork_trust_updates_published_idx').on(t.status, t.publishedAt),
+    check('fork_trust_updates_status_check', sql`${t.status} IN ('draft', 'published')`),
+    check('fork_trust_updates_title_check', sql`char_length(${t.title}) <= 160`),
+    check('fork_trust_updates_body_check', sql`char_length(${t.body}) <= 2000`),
+  ]
+)
+
+/** Who hears about new updates (phase 4). One row per person; unsubscribing keeps it. */
+export const forkTrustSubscriptions = pgTable(
+  'fork_trust_subscriptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    principalId: typeIdColumn('principal')('principal_id')
+      .notNull()
+      .references(() => principal.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    unsubscribedAt: timestamp('unsubscribed_at', { withTimezone: true }),
+  },
+  (t) => [uniqueIndex('fork_trust_subscriptions_principal_uq').on(t.principalId)]
+)

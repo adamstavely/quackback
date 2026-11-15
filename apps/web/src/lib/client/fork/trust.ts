@@ -1,23 +1,28 @@
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
+  changeTrustUpdateFn,
   decideTrustAccessRequestFn,
   deleteTrustItemFn,
   getTrustAdminFn,
+  getTrustUpdatesFn,
   listTrustAccessRequestsFn,
   reorderTrustItemsFn,
   saveTrustItemFn,
+  saveTrustUpdateFn,
   setTrustEnabledFn,
   updateTrustConfigFn,
 } from '@/lib/server/functions/fork/trust'
 import {
   getTrustPageFn,
   requestTrustDocumentAccessFn,
+  setTrustSubscriptionFn,
 } from '@/lib/server/functions/fork/trust-portal'
 
 export const trustKeys = {
   admin: () => ['fork', 'trust', 'admin'] as const,
   page: () => ['fork', 'trust', 'page'] as const,
   accessRequests: () => ['fork', 'trust', 'access-requests'] as const,
+  updates: () => ['fork', 'trust', 'updates'] as const,
 }
 
 export const trustQueries = {
@@ -31,6 +36,12 @@ export const trustQueries = {
     queryOptions({
       queryKey: trustKeys.accessRequests(),
       queryFn: () => listTrustAccessRequestsFn(),
+      staleTime: 15 * 1000,
+    }),
+  updates: () =>
+    queryOptions({
+      queryKey: trustKeys.updates(),
+      queryFn: () => getTrustUpdatesFn(),
       staleTime: 15 * 1000,
     }),
   /** The portal page; read by the route loader, then shared by every tab. */
@@ -110,3 +121,29 @@ export const useUploadTrustDocumentFile = () => {
 
 /** The download address for a document (the route checks access). */
 export const trustDocumentHref = (documentId: string) => `/api/fork-trust/documents/${documentId}`
+
+/** Save an update, or publish, unpublish or delete one; refreshes the admin list. */
+export const useSaveTrustUpdate = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: DataOf<typeof saveTrustUpdateFn>) => saveTrustUpdateFn({ data }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: trustKeys.updates() }),
+  })
+}
+
+export const useChangeTrustUpdate = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: DataOf<typeof changeTrustUpdateFn>) => changeTrustUpdateFn({ data }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: trustKeys.updates() }),
+  })
+}
+
+/** A portal viewer subscribes or unsubscribes; the page then shows the new state. */
+export const useSetTrustSubscription = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (subscribed: boolean) => setTrustSubscriptionFn({ data: { subscribed } }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: trustKeys.page() }),
+  })
+}

@@ -7,6 +7,7 @@ import {
   Cog6ToothIcon,
   DocumentTextIcon,
   KeyIcon,
+  MegaphoneIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/solid'
 import { AdminFilterLayout } from '@/components/admin/admin-filter-layout'
@@ -20,6 +21,7 @@ import { cn } from '@/lib/shared/utils'
 import { Route, type TRUST_VIEWS } from '@/routes/admin/trust'
 import { TrustAccessView } from './trust-access-view'
 import { TrustSettingsView } from './trust-settings-view'
+import { TrustUpdatesView } from './trust-updates-view'
 import { ComplianceView, ControlsView, DocumentsView, SubprocessorsView } from './trust-views'
 
 type View = (typeof TRUST_VIEWS)[number]
@@ -131,6 +133,9 @@ export function TrustAdmin(): ReactElement {
           >
             Subprocessors
           </NavItem>
+          <NavItem view="updates" current={view} icon={MegaphoneIcon}>
+            Updates
+          </NavItem>
         </div>
       </FilterSection>
       <FilterSection title="Requests">
@@ -161,6 +166,7 @@ export function TrustAdmin(): ReactElement {
             {view === 'compliance' ? <ComplianceView data={data} canManage={canManage} /> : null}
             {view === 'documents' ? <DocumentsView data={data} canManage={canManage} /> : null}
             {view === 'controls' ? <ControlsView data={data} canManage={canManage} /> : null}
+            {view === 'updates' ? <TrustUpdatesView canManage={canManage} /> : null}
             {view === 'access' ? <TrustAccessView grantDays={data.config.grantDays} /> : null}
             {view === 'subprocessors' ? (
               <SubprocessorsView data={data} canManage={canManage} />

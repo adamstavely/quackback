@@ -63,6 +63,26 @@ export interface TrustAdminData {
   helpCenterCategories: { id: string; name: string }[]
 }
 
+/** An update post, as the admin sees it (phase 4). */
+export interface TrustUpdate {
+  id: string
+  title: string
+  body: string
+  linkUrl: string | null
+  linkLabel: string | null
+  status: 'draft' | 'published'
+  publishedAt: string | null
+  /** Set once subscribers have been told; publishing again does not re-send. */
+  notifiedAt: string | null
+  updatedAt: string
+}
+
+export interface TrustUpdatesAdmin {
+  updates: TrustUpdate[]
+  /** People subscribed now. */
+  subscribers: number
+}
+
 /** What one viewer may do with a restricted document (phase 3). */
 export type TrustDocumentAccess =
   { state: 'granted'; expiresAt: string | null } | { state: 'pending' } | { state: 'declined' }

@@ -36,6 +36,19 @@ export interface TrustPageContent {
   }[]
   faq: { id: string; title: string; description: string | null; href: string }[]
   documentGroups: TrustPageDocumentGroup[]
+  /** Published updates, newest first (phase 4). */
+  updates: TrustPageUpdate[]
+  /** Whether this viewer hears about new updates. */
+  subscribed: boolean
+}
+
+export interface TrustPageUpdate {
+  id: string
+  title: string
+  body: string
+  linkUrl: string | null
+  linkLabel: string | null
+  publishedAt: string
 }
 
 /**

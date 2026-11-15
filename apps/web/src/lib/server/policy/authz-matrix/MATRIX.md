@@ -105,7 +105,7 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 
 ## 2. Surfaces and their enforced authorization
 
-### Server functions (`requireAuth`) — 758 surfaces
+### Server functions (`requireAuth`) — 761 surfaces
 
 | Surface | Enforces |
 | --- | --- |
@@ -441,6 +441,9 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 | `lib/server/functions/fork/trust.ts`::setTrustEnabledFn | settings.manage |
 | `lib/server/functions/fork/trust.ts`::listTrustAccessRequestsFn | trust.view |
 | `lib/server/functions/fork/trust.ts`::decideTrustAccessRequestFn | trust.approve |
+| `lib/server/functions/fork/trust.ts`::getTrustUpdatesFn | trust.view |
+| `lib/server/functions/fork/trust.ts`::saveTrustUpdateFn | trust.manage |
+| `lib/server/functions/fork/trust.ts`::changeTrustUpdateFn | trust.manage |
 | `lib/server/functions/going-live.ts`::getMessengerInstallStatusFn | settings.manage |
 | `lib/server/functions/going-live.ts`::readyMessengerInstallFn | settings.manage |
 | `lib/server/functions/going-live.ts`::sendMessengerInstallInstructionsFn | settings.manage |
@@ -1082,7 +1085,7 @@ Key scopes are enforced: an API key holds exactly its stored scopes (owner permi
 
 ## 4. Entry points without a requireAuth/key gate
 
-236 of 1107 entry points hold no `requireAuth` / `withApiKeyAuth` / `requireTeamAuth` gate.
+237 of 1111 entry points hold no `requireAuth` / `withApiKeyAuth` / `requireTeamAuth` gate.
 Each is expected to be intentionally public, a pre-auth flow, a signature-verified webhook, or a handler that delegates auth (e.g. the MCP route).
 **Adding a row here is an access-control change** — confirm the new entry point is meant to be reachable without a gate.
 
@@ -1115,6 +1118,7 @@ Each is expected to be intentionally public, a pre-auth flow, a signature-verifi
 | `lib/server/functions/fork/trust-portal.ts`::getTrustHubSummaryFn | server-fn |
 | `lib/server/functions/fork/trust-portal.ts`::getTrustPageFn | server-fn |
 | `lib/server/functions/fork/trust-portal.ts`::requestTrustDocumentAccessFn | server-fn |
+| `lib/server/functions/fork/trust-portal.ts`::setTrustSubscriptionFn | server-fn |
 | `lib/server/functions/help-center-redirect-rules.ts`::resolveHelpCenterRedirectFn | server-fn |
 | `lib/server/functions/help-center.ts`::getPublicArticleBySlugFn | server-fn |
 | `lib/server/functions/help-center.ts`::getPublicArticlePageFn | server-fn |

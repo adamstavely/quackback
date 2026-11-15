@@ -71,6 +71,30 @@ export const requestTrustDocumentAccessFn = createServerFn({ method: 'POST' })
     )
   })
 
+/** Subscribe to, or unsubscribe from, new updates (phase 4). Same gate as the page. */
+export const setTrustSubscriptionFn = createServerFn({ method: 'POST' })
+  .validator(z.object({ subscribed: z.boolean() }))
+  .handler(async ({ data }) => {
+    const { isForkFeatureEnabled } = await import('@/lib/server/fork/settings/features')
+    const { NotFoundError, UnauthorizedError, ForbiddenError } = await import('@/lib/shared/errors')
+    if (!(await isForkFeatureEnabled('trust'))) {
+      throw new NotFoundError('TRUST_OFF', 'This page is not available')
+    }
+    const { getOptionalAuth, hasAuthCredentials } =
+      await import('@/lib/server/functions/auth-helpers')
+    const ctx = hasAuthCredentials() ? await getOptionalAuth() : null
+    if (!ctx?.principal || ctx.principal.type === 'anonymous') {
+      throw new UnauthorizedError('Sign in to subscribe')
+    }
+    const { resolvePortalAccessForRequest } = await import('@/lib/server/functions/portal-access')
+    if (!(await resolvePortalAccessForRequest()).granted) {
+      throw new ForbiddenError('FORBIDDEN', 'You cannot subscribe to this page')
+    }
+    const { setSubscribed } = await import('@/lib/server/fork/trust/updates.service')
+    await setSubscribed(ctx.principal.id, data.subscribed)
+    return { subscribed: data.subscribed }
+  })
+
 /** The hub's Trust & Security card (plan 70; hub option B). Counts only. */
 export interface TrustHubSummary {
   controlsInPlace: number
