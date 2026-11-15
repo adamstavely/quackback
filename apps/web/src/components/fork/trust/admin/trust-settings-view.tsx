@@ -3,6 +3,13 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { LocalDate } from '@/components/ui/local-date'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
@@ -16,10 +23,12 @@ import { TrustSection } from './trust-list'
 export function TrustSettingsView({
   enabled,
   config,
+  categories,
   canManage,
 }: {
   enabled: boolean
   config: TrustConfig
+  categories: { id: string; name: string }[]
   canManage: boolean
 }): ReactElement {
   const ids = useId()
@@ -132,6 +141,32 @@ export function TrustSettingsView({
                   onChange={(e) => set('policyLabel', e.target.value)}
                 />
               </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${ids}-faq`}>FAQ</Label>
+              <Select
+                value={draft.faqCategoryId ?? ''}
+                onValueChange={(value) => set('faqCategoryId', value ? String(value) : null)}
+              >
+                <SelectTrigger
+                  id={`${ids}-faq`}
+                  className="w-full sm:w-80"
+                  aria-describedby={`${ids}-faq-hint`}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">No FAQ</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p id={`${ids}-faq-hint`} className="text-xs text-muted-foreground">
+                The FAQ tab lists the published articles of this Help Center category.
+              </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-sm text-foreground">

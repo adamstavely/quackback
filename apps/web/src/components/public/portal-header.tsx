@@ -46,6 +46,8 @@ import { NotificationBell } from '@/components/notifications'
 import { useSessionContext, useWorkspaceSettings } from '@/lib/client/hooks/use-root-context'
 // FORK-SEAM(T-17): the logo links home, and home is the help hub.
 import { PORTAL_HOME_PATH } from '@/lib/shared/fork/portal-home'
+// FORK-SEAM(T-19): nav links to this portal render as in-app tabs.
+import { PortalLinkTab } from '@/components/fork/portal/portal-link-tab'
 
 interface PortalHeaderProps {
   orgName: string
@@ -365,15 +367,22 @@ function Navigation({
       {navItems.map((item) => {
         if (item.kind === 'link') {
           return (
-            <a
+            // FORK-SEAM(T-19): a link to this portal is an in-app tab (plan 70 §6).
+            <PortalLinkTab
               key={item.id}
               href={item.href}
-              target={item.newTab ? '_blank' : undefined}
-              rel="noopener noreferrer"
-              className={navItemClass(false)}
+              label={item.label}
+              className={navItemClass}
             >
-              {item.label}
-            </a>
+              <a
+                href={item.href}
+                target={item.newTab ? '_blank' : undefined}
+                rel="noopener noreferrer"
+                className={navItemClass(false)}
+              >
+                {item.label}
+              </a>
+            </PortalLinkTab>
           )
         }
         return (
