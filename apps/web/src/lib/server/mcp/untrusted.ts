@@ -39,6 +39,8 @@
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ActivityType } from '@/lib/shared/types/activity'
+// FORK-SEAM(T-21)
+import { FORK_MCP_UNTRUSTED_TOOL_FIELDS } from '@/lib/server/fork/mcp/tool-scopes'
 
 type JsonObject = Record<string, unknown>
 
@@ -309,6 +311,8 @@ export const UNTRUSTED_TOOL_FIELDS = {
   get_settings: NONE,
   update_settings: NONE,
   navigate_workspace: NONE,
+  // FORK-SEAM(T-21): the fork's MCP tools.
+  ...FORK_MCP_UNTRUSTED_TOOL_FIELDS,
 } satisfies Record<string, UntrustedSpec>
 
 export type McpToolName = keyof typeof UNTRUSTED_TOOL_FIELDS

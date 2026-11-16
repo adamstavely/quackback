@@ -10,7 +10,11 @@ import {
 import { and, asc, db, eq, inArray, sql, type Transaction } from '@/lib/server/db'
 import { recordAuditEventInTransaction, type AuditActor } from '@/lib/server/audit/log'
 import type { ForkAuditEventType } from '@/lib/server/fork/audit-events'
-import { forgetForkFeatures, forkFeatures } from '@/lib/server/fork/settings/features'
+import {
+  forgetForkFeatures,
+  forkFeatures,
+  setForkFeature,
+} from '@/lib/server/fork/settings/features'
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/shared/errors'
 import type { TrustConfig, TrustEntity, TrustItem } from '@/lib/shared/fork/trust/schema'
 import type {
@@ -23,6 +27,7 @@ import type {
   TrustSubprocessor,
 } from '@/lib/shared/fork/trust/types'
 import { trustConfig } from './settings'
+import { queueTrustFileRemoval, runTrustStorageCleanup } from './storage-cleanup'
 
 /**
  * Admin writes for the Trust & Security page (plans/v2/70-trust-security.md).
@@ -181,14 +186,32 @@ async function fieldsFor(tx: Transaction, input: TrustItem): Promise<Record<stri
       }
     case 'controlGroup':
       return { name: values.name, description: values.description }
-    case 'control':
+    case 'control': {
       await assertExists(tx, 'controlGroup', values.groupId, 'That control group no longer exists')
+      const externalId = values.externalId ?? null
+      if (externalId) {
+        const [taken] = await tx
+          .select({ id: forkTrustControls.id })
+          .from(forkTrustControls)
+          .where(eq(forkTrustControls.externalId, externalId))
+          .limit(1)
+        if (taken && taken.id !== values.id) {
+          throw new ConflictError(
+            'TRUST_EXTERNAL_ID_TAKEN',
+            'Another control already uses that integration ID'
+          )
+        }
+      }
       return {
         groupId: values.groupId,
         name: values.name,
         description: values.description,
         status: values.status,
+        // An integration ID hands the status to the tool that feeds it (phase 5).
+        externalId,
+        source: externalId ? 'integration' : 'manual',
       }
+    }
     case 'subprocessor':
       return {
         name: values.name,
@@ -291,8 +314,13 @@ export async function deleteTrustItem(
     }
     // A control group takes its controls with it (the confirmation says so).
     await tx.delete(t).where(eq(t.id, id))
+    // A document's file goes too, after commit (review 2026-11-15, finding 5).
+    if (entity === 'document' && before.storageKey) {
+      await queueTrustFileRemoval(tx, before.storageKey as string, 'document deleted')
+    }
     await audit(tx, writer, 'fork_trust.deleted', { type: TARGETS[entity], id }, dto(before), null)
   })
+  if (entity === 'document') void runTrustStorageCleanup()
 }
 
 /**
@@ -368,8 +396,7 @@ export async function updateTrustConfig(
 /** Turning the page on or off is a workspace setting, like announcements. */
 export async function setTrustEnabled(writer: TrustWriter, enabled: boolean): Promise<boolean> {
   const result = await db.transaction(async (tx) => {
-    const before = await forkFeatures.read(tx)
-    const after = await forkFeatures.write({ ...before, trust: enabled }, writer.principalId, tx)
+    const { before, after } = await setForkFeature('trust', enabled, writer.principalId, tx)
     await audit(
       tx,
       writer,

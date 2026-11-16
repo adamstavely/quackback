@@ -61,6 +61,27 @@ function DocumentAction({ doc }: { doc: TrustPageDocument }): ReactElement {
   if (action.kind === 'pending') {
     return <Badge variant="secondary">{t(intl, 'documents.requested', 'Requested')}</Badge>
   }
+  if (action.kind === 'contact') {
+    // Requests need support tickets; without them, point at the security contact.
+    return action.email ? (
+      <a
+        href={`mailto:${action.email}`}
+        className="flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-foreground underline underline-offset-4 outline-none hover:no-underline focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-current"
+        aria-label={t(intl, 'documents.contactFor', 'Email {email} for access to {title}', {
+          email: action.email,
+          title: doc.title,
+        })}
+      >
+        <LockClosedIcon aria-hidden className="size-3.5" />
+        {t(intl, 'documents.contact', 'Ask for access')}
+      </a>
+    ) : (
+      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <LockClosedIcon aria-hidden className="size-3.5" />
+        {t(intl, 'documents.contactTeam', 'Ask the security team for access')}
+      </span>
+    )
+  }
   return (
     <div className="flex shrink-0 items-center gap-2">
       {action.kind === 'declined' ? (

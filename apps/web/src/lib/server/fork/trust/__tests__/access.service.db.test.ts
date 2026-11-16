@@ -13,11 +13,14 @@ import {
   forkTrustDocuments,
 } from '@/lib/server/fork/db'
 
-const tickets = vi.hoisted(() => ({ fail: false, created: 0 }))
+const tickets = vi.hoisted(() => ({ fail: false, created: 0, enabled: true }))
 
 vi.mock('@/lib/server/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/server/db')>()),
   db: (await import('@/lib/server/__tests__/db-test-fixture')).testDb,
+}))
+vi.mock('@/lib/server/domains/settings/settings.support', () => ({
+  isSupportTicketsEnabled: async () => tickets.enabled,
 }))
 vi.mock('@/lib/server/domains/tickets/requester.service', () => ({
   createMyTicket: async () => {
@@ -52,6 +55,7 @@ if (fixture.available) {
   beforeEach(async () => {
     tickets.fail = false
     tickets.created = 0
+    tickets.enabled = true
     await fixture.begin()
     await clearTrustTables()
   })
@@ -110,13 +114,37 @@ describe.skipIf(!fixture.available)('trust access requests (real Postgres)', () 
     expect(states.get(d.id)).toEqual({ state: 'pending' })
   })
 
-  it('keeps the request when the support request cannot be opened', async () => {
+  // Review 2026-11-15, finding 4.
+  it('says so when the support request cannot be opened, and repairs it on a retry', async () => {
     tickets.fail = true
     const requester = await person()
     const d = await doc('restricted')
-    await access.requestDocumentAccess(requester, d.id, null)
+    await expect(access.requestDocumentAccess(requester, d.id, null)).rejects.toThrow(
+      'could not send your request'
+    )
     const [row] = await testDb.select().from(forkTrustAccessRequests)
     expect(row).toMatchObject({ state: 'pending', ticketId: null })
+
+    tickets.fail = false
+    await access.requestDocumentAccess(requester, d.id, null)
+    const rows = await testDb.select().from(forkTrustAccessRequests)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ id: row!.id, state: 'pending', ticketId: 'ticket_1' })
+    await expect(access.requestDocumentAccess(requester, d.id, null)).rejects.toThrow(
+      'already waiting'
+    )
+    expect(tickets.created).toBe(1)
+  })
+
+  it('refuses requests while support tickets are off, pointing at the contact', async () => {
+    tickets.enabled = false
+    const requester = await person()
+    const d = await doc('restricted')
+    await expect(access.requestDocumentAccess(requester, d.id, null)).rejects.toThrow(
+      'not available'
+    )
+    expect(await testDb.select().from(forkTrustAccessRequests)).toHaveLength(0)
+    expect(tickets.created).toBe(0)
   })
 
   it('refuses requests for open documents and documents without a file', async () => {

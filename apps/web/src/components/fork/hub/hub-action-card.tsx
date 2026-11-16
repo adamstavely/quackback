@@ -13,6 +13,8 @@ interface HubActionCardProps {
   to: string
   /** The hub's single filled action; the rest are outlined. */
   primary?: boolean
+  /** Grid placement on the hub; the card fills its cell. */
+  className?: string
 }
 
 /**
@@ -29,10 +31,11 @@ export function HubActionCard({
   cta,
   to,
   primary = false,
+  className,
 }: HubActionCardProps): ReactElement {
   return (
-    <Card>
-      <CardContent className="flex flex-wrap items-center gap-4 p-6">
+    <Card className={className}>
+      <CardContent className="flex flex-1 flex-wrap items-center gap-4 p-6">
         <span className="flex size-12 shrink-0 items-center justify-center rounded-[var(--radius)] bg-primary/10">
           <Icon aria-hidden className="size-6 text-primary" />
         </span>

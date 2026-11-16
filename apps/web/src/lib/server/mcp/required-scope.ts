@@ -5,6 +5,8 @@
  */
 import { getTypeIdPrefix } from '@quackback/ids'
 import type { McpScope } from './types'
+// FORK-SEAM(T-21)
+import { FORK_MCP_TOOL_SCOPES } from '@/lib/server/fork/mcp/tool-scopes'
 
 export const TOOL_SCOPES: Readonly<Record<string, McpScope>> = {
   triage_post: 'write:feedback',
@@ -47,6 +49,8 @@ export const TOOL_SCOPES: Readonly<Record<string, McpScope>> = {
   widget_install_status: 'read:feedback',
   get_settings: 'read:settings',
   update_settings: 'write:settings',
+  // FORK-SEAM(T-21): the fork's MCP tools.
+  ...FORK_MCP_TOOL_SCOPES,
 }
 
 export const RESOURCE_SCOPES: Readonly<Record<string, McpScope>> = {

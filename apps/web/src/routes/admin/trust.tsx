@@ -8,6 +8,7 @@ export const TRUST_VIEWS = [
   'documents',
   'controls',
   'subprocessors',
+  'updates',
   'access',
 ] as const
 

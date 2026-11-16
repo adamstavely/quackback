@@ -45,6 +45,8 @@ import { registerFileTools } from './files'
 import { registerWidgetTools } from './widget'
 import { registerSettingsTools } from './settings'
 import { registerNavigationTools } from './navigation'
+// FORK-SEAM(T-21): the fork's MCP tools (plans/v2/70 phase 5).
+import { registerForkTools } from '@/lib/server/fork/mcp/tools'
 
 export function registerTools(server: McpServer, auth: McpAuthContext) {
   registerSearchTools(server, auth)
@@ -59,4 +61,6 @@ export function registerTools(server: McpServer, auth: McpAuthContext) {
   registerWidgetTools(server, auth)
   registerSettingsTools(server, auth)
   registerNavigationTools(server, auth)
+  // FORK-SEAM(T-21)
+  registerForkTools(server, auth)
 }
