@@ -2,3 +2,4 @@
 // created by the fork migration lineage in `packages/db/drizzle-fork`.
 export * from './settings'
 export * from './announcements'
+export * from './trust'

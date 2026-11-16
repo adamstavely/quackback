@@ -100,10 +100,13 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 | status_page.publish | status_page | ✓ | ✓ |
 | announcement.view | status_page | ✓ | ✓ |
 | announcement.manage | status_page | ✓ | ✓ |
+| trust.view | help_center | ✓ | ✓ |
+| trust.manage | help_center | ✓ | ✓ |
+| trust.approve | help_center | ✓ | ✓ |
 
 ## 2. Surfaces and their enforced authorization
 
-### Server functions (`requireAuth`) — 768 surfaces
+### Server functions (`requireAuth`) — 774 surfaces
 
 | Surface | Enforces |
 | --- | --- |
@@ -436,6 +439,12 @@ Profiles: **Owner** = admin class + an admin-owned full API key (scoped keys hol
 | `lib/server/functions/fork/announcements.ts`::updateAnnouncementsConfigFn | announcement.manage |
 | `lib/server/functions/fork/announcements.ts`::saveAnnouncementTemplatesFn | announcement.manage |
 | `lib/server/functions/fork/announcements.ts`::setAnnouncementsEnabledFn | settings.manage |
+| `lib/server/functions/fork/trust.ts`::getTrustAdminFn | trust.view |
+| `lib/server/functions/fork/trust.ts`::saveTrustItemFn | trust.manage |
+| `lib/server/functions/fork/trust.ts`::deleteTrustItemFn | trust.manage |
+| `lib/server/functions/fork/trust.ts`::reorderTrustItemsFn | trust.manage |
+| `lib/server/functions/fork/trust.ts`::updateTrustConfigFn | trust.manage |
+| `lib/server/functions/fork/trust.ts`::setTrustEnabledFn | settings.manage |
 | `lib/server/functions/github-star-prompt.ts`::getStarPromptFn | member.view |
 | `lib/server/functions/github-star-prompt.ts`::markStarPromptShownFn | member.view |
 | `lib/server/functions/going-live.ts`::getMessengerInstallStatusFn | settings.manage |
@@ -1092,7 +1101,7 @@ Key scopes are enforced: an API key holds exactly its stored scopes (owner permi
 
 ## 4. Entry points without a requireAuth/key gate
 
-234 of 1112 entry points hold no `requireAuth` / `withApiKeyAuth` / `requireTeamAuth` gate.
+234 of 1118 entry points hold no `requireAuth` / `withApiKeyAuth` / `requireTeamAuth` gate.
 Each is expected to be intentionally public, a pre-auth flow, a signature-verified webhook, or a handler that delegates auth (e.g. the MCP route).
 **Adding a row here is an access-control change** — confirm the new entry point is meant to be reachable without a gate.
 
