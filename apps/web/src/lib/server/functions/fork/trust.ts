@@ -18,7 +18,7 @@ import {
   updateTrustConfig,
   type TrustWriter,
 } from '@/lib/server/fork/trust/trust.service'
-import { requireAuth, type AuthContext } from '../auth-helpers'
+import { policyActorFromAuth, requireAuth, type AuthContext } from '../auth-helpers'
 
 /**
  * Admin server functions for the Trust & Security page
@@ -74,4 +74,28 @@ export const setTrustEnabledFn = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const auth = await requireAuth({ permission: PERMISSIONS.SETTINGS_MANAGE })
     return setTrustEnabled(writerFrom(auth), data.enabled)
+  })
+
+/** Every access request, newest first (`trust.view`). */
+export const listTrustAccessRequestsFn = createServerFn({ method: 'GET' }).handler(async () => {
+  await requireAuth({ permission: PERMISSIONS.TRUST_VIEW })
+  const { listAccessRequests } = await import('@/lib/server/fork/trust/access.service')
+  return listAccessRequests()
+})
+
+/** Approve, decline or revoke a request for a restricted document (`trust.approve`). */
+export const decideTrustAccessRequestFn = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      id: z.string().uuid(),
+      decision: z.enum(['approve', 'decline', 'revoke']),
+      days: z.number().int().min(1).max(365).optional(),
+      note: z.string().trim().max(500).optional(),
+    })
+  )
+  .handler(async ({ data }) => {
+    const auth = await requireAuth({ permission: PERMISSIONS.TRUST_APPROVE })
+    const { decideAccessRequest } = await import('@/lib/server/fork/trust/access.service')
+    const actor = await policyActorFromAuth(auth)
+    await decideAccessRequest({ ...writerFrom(auth), actor }, data.id, data)
   })

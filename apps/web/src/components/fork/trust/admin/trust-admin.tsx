@@ -6,6 +6,7 @@ import {
   CheckBadgeIcon,
   Cog6ToothIcon,
   DocumentTextIcon,
+  KeyIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/solid'
 import { AdminFilterLayout } from '@/components/admin/admin-filter-layout'
@@ -17,6 +18,7 @@ import { trustQueries } from '@/lib/client/fork/trust'
 import { PERMISSIONS } from '@/lib/shared/permissions'
 import { cn } from '@/lib/shared/utils'
 import { Route, type TRUST_VIEWS } from '@/routes/admin/trust'
+import { TrustAccessView } from './trust-access-view'
 import { TrustSettingsView } from './trust-settings-view'
 import { ComplianceView, ControlsView, DocumentsView, SubprocessorsView } from './trust-views'
 
@@ -72,6 +74,8 @@ export function TrustAdmin(): ReactElement {
   const canView = usePermission(PERMISSIONS.TRUST_VIEW)
   const canManage = usePermission(PERMISSIONS.TRUST_MANAGE)
   const { data, isLoading } = useQuery({ ...trustQueries.admin(), enabled: canView })
+  const { data: requests } = useQuery({ ...trustQueries.accessRequests(), enabled: canView })
+  const pendingRequests = requests?.filter((r) => r.state === 'pending').length
 
   if (!canView) {
     return (
@@ -129,6 +133,13 @@ export function TrustAdmin(): ReactElement {
           </NavItem>
         </div>
       </FilterSection>
+      <FilterSection title="Requests">
+        <div className="space-y-1">
+          <NavItem view="access" current={view} icon={KeyIcon} count={pendingRequests}>
+            Access requests
+          </NavItem>
+        </div>
+      </FilterSection>
     </nav>
   )
 
@@ -150,6 +161,7 @@ export function TrustAdmin(): ReactElement {
             {view === 'compliance' ? <ComplianceView data={data} canManage={canManage} /> : null}
             {view === 'documents' ? <DocumentsView data={data} canManage={canManage} /> : null}
             {view === 'controls' ? <ControlsView data={data} canManage={canManage} /> : null}
+            {view === 'access' ? <TrustAccessView grantDays={data.config.grantDays} /> : null}
             {view === 'subprocessors' ? (
               <SubprocessorsView data={data} canManage={canManage} />
             ) : null}

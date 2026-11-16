@@ -8,6 +8,7 @@ export const TRUST_VIEWS = [
   'documents',
   'controls',
   'subprocessors',
+  'access',
 ] as const
 
 const searchSchema = z.object({

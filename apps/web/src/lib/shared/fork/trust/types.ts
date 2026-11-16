@@ -62,3 +62,23 @@ export interface TrustAdminData {
   /** Help Center categories the FAQ can come from. */
   helpCenterCategories: { id: string; name: string }[]
 }
+
+/** What one viewer may do with a restricted document (phase 3). */
+export type TrustDocumentAccess =
+  { state: 'granted'; expiresAt: string | null } | { state: 'pending' } | { state: 'declined' }
+
+export interface TrustAccessRequest {
+  id: string
+  documentId: string
+  documentTitle: string
+  requesterName: string
+  requesterEmail: string | null
+  /** `expired` is an approval whose time has run out. */
+  state: 'pending' | 'approved' | 'declined' | 'revoked' | 'expired'
+  reason: string | null
+  decisionNote: string | null
+  ticketId: string | null
+  createdAt: string
+  decidedAt: string | null
+  expiresAt: string | null
+}

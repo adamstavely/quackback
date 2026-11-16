@@ -29,6 +29,13 @@
       "when": 1794714148971,
       "tag": "0003_fork_trust",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794715996250,
+      "tag": "0004_fork_trust_access",
+      "breakpoints": true
     }
   ]
 }

@@ -16,6 +16,7 @@ import { useAuthPopoverSafe } from '@/components/auth/auth-popover-context'
 import type { ControlStatus } from '@/lib/shared/fork/trust/schema'
 import type { TrustPageContent, TrustPageControlGroup } from '@/lib/shared/fork/trust/portal'
 import { cn } from '@/lib/shared/utils'
+import { TrustDocuments, TrustDocumentsCard } from './trust-documents'
 
 /**
  * The portal's Trust & Security page (plans/v2/70-trust-security.md §1; design:
@@ -32,6 +33,12 @@ const t = (
 
 const TABS = [
   { to: '/trust', id: 'tab.overview', label: 'Overview', show: () => true },
+  {
+    to: '/trust/documents',
+    id: 'tab.documents',
+    label: 'Documents',
+    show: (c: TrustPageContent) => c.documentGroups.length > 0,
+  },
   {
     to: '/trust/controls',
     id: 'tab.controls',
@@ -309,8 +316,10 @@ function ComplianceCard({ items }: { items: TrustPageContent['complianceItems'] 
 export function TrustOverview({ content }: { content: TrustPageContent }): ReactElement {
   const intl = useIntl()
   const hasCompliance = content.complianceItems.length > 0
+  const hasDocuments = content.documentGroups.length > 0
+  const hasLeft = hasCompliance || hasDocuments
   const hasControls = content.controlGroups.length > 0
-  if (!hasCompliance && !hasControls) {
+  if (!hasLeft && !hasControls) {
     return (
       <p className={cn(PANEL, 'p-6 text-sm text-muted-foreground')}>
         {t(intl, 'empty', 'Nothing has been published here yet.')}
@@ -321,10 +330,15 @@ export function TrustOverview({ content }: { content: TrustPageContent }): React
     <div
       className={cn(
         'grid grid-cols-1 items-start gap-6',
-        hasCompliance && hasControls && 'lg:grid-cols-[360px_minmax(0,1fr)]'
+        hasLeft && hasControls && 'lg:grid-cols-[360px_minmax(0,1fr)]'
       )}
     >
-      {hasCompliance ? <ComplianceCard items={content.complianceItems} /> : null}
+      {hasLeft ? (
+        <div className="flex flex-col gap-6">
+          {hasCompliance ? <ComplianceCard items={content.complianceItems} /> : null}
+          {hasDocuments ? <TrustDocumentsCard groups={content.documentGroups} /> : null}
+        </div>
+      ) : null}
       {hasControls ? (
         <ControlsPreview groups={content.controlGroups} reviewedAt={content.controlsReviewedAt} />
       ) : null}
@@ -447,4 +461,8 @@ export function TrustFaq({ content }: { content: TrustPageContent }): ReactEleme
       </ul>
     </section>
   )
+}
+
+export function TrustDocumentsTab({ content }: { content: TrustPageContent }): ReactElement {
+  return <TrustDocuments groups={content.documentGroups} />
 }

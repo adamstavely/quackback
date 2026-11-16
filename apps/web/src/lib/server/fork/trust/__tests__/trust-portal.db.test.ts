@@ -17,7 +17,10 @@ const fixture = await createDbTestFixture({
 })
 
 if (fixture.available) {
-  beforeEach(() => fixture.begin())
+  beforeEach(async () => {
+    await fixture.begin()
+    await clearTrustTables()
+  })
   afterEach(() => fixture.rollback())
   afterAll(() => fixture.close())
 }
@@ -49,3 +52,15 @@ describe.skipIf(!fixture.available)('trust page content (real Postgres)', () => 
     expect(content.faq).toEqual([])
   })
 })
+
+/** Start each test from empty trust tables (inside the test's rolled-back transaction). */
+async function clearTrustTables() {
+  const t = await import('@/lib/server/fork/db')
+  await testDb.delete(t.forkTrustComplianceItems)
+  await testDb.delete(t.forkTrustControls)
+  await testDb.delete(t.forkTrustControlGroups)
+  await testDb.delete(t.forkTrustSubprocessors)
+  await testDb.delete(t.forkTrustAccessRequests)
+  await testDb.delete(t.forkTrustDocuments)
+  await testDb.delete(t.forkTrustDocumentGroups)
+}

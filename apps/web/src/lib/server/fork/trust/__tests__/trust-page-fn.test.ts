@@ -7,8 +7,12 @@ const state = vi.hoisted(() => ({
 }))
 
 vi.mock('@tanstack/react-start', () => ({
-  createServerFn: () => ({ handler: (fn: () => unknown) => fn }),
+  createServerFn: () => ({
+    handler: (fn: () => unknown) => fn,
+    validator: () => ({ handler: (fn: () => unknown) => fn }),
+  }),
 }))
+vi.mock('@tanstack/react-start/server', () => ({ getRequestHeaders: () => new Headers() }))
 vi.mock('@/lib/server/fork/settings/features', () => ({
   isForkFeatureEnabled: async () => state.enabled,
 }))
