@@ -10,7 +10,11 @@ import {
 import { and, asc, db, eq, inArray, sql, type Transaction } from '@/lib/server/db'
 import { recordAuditEventInTransaction, type AuditActor } from '@/lib/server/audit/log'
 import type { ForkAuditEventType } from '@/lib/server/fork/audit-events'
-import { forgetForkFeatures, forkFeatures } from '@/lib/server/fork/settings/features'
+import {
+  forgetForkFeatures,
+  forkFeatures,
+  setForkFeature,
+} from '@/lib/server/fork/settings/features'
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/shared/errors'
 import type { TrustConfig, TrustEntity, TrustItem } from '@/lib/shared/fork/trust/schema'
 import type {
@@ -386,8 +390,7 @@ export async function updateTrustConfig(
 /** Turning the page on or off is a workspace setting, like announcements. */
 export async function setTrustEnabled(writer: TrustWriter, enabled: boolean): Promise<boolean> {
   const result = await db.transaction(async (tx) => {
-    const before = await forkFeatures.read(tx)
-    const after = await forkFeatures.write({ ...before, trust: enabled }, writer.principalId, tx)
+    const { before, after } = await setForkFeature('trust', enabled, writer.principalId, tx)
     await audit(
       tx,
       writer,
