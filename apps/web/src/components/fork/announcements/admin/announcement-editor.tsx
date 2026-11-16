@@ -331,7 +331,7 @@ export function AnnouncementEditor({
               <RadioGroup
                 value={kind}
                 onValueChange={(v) => setKind(v as AnnouncementKind)}
-                className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
+                className="grid grid-cols-2 gap-2 sm:grid-cols-3"
               >
                 {ANNOUNCEMENT_KINDS.map((k) => {
                   const Icon = KIND_STYLES[k].icon
