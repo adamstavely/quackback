@@ -43,6 +43,13 @@
       "when": 1794718000000,
       "tag": "0005_fork_trust_updates",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794780000000,
+      "tag": "0006_fork_trust_update_deliveries",
+      "breakpoints": true
     }
   ]
 }

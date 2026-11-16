@@ -116,15 +116,23 @@ export const saveTrustUpdateFn = createServerFn({ method: 'POST' })
     return saveTrustUpdate(writerFrom(auth), data)
   })
 
-/** Publish, unpublish or delete an update. The first publish tells subscribers. */
+/** Publish, unpublish, delete, or retry the notices of an update. The first publish tells subscribers. */
 export const changeTrustUpdateFn = createServerFn({ method: 'POST' })
   .validator(
-    z.object({ id: z.string().uuid(), action: z.enum(['publish', 'unpublish', 'delete']) })
+    z.object({
+      id: z.string().uuid(),
+      action: z.enum(['publish', 'unpublish', 'delete', 'retry']),
+    })
   )
   .handler(async ({ data }) => {
     const auth = await requireAuth({ permission: PERMISSIONS.TRUST_MANAGE })
     const service = await import('@/lib/server/fork/trust/updates.service')
     const writer = writerFrom(auth)
+    if (data.action === 'retry') {
+      // Failed and stalled notices go out again in the background.
+      await service.retryTrustUpdateDeliveries(data.id)
+      return { notifying: true }
+    }
     if (data.action === 'publish') {
       // Delivery runs on after the response; the admin sees the update live at once.
       const { notified } = await service.publishTrustUpdate(writer, data.id)
