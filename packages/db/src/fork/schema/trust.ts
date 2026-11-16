@@ -291,3 +291,24 @@ export const forkTrustUpdateDeliveries = pgTable(
     ),
   ]
 )
+
+/**
+ * Trust files waiting to be removed from storage (review 2026-11-15, finding
+ * 5). A key is queued in the same transaction that stops using it (a deleted
+ * document, a replaced file) and removed after commit; a failure stays here
+ * with its error, so an orphaned key is always findable and retried. The
+ * private `fork-trust/` prefix is outside upstream's file retention, so
+ * nothing else would ever clean it up.
+ */
+export const forkTrustStorageCleanup = pgTable(
+  'fork_trust_storage_cleanup',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    storageKey: text('storage_key').notNull(),
+    reason: text('reason').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('fork_trust_storage_cleanup_key_uq').on(t.storageKey)]
+)

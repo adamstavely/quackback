@@ -27,6 +27,7 @@ import type {
   TrustSubprocessor,
 } from '@/lib/shared/fork/trust/types'
 import { trustConfig } from './settings'
+import { queueTrustFileRemoval, runTrustStorageCleanup } from './storage-cleanup'
 
 /**
  * Admin writes for the Trust & Security page (plans/v2/70-trust-security.md).
@@ -313,8 +314,13 @@ export async function deleteTrustItem(
     }
     // A control group takes its controls with it (the confirmation says so).
     await tx.delete(t).where(eq(t.id, id))
+    // A document's file goes too, after commit (review 2026-11-15, finding 5).
+    if (entity === 'document' && before.storageKey) {
+      await queueTrustFileRemoval(tx, before.storageKey as string, 'document deleted')
+    }
     await audit(tx, writer, 'fork_trust.deleted', { type: TARGETS[entity], id }, dto(before), null)
   })
+  if (entity === 'document') void runTrustStorageCleanup()
 }
 
 /**
