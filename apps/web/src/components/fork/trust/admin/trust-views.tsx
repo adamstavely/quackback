@@ -579,7 +579,8 @@ export function DocumentsView({
                 ),
                 actions: (
                   <>
-                    {d.fileName ? (
+                    {/* Downloading a restricted file is trust.manage, not view (plan 70 §5). */}
+                    {d.fileName && canManage ? (
                       <a
                         href={trustDocumentHref(d.id)}
                         className="text-xs font-medium text-foreground underline underline-offset-4 hover:no-underline"

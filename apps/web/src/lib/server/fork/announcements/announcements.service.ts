@@ -3,7 +3,11 @@ import { forkAnnouncements } from '@/lib/server/fork/db'
 import { db, desc, eq, sql, type Transaction } from '@/lib/server/db'
 import { recordAuditEventInTransaction, type AuditActor } from '@/lib/server/audit/log'
 import type { ForkAuditEventType } from '@/lib/server/fork/audit-events'
-import { forgetForkFeatures, forkFeatures } from '@/lib/server/fork/settings/features'
+import {
+  forgetForkFeatures,
+  forkFeatures,
+  setForkFeature,
+} from '@/lib/server/fork/settings/features'
 import { ConflictError, NotFoundError } from '@/lib/shared/errors'
 import type { Announcement } from '@/lib/shared/fork/announcements/types'
 import type {
@@ -195,12 +199,7 @@ export async function setAnnouncementsEnabled(
   enabled: boolean
 ): Promise<boolean> {
   const result = await write(async (tx) => {
-    const before = await forkFeatures.read(tx)
-    const after = await forkFeatures.write(
-      { ...before, announcements: enabled },
-      writer.principalId,
-      tx
-    )
+    const { before, after } = await setForkFeature('announcements', enabled, writer.principalId, tx)
     await audit(
       tx,
       writer,

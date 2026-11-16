@@ -1,11 +1,22 @@
 import type { PrincipalId, TicketId, TicketTypeId } from '@quackback/ids'
 import { forkTrustAccessRequests, forkTrustDocuments } from '@/lib/server/fork/db'
-import { and, db, desc, eq, gt, inArray, principal, user, type Transaction } from '@/lib/server/db'
+import {
+  and,
+  db,
+  desc,
+  eq,
+  gt,
+  inArray,
+  principal,
+  sql,
+  user,
+  type Transaction,
+} from '@/lib/server/db'
 import { recordAuditEventInTransaction } from '@/lib/server/audit/log'
 import type { ForkAuditEventType } from '@/lib/server/fork/audit-events'
 import { logger } from '@/lib/server/logger'
 import type { Actor } from '@/lib/server/policy/types'
-import { ConflictError, NotFoundError, ValidationError } from '@/lib/shared/errors'
+import { ConflictError, InternalError, NotFoundError, ValidationError } from '@/lib/shared/errors'
 import type { TrustAccessRequest, TrustDocumentAccess } from '@/lib/shared/fork/trust/types'
 import { trustConfig } from './settings'
 import type { TrustWriter } from './trust.service'
@@ -117,16 +128,33 @@ async function accessTicketType(): Promise<TicketTypeId> {
 }
 
 /**
- * A signed-in person asks for a restricted document. One open request per
- * person per document. The support request is best effort: if support tickets
- * are off, or opening one fails, the request still reaches the admin's Access
- * requests list.
+ * A signed-in person asks for a restricted document (D-TS3). A request is a
+ * row plus a private support request in the team's inbox, so it needs support
+ * tickets on; when they are off the portal shows the security contact instead
+ * and this refuses (review 2026-11-15, finding 4).
+ *
+ * One open request per person per document. The support request cannot share
+ * the row's transaction, so the pair is made recoverable instead: if opening
+ * it fails the caller is told, the row stays pending (admins still see it in
+ * Access requests), and asking again repairs that row rather than being
+ * refused. The ticket carries the request id, so a repair after a ticket was
+ * opened but not linked reuses it rather than opening a second one.
  */
 export async function requestDocumentAccess(
   requester: TrustWriter & { actor: Actor },
   documentId: string,
   reason: string | null
 ): Promise<void> {
+  const { isSupportTicketsEnabled } = await import('@/lib/server/domains/settings/settings.support')
+  if (!(await isSupportTicketsEnabled())) {
+    const { contactEmail } = await trustConfig.read()
+    throw new ValidationError(
+      'TRUST_REQUESTS_OFF',
+      contactEmail
+        ? `Requests are not available here. Contact ${contactEmail} for access.`
+        : 'Requests are not available here. Contact the security team for access.'
+    )
+  }
   const [doc] = await db
     .select()
     .from(forkTrustDocuments)
@@ -142,53 +170,97 @@ export async function requestDocumentAccess(
     throw new ConflictError('TRUST_ACCESS_GRANTED', 'You already have access to this document')
   }
 
-  let row: Row
-  try {
-    row = await db.transaction(async (tx) => {
-      const [created] = await tx
-        .insert(forkTrustAccessRequests)
-        .values({ documentId, requesterPrincipalId: requester.principalId, reason })
-        .returning()
-      await audit(tx, requester, 'fork_trust.access_requested', created!.id, null, {
-        documentId,
-        reason,
-      })
-      return created!
-    })
-  } catch (error) {
-    const code =
-      (error as { code?: string }).code ?? (error as { cause?: { code?: string } }).cause?.code
-    if (code === '23505') {
-      throw new ConflictError(
-        'TRUST_ACCESS_PENDING',
-        'Your request is already waiting for a decision'
-      )
-    }
-    throw error
+  const row = (await pendingRequest(requester.principalId, documentId)) ?? (await insertRequest())
+  if (row.ticketId) {
+    throw new ConflictError(
+      'TRUST_ACCESS_PENDING',
+      'Your request is already waiting for a decision'
+    )
   }
+  await ensureTicket(requester, row, doc.title, reason)
 
+  async function insertRequest(): Promise<Row> {
+    try {
+      return await db.transaction(async (tx) => {
+        const [created] = await tx
+          .insert(forkTrustAccessRequests)
+          .values({ documentId, requesterPrincipalId: requester.principalId, reason })
+          .returning()
+        await audit(tx, requester, 'fork_trust.access_requested', created!.id, null, {
+          documentId,
+          reason,
+        })
+        return created!
+      })
+    } catch (error) {
+      const code =
+        (error as { code?: string }).code ?? (error as { cause?: { code?: string } }).cause?.code
+      // A second tab got there first: carry on with its row.
+      const raced = code === '23505' && (await pendingRequest(requester.principalId, documentId))
+      if (raced) return raced
+      throw error
+    }
+  }
+}
+
+async function pendingRequest(principalId: PrincipalId, documentId: string): Promise<Row | null> {
+  const [row] = await db
+    .select()
+    .from(forkTrustAccessRequests)
+    .where(
+      and(
+        eq(forkTrustAccessRequests.requesterPrincipalId, principalId),
+        eq(forkTrustAccessRequests.documentId, documentId),
+        eq(forkTrustAccessRequests.state, 'pending')
+      )
+    )
+    .limit(1)
+  return row ?? null
+}
+
+/** Open (or find) the request's support ticket and link it; throws if that fails. */
+async function ensureTicket(
+  requester: TrustWriter & { actor: Actor },
+  row: Row,
+  documentTitle: string,
+  reason: string | null
+): Promise<void> {
   try {
-    const { createMyTicket } = await import('@/lib/server/domains/tickets/requester.service')
-    const ticket = await createMyTicket(requester.actor, {
-      title: `Access request: ${doc.title}`,
-      description: [
-        `Requested access to the restricted document "${doc.title}" on the Trust & Security page.`,
-        reason ? `Reason: ${reason}` : null,
-        'Approve or decline it in Admin › Trust & Security › Access requests.',
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
-      ticketTypeId: await accessTicketType(),
-      customAttributes: { forkTrustAccessRequestId: row.id, documentId },
-    })
+    const { tickets } = await import('@/lib/server/db')
+    const [existing] = await db
+      .select({ id: tickets.id })
+      .from(tickets)
+      .where(sql`${tickets.customAttributes} ->> 'forkTrustAccessRequestId' = ${row.id}`)
+      .limit(1)
+    let ticketId = existing?.id as TicketId | undefined
+    if (!ticketId) {
+      const { createMyTicket } = await import('@/lib/server/domains/tickets/requester.service')
+      const ticket = await createMyTicket(requester.actor, {
+        title: `Access request: ${documentTitle}`,
+        description: [
+          `Requested access to the restricted document "${documentTitle}" on the Trust & Security page.`,
+          reason ? `Reason: ${reason}` : null,
+          'Approve or decline it in Admin › Trust & Security › Access requests.',
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+        ticketTypeId: await accessTicketType(),
+        customAttributes: { forkTrustAccessRequestId: row.id, documentId: row.documentId },
+      })
+      ticketId = ticket.id as TicketId
+    }
     await db
       .update(forkTrustAccessRequests)
-      .set({ ticketId: ticket.id })
+      .set({ ticketId, updatedAt: new Date() })
       .where(eq(forkTrustAccessRequests.id, row.id))
   } catch (error) {
     log.warn(
       { err: error, requestId: row.id },
-      'trust access request saved without a support ticket'
+      'trust access request could not open a support ticket'
+    )
+    throw new InternalError(
+      'TRUST_TICKET_FAILED',
+      'We could not send your request just now. Please try again.'
     )
   }
 }

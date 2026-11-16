@@ -254,3 +254,61 @@ export const forkTrustSubscriptions = pgTable(
   },
   (t) => [uniqueIndex('fork_trust_subscriptions_principal_uq').on(t.principalId)]
 )
+
+/**
+ * One row per subscriber per channel for each published update (review
+ * 2026-11-15, finding 3). Written in the same transaction as the first
+ * publish, then worked off: a sender claims rows with `FOR UPDATE SKIP LOCKED`,
+ * so two senders never take the same row, and a failure stays visible and
+ * retryable rather than lost. `sending` rows older than the lease are
+ * reclaimed after a crash; the email's idempotency key is the row id.
+ */
+export const forkTrustUpdateDeliveries = pgTable(
+  'fork_trust_update_deliveries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    updateId: uuid('update_id')
+      .notNull()
+      .references(() => forkTrustUpdates.id, { onDelete: 'cascade' }),
+    principalId: typeIdColumn('principal')('principal_id')
+      .notNull()
+      .references(() => principal.id, { onDelete: 'cascade' }),
+    channel: text('channel').notNull(),
+    state: text('state').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('fork_trust_update_deliveries_uq').on(t.updateId, t.principalId, t.channel),
+    index('fork_trust_update_deliveries_state_idx').on(t.updateId, t.state),
+    check('fork_trust_update_deliveries_channel_check', sql`${t.channel} IN ('in_app', 'email')`),
+    check(
+      'fork_trust_update_deliveries_state_check',
+      sql`${t.state} IN ('pending', 'sending', 'sent', 'failed', 'skipped')`
+    ),
+  ]
+)
+
+/**
+ * Trust files waiting to be removed from storage (review 2026-11-15, finding
+ * 5). A key is queued in the same transaction that stops using it (a deleted
+ * document, a replaced file) and removed after commit; a failure stays here
+ * with its error, so an orphaned key is always findable and retried. The
+ * private `fork-trust/` prefix is outside upstream's file retention, so
+ * nothing else would ever clean it up.
+ */
+export const forkTrustStorageCleanup = pgTable(
+  'fork_trust_storage_cleanup',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    storageKey: text('storage_key').notNull(),
+    reason: text('reason').notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('fork_trust_storage_cleanup_key_uq').on(t.storageKey)]
+)

@@ -8,6 +8,10 @@ import {
   forkTrustDocuments,
 } from '@/lib/server/fork/db'
 
+const support = vi.hoisted(() => ({ tickets: true }))
+vi.mock('@/lib/server/domains/settings/settings.support', () => ({
+  isSupportTicketsEnabled: async () => support.tickets,
+}))
 vi.mock('@/lib/server/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/server/db')>()),
   db: (await import('@/lib/server/__tests__/db-test-fixture')).testDb,
@@ -76,6 +80,52 @@ describe.skipIf(!fixture.available)('trust hub summary (real Postgres)', () => {
 
     const summary = await buildTrustHubSummary()
     expect(summary).toMatchObject({ controlsInPlace: 2, controlsTotal: 3, documents: 1 })
+  })
+})
+
+describe.skipIf(!fixture.available)('trust page documents (real Postgres)', () => {
+  // Review 2026-11-15, finding 1: only trust.manage downloads a restricted
+  // document outright; trust.view (Contributors) asks like everyone else.
+  it('offers a restricted document to trust.manage, and a request to trust.view', async () => {
+    const [docs] = await testDb.insert(forkTrustDocumentGroups).values({ name: 'R' }).returning()
+    await testDb.insert(forkTrustDocuments).values({
+      groupId: docs!.id,
+      title: 'SOC 2',
+      access: 'restricted',
+      published: true,
+      storageKey: 'fork-trust/a.pdf',
+    })
+    const actionFor = async (keys: string[]) => {
+      const content = await buildTrustPageContent({
+        principalId: null,
+        permissions: new Set(keys),
+      } as never)
+      return content.documentGroups[0]!.documents[0]!.action.kind
+    }
+    expect(await actionFor(['trust.view', 'trust.approve'])).toBe('request')
+    expect(await actionFor(['trust.manage'])).toBe('download')
+  })
+
+  // Review 2026-11-15, finding 4: requests ride on support tickets.
+  it('points at the security contact instead of a request while support tickets are off', async () => {
+    support.tickets = false
+    try {
+      const [docs] = await testDb.insert(forkTrustDocumentGroups).values({ name: 'R' }).returning()
+      await testDb.insert(forkTrustDocuments).values({
+        groupId: docs!.id,
+        title: 'SOC 2',
+        access: 'restricted',
+        published: true,
+        storageKey: 'fork-trust/a.pdf',
+      })
+      const content = await buildTrustPageContent({ principalId: null } as never)
+      expect(content.documentGroups[0]!.documents[0]!.action).toEqual({
+        kind: 'contact',
+        email: null,
+      })
+    } finally {
+      support.tickets = true
+    }
   })
 })
 

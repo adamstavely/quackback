@@ -7,9 +7,17 @@ import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vites
 import { createId, type PrincipalId, type UserId } from '@quackback/ids'
 import { createDbTestFixture, testDb } from '@/lib/server/__tests__/db-test-fixture'
 import { auditLog, eq, inAppNotifications, principal, user } from '@/lib/server/db'
-import { forkTrustSubscriptions, forkTrustUpdates } from '@/lib/server/fork/db'
+import {
+  forkTrustSubscriptions,
+  forkTrustUpdateDeliveries,
+  forkTrustUpdates,
+} from '@/lib/server/fork/db'
 
-const mail = vi.hoisted(() => ({ sent: [] as { to: string; subject: string; html: string }[] }))
+const mail = vi.hoisted(() => ({
+  sent: [] as { to: string; subject: string; html: string }[],
+  keys: [] as string[],
+  down: false,
+}))
 
 vi.mock('@/lib/server/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/server/db')>()),
@@ -19,8 +27,13 @@ vi.mock('@quackback/email', () => ({
   isEmailConfigured: () => true,
   getEmailFrom: () => 'Acme <noreply@example.com>',
   sendRawEmail: async (options: { to: string; subject: string; html: string }) => {
+    if (mail.down) throw new Error('mail provider unavailable')
     mail.sent.push(options)
     return { sent: true }
+  },
+  withEmailIdempotencyKey: (key: string, fn: () => unknown) => {
+    mail.keys.push(key)
+    return fn()
   },
 }))
 vi.mock('@/lib/server/domains/channel-accounts/outbound-identity', () => ({
@@ -45,6 +58,8 @@ const fixture = await createDbTestFixture({
 if (fixture.available) {
   beforeEach(async () => {
     mail.sent = []
+    mail.keys = []
+    mail.down = false
     await fixture.begin()
     await testDb.delete(forkTrustSubscriptions)
     await testDb.delete(forkTrustUpdates)
@@ -91,7 +106,7 @@ describe.skipIf(!fixture.available)('trust updates (real Postgres)', () => {
     expect(await updates.listPublishedUpdates()).toEqual([])
 
     const first = await updates.publishTrustUpdate(admin, draft.id)
-    expect(await first.notified).toBe(1)
+    expect(await first.notified).toEqual({ sent: 2, failed: 0, skipped: 0 })
     expect(mail.sent.map((m) => m.to)).toEqual([alice.email])
     expect(mail.sent[0]!.subject).toBe('Acme Trust & Security: New SOC 2 report')
     expect(mail.sent[0]!.html).toContain('https://help.example.com/trust/updates')
@@ -145,5 +160,90 @@ describe.skipIf(!fixture.available)('trust updates (real Postgres)', () => {
     await updates.setSubscribed(someone.principalId, true)
     expect(await updates.isSubscribed(someone.principalId)).toBe(true)
     expect((await updates.getTrustUpdatesAdmin()).subscribers).toBe(1)
+  })
+
+  // Review 2026-11-15, finding 3: a mail outage must not lose notices for good.
+  it('keeps failed emails, and sends them once when retried after recovery', async () => {
+    const admin = await person('admin')
+    const alice = await person()
+    await updates.setSubscribed(alice.principalId, true)
+    const draft = await updates.saveTrustUpdate(admin, {
+      title: 'Pen test results',
+      body: 'Summary is in Documents.',
+      linkUrl: null,
+      linkLabel: null,
+    })
+
+    mail.down = true
+    const first = await updates.publishTrustUpdate(admin, draft.id)
+    expect(await first.notified).toEqual({ sent: 1, failed: 1, skipped: 0 })
+    expect(await notificationsFor(alice.principalId)).toHaveLength(1)
+    let [counts] = (await updates.getTrustUpdatesAdmin()).updates
+    expect(counts!.delivery).toMatchObject({ total: 2, sent: 1, failed: 1 })
+
+    // Publishing again does not resend; a retry after recovery does, once.
+    await updates.unpublishTrustUpdate(admin, draft.id)
+    expect((await updates.publishTrustUpdate(admin, draft.id)).notified).toBeNull()
+    mail.down = false
+    const retried = await updates.retryTrustUpdateDeliveries(draft.id)
+    expect(await retried.notified).toEqual({ sent: 1, failed: 0, skipped: 0 })
+    expect(mail.sent.map((m) => m.to)).toEqual([alice.email])
+    const again = await updates.retryTrustUpdateDeliveries(draft.id)
+    expect(await again.notified).toEqual({ sent: 0, failed: 0, skipped: 0 })
+    expect(mail.sent).toHaveLength(1)
+    expect(await notificationsFor(alice.principalId)).toHaveLength(1)
+    ;[counts] = (await updates.getTrustUpdatesAdmin()).updates
+    expect(counts!.delivery).toMatchObject({ total: 2, sent: 2, failed: 0, pending: 0 })
+  })
+
+  it('picks up a notice a crash left mid-send, keyed by its row so the provider dedupes', async () => {
+    const admin = await person('admin')
+    const alice = await person()
+    await updates.setSubscribed(alice.principalId, true)
+    const draft = await updates.saveTrustUpdate(admin, {
+      title: 'Policy update',
+      body: 'New retention policy.',
+      linkUrl: null,
+      linkLabel: null,
+    })
+    mail.down = true
+    await (
+      await updates.publishTrustUpdate(admin, draft.id)
+    ).notified
+    // Simulate a process that claimed the email and died before recording it.
+    await testDb
+      .update(forkTrustUpdateDeliveries)
+      .set({ state: 'sending', claimedAt: new Date(Date.now() - 60 * 60 * 1000) })
+      .where(eq(forkTrustUpdateDeliveries.channel, 'email'))
+    mail.down = false
+    const run = await updates.retryTrustUpdateDeliveries(draft.id)
+    expect(await run.notified).toMatchObject({ sent: 1 })
+    const [row] = await testDb
+      .select()
+      .from(forkTrustUpdateDeliveries)
+      .where(eq(forkTrustUpdateDeliveries.channel, 'email'))
+    expect(row).toMatchObject({ state: 'sent', lastError: null })
+    expect(mail.keys).toContain(`fork-trust-update-delivery:${row!.id}`)
+  })
+
+  it('skips someone who unsubscribed between the publish and the send', async () => {
+    const admin = await person('admin')
+    const alice = await person()
+    await updates.setSubscribed(alice.principalId, true)
+    const draft = await updates.saveTrustUpdate(admin, {
+      title: 'Subprocessor change',
+      body: 'We added a vendor.',
+      linkUrl: null,
+      linkLabel: null,
+    })
+    mail.down = true
+    await (
+      await updates.publishTrustUpdate(admin, draft.id)
+    ).notified
+    await updates.setSubscribed(alice.principalId, false)
+    mail.down = false
+    const run = await updates.retryTrustUpdateDeliveries(draft.id)
+    expect(await run.notified).toEqual({ sent: 0, failed: 0, skipped: 1 })
+    expect(mail.sent).toHaveLength(0)
   })
 })

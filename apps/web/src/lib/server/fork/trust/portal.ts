@@ -73,7 +73,8 @@ export async function buildTrustPageContent(viewer: Actor): Promise<TrustPageCon
     faq: config.faqCategoryId ? await faqArticles(config.faqCategoryId, viewer) : [],
     documentGroups: await documentGroups(
       viewer.principalId ?? null,
-      viewer.permissions?.has(PERMISSIONS.TRUST_VIEW) ?? false
+      viewer.permissions?.has(PERMISSIONS.TRUST_MANAGE) ?? false,
+      config.contactEmail || null
     ),
     updates: await listPublishedUpdates(),
     subscribed: viewer.principalId ? await isSubscribed(viewer.principalId) : false,
@@ -98,18 +99,21 @@ async function faqArticles(categoryId: string, viewer: Actor) {
 }
 
 /** Published documents that have a file, grouped, with what this viewer can do. */
-/** `staff` (trust.view) may always download, as the download route allows. */
+/** `staff` (trust.manage) may always download, as the download route allows. */
 async function documentGroups(
   principalId: PrincipalId | null,
-  staff: boolean
+  staff: boolean,
+  contactEmail: string | null
 ): Promise<TrustPageDocumentGroup[]> {
-  const [groups, docs] = await Promise.all([
+  const { isSupportTicketsEnabled } = await import('@/lib/server/domains/settings/settings.support')
+  const [groups, docs, requestsOn] = await Promise.all([
     db.select().from(forkTrustDocumentGroups).orderBy(asc(forkTrustDocumentGroups.position)),
     db
       .select()
       .from(forkTrustDocuments)
       .where(and(eq(forkTrustDocuments.published, true), isNotNull(forkTrustDocuments.storageKey)))
       .orderBy(asc(forkTrustDocuments.position)),
+    isSupportTicketsEnabled(),
   ])
   const restrictedIds = docs.filter((d) => d.access === 'restricted').map((d) => d.id)
   const access = principalId ? await accessForViewer(principalId, restrictedIds) : new Map()
@@ -118,6 +122,8 @@ async function documentGroups(
     const state = access.get(doc.id)
     if (state?.state === 'granted') return { kind: 'download', expiresAt: state.expiresAt }
     if (state?.state === 'pending') return { kind: 'pending' }
+    // Requests ride on support tickets (review 2026-11-15, finding 4).
+    if (!requestsOn) return { kind: 'contact', email: contactEmail }
     if (state?.state === 'declined') return { kind: 'declined' }
     return { kind: 'request' }
   }

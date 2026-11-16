@@ -63,6 +63,8 @@ export type TrustPageDocumentAction =
   | { kind: 'request' }
   | { kind: 'pending' }
   | { kind: 'declined' }
+  /** Support tickets are off, so requests are too: ask the security contact. */
+  | { kind: 'contact'; email: string | null }
 
 export interface TrustPageDocument {
   id: string

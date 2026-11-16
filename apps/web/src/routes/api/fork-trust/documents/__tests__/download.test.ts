@@ -84,16 +84,37 @@ describe('trust document downloads (D-TS3)', () => {
     expect((await get()).status).toBe(302)
   })
 
-  it('hides drafts and everything while the page is off, but not from trust staff', async () => {
+  it('hides drafts and everything while the page is off, but not from trust managers', async () => {
     s.doc!.published = false
     expect((await get()).status).toBe(404)
-    s.ctx!.permissions = ['trust.view']
+    s.ctx!.permissions = ['trust.manage']
     s.doc!.access = 'restricted'
     expect((await get()).status).toBe(302)
     s.ctx!.permissions = []
     s.doc!.published = true
     s.enabled = false
     expect((await get()).status).toBe(404)
+  })
+
+  // Review 2026-11-15, finding 1: trust.view is read-only admin access, not a
+  // way around publication or approvals.
+  it('gives read-only trust staff (Contributors) no bypass', async () => {
+    s.ctx!.permissions = ['trust.view', 'trust.approve']
+    s.doc!.access = 'restricted'
+    expect((await get()).status).toBe(403)
+    s.doc!.published = false
+    expect((await get()).status).toBe(404)
+    s.doc!.published = true
+    s.enabled = false
+    expect((await get()).status).toBe(404)
+    expect(s.audits).toHaveLength(0)
+  })
+
+  it('refuses a restricted document once the approval has run out', async () => {
+    // hasLiveGrant is false for an expired approval (access.service.db.test).
+    s.doc!.access = 'restricted'
+    s.grant = false
+    expect((await get()).status).toBe(403)
   })
 
   it('refuses someone the portal does not admit', async () => {
