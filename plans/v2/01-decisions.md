@@ -279,3 +279,14 @@ Verification tasks recorded in the plans (not decisions): RDS Proxy pinning (20 
 | ---- | -------- |
 | D-U1 | Upstream v0.15.0 enforces custom roles on REST and MCP itself: personal API keys carry their creator's current permission set capped at the key's role, workspace keys carry their own role, MCP tools declare per-tool and per-argument permissions, and personal keys see only the tickets and conversations their creator can see (#728, #904, #905). The fork's "permanent patch" for the same gap (plan 10 §4.3, seams R-1, R-2, R-3, R-5, R-8, R-9, R-10, most of R-16) is retired in favour of upstream's. D-R13's narrowing (a limited creator's key loses ticket and conversation permissions) is replaced by upstream's row scope (the key sees what its creator sees). Kept: R-11 (MCP resources, still scope-only upstream) and R-12 (three ticket server functions upstream still leaves unchecked). |
 | D-U2 | Fork portal copy is catalogued (seam T-4): `portal.fork*` keys in `en.json` and all 12 locales, because v0.15.0 requires every message in code to have a catalog entry in every locale. |
+
+## Decided 2026-11-15 (code review fixes, Trust & Security)
+
+| ID    | Decision |
+| ----- | -------- |
+| D-TS9 | Only `trust.manage` downloads any Trust document outright (drafts, restricted, page off). `trust.view` is read-only admin access and follows the same rules as everyone. |
+| D-TS10 | Update notices are tracked per subscriber per channel (`fork_trust_update_deliveries`), queued with the first publish and retried until sent; admins see counts and can retry. Emails are keyed by delivery row for provider idempotency. |
+| D-TS11 | Access requests need support tickets. While they are off the portal shows the security contact; a failed ticket is reported, and asking again repairs the request (reusing a ticket already opened for it). |
+| D-TS12 | Control reports apply in observation order: older than the stored check is ignored, same time applies, more than 5 minutes ahead is refused. |
+| D-TS13 | Trust files are removed through a queue (`fork_trust_storage_cleanup`) written in the transaction that stops using them; a key a document still uses is never removed. |
+| D-F1  | Fork feature flags change one key at a time (`setForkFeature`, an atomic JSON merge), never by rewriting the whole `features` value. |
