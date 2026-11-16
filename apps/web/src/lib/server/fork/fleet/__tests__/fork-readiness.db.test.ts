@@ -27,10 +27,22 @@ describe.skipIf(!dsn)('fork release readiness on a real database', () => {
   })
   it('repairs an upstream-current tenant with no fork lineage through serving catch-up', async () => {
     const before = await readAppliedLedger(sql!)
+    // An upstream-only tenant has none of the fork's schema. Every fork
+    // migration creates only `fork_*` tables, so drop whatever of those exist
+    // rather than a hand-kept list that falls behind each new fork table
+    // (review 2026-11-15, finding 7).
+    const forkTables = await sql!<{ tablename: string }[]>`
+      SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'fork\\_%'`
+    expect(forkTables.map((t) => t.tablename)).toEqual(
+      expect.arrayContaining(['fork_settings', 'fork_announcements', 'fork_trust_documents'])
+    )
     await sql!.unsafe(
-      'DROP TABLE fork_announcements, fork_announcement_revision, fork_settings CASCADE'
+      `DROP TABLE ${forkTables.map((t) => `"${t.tablename}"`).join(', ')} CASCADE`
     )
     await sql!.unsafe('DROP TABLE drizzle.__fork_migrations')
+    expect(
+      await sql!`SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'fork\\_%'`
+    ).toHaveLength(0)
     expect(await missingForkRequirements(sql!)).not.toEqual([])
     await ensureWorkspaceSchemaCurrent({
       workspaceKey: 'review',
