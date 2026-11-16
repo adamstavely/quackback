@@ -143,6 +143,7 @@ export function TrustAdmin(): ReactElement {
               <TrustSettingsView
                 enabled={data.enabled}
                 config={data.config}
+                categories={data.helpCenterCategories}
                 canManage={canManage}
               />
             ) : null}

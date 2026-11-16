@@ -59,4 +59,6 @@ export interface TrustAdminData {
   subprocessors: TrustSubprocessor[]
   documentGroups: TrustDocumentGroup[]
   documents: TrustDocument[]
+  /** Help Center categories the FAQ can come from. */
+  helpCenterCategories: { id: string; name: string }[]
 }

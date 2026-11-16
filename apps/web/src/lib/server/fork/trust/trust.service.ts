@@ -102,6 +102,9 @@ export async function getTrustAdminData(): Promise<TrustAdminData> {
       list('document'),
     ]
   )
+  const { listCategories } =
+    await import('@/lib/server/domains/help-center/help-center.category.service')
+  const categories = await listCategories()
   return {
     enabled: features.trust,
     config,
@@ -111,6 +114,7 @@ export async function getTrustAdminData(): Promise<TrustAdminData> {
     subprocessors: subs.map(dto<TrustSubprocessor>),
     documentGroups: docGroups.map(dto<TrustDocumentGroup>),
     documents: docs.map(dto<TrustDocument>),
+    helpCenterCategories: categories.map((c) => ({ id: c.id, name: c.name })),
   }
 }
 
