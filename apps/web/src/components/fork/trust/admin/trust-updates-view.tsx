@@ -39,10 +39,31 @@ type Confirming = { update: TrustUpdate; action: 'publish' | 'delete' }
 /**
  * Updates on the Trust & Security page (phase 4, D-TS8). The first publish of
  * an update emails subscribers and adds it to their notifications; editing or
- * republishing it later does not send again.
+ * republishing it later does not send again. Each update shows how its notices
+ * went, and failed or stalled ones can be sent again (review 2026-11-15, #3).
  */
+function DeliveryBadge({
+  delivery,
+}: {
+  delivery: NonNullable<TrustUpdate['delivery']>
+}): ReactElement {
+  const due = delivery.total - delivery.skipped
+  if (delivery.failed > 0) {
+    return <Badge variant="destructive">{`${delivery.failed} of ${due} notices failed`}</Badge>
+  }
+  if (delivery.pending > 0) {
+    return <Badge variant="outline">{`Sending: ${delivery.sent} of ${due} notices`}</Badge>
+  }
+  return <Badge variant="secondary">{`${delivery.sent} notices sent`}</Badge>
+}
+
 export function TrustUpdatesView({ canManage }: { canManage: boolean }): ReactElement {
-  const { data, isLoading } = useQuery(trustQueries.updates())
+  const { data, isLoading } = useQuery({
+    ...trustQueries.updates(),
+    // While notices are going out, keep the counts current.
+    refetchInterval: (query) =>
+      query.state.data?.updates.some((u) => (u.delivery?.pending ?? 0) > 0) ? 3000 : false,
+  })
   const save = useSaveTrustUpdate()
   const change = useChangeTrustUpdate()
   const [editing, setEditing] = useState<TrustUpdate | 'new' | null>(null)
@@ -54,6 +75,15 @@ export function TrustUpdatesView({ canManage }: { canManage: boolean }): ReactEl
     try {
       await change.mutateAsync({ id: update.id, action: 'unpublish' })
       toast.success('Update moved back to drafts')
+    } catch (error) {
+      toast.error(errorText(error))
+    }
+  }
+
+  const retry = async (update: TrustUpdate) => {
+    try {
+      await change.mutateAsync({ id: update.id, action: 'retry' })
+      toast.success('Sending the remaining notices again')
     } catch (error) {
       toast.error(errorText(error))
     }
@@ -90,7 +120,7 @@ export function TrustUpdatesView({ canManage }: { canManage: boolean }): ReactEl
                     <Badge variant={update.status === 'published' ? 'success' : 'outline'}>
                       {update.status === 'published' ? 'Published' : 'Draft'}
                     </Badge>
-                    {update.notifiedAt ? <Badge variant="secondary">Subscribers told</Badge> : null}
+                    {update.delivery ? <DeliveryBadge delivery={update.delivery} /> : null}
                   </div>
                   <p className="line-clamp-2 text-xs text-muted-foreground">{update.body}</p>
                   {update.publishedAt ? (
@@ -102,6 +132,18 @@ export function TrustUpdatesView({ canManage }: { canManage: boolean }): ReactEl
                 </div>
                 {canManage ? (
                   <div className="flex shrink-0 flex-wrap gap-2">
+                    {update.delivery &&
+                    (update.delivery.failed > 0 || update.delivery.pending > 0) ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={change.isPending}
+                        onClick={() => void retry(update)}
+                      >
+                        Retry notices
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       size="sm"

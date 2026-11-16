@@ -26,6 +26,8 @@ export interface TrustControl extends Ordered {
   description: string | null
   status: ControlStatus
   source: 'manual' | 'integration'
+  /** Set when a monitoring tool feeds this control's status (phase 5). */
+  externalId: string | null
   lastCheckedAt: string | null
 }
 
@@ -72,9 +74,17 @@ export interface TrustUpdate {
   linkLabel: string | null
   status: 'draft' | 'published'
   publishedAt: string | null
-  /** Set once subscribers have been told; publishing again does not re-send. */
+  /** Set when the first publish queued the notices; publishing again queues nothing. */
   notifiedAt: string | null
   updatedAt: string
+  /** Notices per subscriber per channel (bell, email), once queued; null before. */
+  delivery: {
+    total: number
+    sent: number
+    pending: number
+    failed: number
+    skipped: number
+  } | null
 }
 
 export interface TrustUpdatesAdmin {

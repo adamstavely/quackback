@@ -9,6 +9,8 @@ export interface TrustPageControl {
   name: string
   description: string | null
   status: ControlStatus
+  /** When a monitoring tool last checked it; null for controls kept by hand. */
+  checkedAt: string | null
 }
 
 export interface TrustPageControlGroup {
@@ -61,6 +63,8 @@ export type TrustPageDocumentAction =
   | { kind: 'request' }
   | { kind: 'pending' }
   | { kind: 'declined' }
+  /** Support tickets are off, so requests are too: ask the security contact. */
+  | { kind: 'contact'; email: string | null }
 
 export interface TrustPageDocument {
   id: string

@@ -7,8 +7,10 @@ const DOWNLOAD_URL_TTL_SECONDS = 900
  * GET /api/fork-trust/documents/{documentId} — download a Trust & Security
  * document (plans/v2/70-trust-security.md §5). Signed-in viewers the portal
  * admits may download open documents; restricted ones need a live approval
- * (D-TS3). People with `trust.view` may download any document, drafts
- * included. Every download is audited. Never a public storage URL.
+ * (D-TS3). Only `trust.manage` may download any document, drafts included
+ * (plan 70 §5): `trust.view` is read-only admin access (Contributors hold it)
+ * and gets the same checks as everyone else. Every download is audited.
+ * Never a public storage URL.
  */
 export async function handleTrustDocumentDownload({
   request,
@@ -28,7 +30,7 @@ export async function handleTrustDocumentDownload({
   }
 
   const { PERMISSIONS } = await import('@/lib/shared/permissions')
-  const staff = ctx.permissions.includes(PERMISSIONS.TRUST_VIEW)
+  const staff = ctx.permissions.includes(PERMISSIONS.TRUST_MANAGE)
   if (!staff) {
     const { isForkFeatureEnabled } = await import('@/lib/server/fork/settings/features')
     if (!(await isForkFeatureEnabled('trust'))) {
