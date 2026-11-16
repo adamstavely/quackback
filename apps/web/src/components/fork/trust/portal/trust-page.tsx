@@ -17,6 +17,7 @@ import type { ControlStatus } from '@/lib/shared/fork/trust/schema'
 import type { TrustPageContent, TrustPageControlGroup } from '@/lib/shared/fork/trust/portal'
 import { cn } from '@/lib/shared/utils'
 import { TrustDocuments, TrustDocumentsCard } from './trust-documents'
+import { TrustSubscribeButton, TrustUpdates } from './trust-updates'
 
 /**
  * The portal's Trust & Security page (plans/v2/70-trust-security.md §1; design:
@@ -51,6 +52,7 @@ const TABS = [
     label: 'Subprocessors',
     show: (c: TrustPageContent) => c.subprocessors.length > 0,
   },
+  { to: '/trust/updates', id: 'tab.updates', label: 'Updates', show: () => true },
   {
     to: '/trust/faq',
     id: 'tab.faq',
@@ -73,9 +75,12 @@ export function TrustPageShell({
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-7 px-4 py-10 sm:px-6">
       <header className="flex flex-col gap-3">
-        <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-[44px] sm:leading-[1.1]">
-          {t(intl, 'title', 'Trust & Security')}
-        </h1>
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-[44px] sm:leading-[1.1]">
+            {t(intl, 'title', 'Trust & Security')}
+          </h1>
+          {content ? <TrustSubscribeButton subscribed={content.subscribed} /> : null}
+        </div>
         {content?.intro ? (
           <p className="max-w-3xl text-base leading-relaxed text-muted-foreground">
             {content.intro}
@@ -465,4 +470,8 @@ export function TrustFaq({ content }: { content: TrustPageContent }): ReactEleme
 
 export function TrustDocumentsTab({ content }: { content: TrustPageContent }): ReactElement {
   return <TrustDocuments groups={content.documentGroups} />
+}
+
+export function TrustUpdatesTab({ content }: { content: TrustPageContent }): ReactElement {
+  return <TrustUpdates updates={content.updates} />
 }

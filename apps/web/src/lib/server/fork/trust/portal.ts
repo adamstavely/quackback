@@ -19,6 +19,7 @@ import type {
   TrustPageDocumentGroup,
 } from '@/lib/shared/fork/trust/portal'
 import { accessForViewer } from './access.service'
+import { isSubscribed, listPublishedUpdates } from './updates.service'
 import { trustConfig } from './settings'
 
 /**
@@ -73,6 +74,8 @@ export async function buildTrustPageContent(viewer: Actor): Promise<TrustPageCon
       viewer.principalId ?? null,
       viewer.permissions?.has(PERMISSIONS.TRUST_VIEW) ?? false
     ),
+    updates: await listPublishedUpdates(),
+    subscribed: viewer.principalId ? await isSubscribed(viewer.principalId) : false,
   }
 }
 

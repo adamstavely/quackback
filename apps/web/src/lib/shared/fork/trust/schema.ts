@@ -108,6 +108,16 @@ export const trustReorderSchema = z.object({
   ids: z.array(z.string().uuid()).min(1).max(500),
 })
 
+/** An update post (phase 4): plain text and an optional link, like a banner. */
+export const trustUpdateValuesSchema = z.object({
+  id,
+  title: z.string().trim().min(1).max(160),
+  body: z.string().trim().min(1).max(2000),
+  linkUrl: httpUrl,
+  linkLabel: optionalText(60),
+})
+export type TrustUpdateValues = z.output<typeof trustUpdateValuesSchema>
+
 /** Page settings (`fork_settings.trust`). */
 export const trustConfigSchema = z.object({
   intro: z.string().trim().max(600).default(''),
