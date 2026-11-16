@@ -111,6 +111,19 @@
 | D-P8 | Separate `post_prioritization.csv` in the workspace export + read-only fork MCP tool; REST later (Q48).                                                                                               | ✅     |
 | D-P9 | One current score per post + full history (Q49).                                                                                                                                                      | ✅     |
 
+## Trust & Security (`70-trust-security.md`)
+
+| ID    | Decision                                                                                                                                               | Status |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| D-TS1 | Direction A, full trust center (owner, 2026-11-14).                                                                                                    | ✅     |
+| D-TS2 | Audience: any signed-in employee; no per-section segment gating in v1.                                                                                 | ✅     |
+| D-TS3 | Restricted documents: the request becomes a private support request; an admin approves for a set time.                                                 | ✅     |
+| D-TS4 | Controls entered by hand now, shaped for a compliance tool to push statuses later.                                                                     | ✅     |
+| D-TS5 | One page per app (per workspace).                                                                                                                      | ✅     |
+| D-TS6 | Styled with platform components and tokens only, so each app's branding carries through.                                                               | ✅     |
+| D-TS7 | Nav tab: one small seam (T-19) so a nav link item pointing at the portal itself renders as an in-app tab with active highlighting (owner, 2026-11-14). | ✅     |
+| D-TS8 | "Updates" are fork-owned posts with their own subscribers, not changelog entries.                                                                      | ✅     |
+
 ## Announcements (`60-announcements-banner.md`)
 
 | ID   | Decision                                                                                                                                                                              | Status |
@@ -258,3 +271,11 @@ Verification tasks recorded in the plans (not decisions): RDS Proxy pinning (20 
 | D-N13 | The embed is a real custom element, `<quackback-banner>` (owner's request), not a script-injected shadow `div`. A page may place it; if none is present, `banner.js` adds one at the top of `<body>`, so the script tag alone is a complete install. Styles are constructable stylesheets in its shadow root: no `style` attributes and no `'unsafe-inline'`.                                                                                                                                                                                     | ✅ (built) |
 | D-N14 | Apps that embed the banner cannot change how it looks (owner). `:host` is reset with `all: initial !important` (shadow `!important` beats page rules, page `!important` and `style=""`), and every variable is declared on an internal `.qb-root` the page cannot select. Light/dark follows the workspace theme only (the earlier `theme` attribute is removed). The banner font is always **Inter**, in the portal (platform token `--font-family-sans`) and in embeds (the platform's own Inter served from the instance as `QuackbackInter`). | ✅ (built) |
 | D-N15 | Delivered in two steps. First: the identity-free "everyone" embed (script, feed, live updates, theme, Install view, guide). Next: identity for segment-targeted banners (`embed/session`, `embed/feed`, viewer token). Until then embeds show audience-Everyone banners. (The branding font is no longer needed: banners are always Inter, D-N14.)                                                                                                                                                                                                | 🟡 next PR |
+| D-N16 | A sixth banner kind, **Pro Tip** (`tip`): Heroicons lightbulb, lightbulb gold (oklch 0.541 0.111 87.7; dark 0.819 0.14 91.4), chosen by the owner from four options on the design canvas knowing it sits nearer Warning amber than the other kinds. Lowest rank: it stacks after Resolved; dismissible, announced politely (`status`). Fork migration 0002 widens the kind check.                                                                                                                                                                 | ✅         |
+
+## Decided 2026-11-15 (upstream v0.15.0 merge)
+
+| ID   | Decision |
+| ---- | -------- |
+| D-U1 | Upstream v0.15.0 enforces custom roles on REST and MCP itself: personal API keys carry their creator's current permission set capped at the key's role, workspace keys carry their own role, MCP tools declare per-tool and per-argument permissions, and personal keys see only the tickets and conversations their creator can see (#728, #904, #905). The fork's "permanent patch" for the same gap (plan 10 §4.3, seams R-1, R-2, R-3, R-5, R-8, R-9, R-10, most of R-16) is retired in favour of upstream's. D-R13's narrowing (a limited creator's key loses ticket and conversation permissions) is replaced by upstream's row scope (the key sees what its creator sees). Kept: R-11 (MCP resources, still scope-only upstream) and R-12 (three ticket server functions upstream still leaves unchecked). |
+| D-U2 | Fork portal copy is catalogued (seam T-4): `portal.fork*` keys in `en.json` and all 12 locales, because v0.15.0 requires every message in code to have a catalog entry in every locale. |

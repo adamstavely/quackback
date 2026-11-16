@@ -15,6 +15,27 @@
       "when": 1791675070424,
       "tag": "0001_fork_announcements",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794712484643,
+      "tag": "0002_fork_announcements_tip",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794714148971,
+      "tag": "0003_fork_trust",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794715996250,
+      "tag": "0004_fork_trust_access",
+      "breakpoints": true
     }
   ]
 }

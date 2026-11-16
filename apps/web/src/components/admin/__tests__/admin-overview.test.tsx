@@ -26,7 +26,7 @@ const { state } = vi.hoisted(() => {
       },
       {
         key: 'feedback',
-        label: 'ideas',
+        label: 'posts',
         detail: 'to review',
         count: 30,
         link: { to: '/admin/feedback' },
@@ -34,7 +34,7 @@ const { state } = vi.hoisted(() => {
       },
       {
         key: 'complete',
-        label: 'ideas',
+        label: 'posts',
         detail: 'shipped, not announced',
         count: 6,
         link: { to: '/admin/feedback' },
@@ -123,7 +123,7 @@ vi.mock('@tanstack/react-router', () => ({
   },
 }))
 
-import { OverviewCounts, OverviewDashboard } from '../admin-overview'
+import { OverviewDashboard } from '../admin-overview'
 
 describe('OverviewDashboard', () => {
   it('keeps a fresh workspace quiet until real data exists', () => {
@@ -160,7 +160,7 @@ describe('OverviewDashboard', () => {
       },
     }
     try {
-      for (const view of [<OverviewDashboard />, <OverviewCounts />]) {
+      for (const view of [<OverviewDashboard />]) {
         const { unmount } = render(view)
         const empty = screen.getByRole('list', { name: 'Nothing here yet' })
         expect(
@@ -168,7 +168,7 @@ describe('OverviewDashboard', () => {
             .getAllByRole('listitem')
             .map((item) => item.textContent)
         ).toEqual([
-          'No ideas yet. They land in Feedback.',
+          'No posts yet. They land in Feedback.',
           'No conversations yet. They land in Support.',
           'No subscribers yet. They sign up on your status page.',
         ])
@@ -207,8 +207,8 @@ describe('OverviewDashboard', () => {
 
     expect(screen.getByText('3')).toBeInTheDocument()
     expect(screen.getByText('Conversations waiting for reply')).toBeInTheDocument()
-    expect(screen.getByText('Ideas to review')).toBeInTheDocument()
-    expect(screen.getByText('Ideas shipped, not announced')).toBeInTheDocument()
+    expect(screen.getByText('Posts to review')).toBeInTheDocument()
+    expect(screen.getByText('Posts shipped, not announced')).toBeInTheDocument()
     expect(screen.getByText('Help center articles in draft')).toBeInTheDocument()
     expect(screen.getByText('Support')).toBeInTheDocument()
     expect(screen.getByText('Feedback')).toBeInTheDocument()

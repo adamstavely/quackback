@@ -10,13 +10,17 @@ export const FORK_PERMISSIONS = {
   // Announcements banner (plans/v2/60-announcements-banner.md §6)
   ANNOUNCEMENT_VIEW: 'announcement.view', // read the list, previews and templates
   ANNOUNCEMENT_MANAGE: 'announcement.manage', // create, publish, archive; config and templates
+  // Trust & Security page (plans/v2/70-trust-security.md)
+  TRUST_VIEW: 'trust.view', // read the admin side of the trust page
+  TRUST_MANAGE: 'trust.manage', // edit the trust page's content and settings
+  TRUST_APPROVE: 'trust.approve', // decide requests for restricted documents
 } as const
 
 type ForkPermissionKey = (typeof FORK_PERMISSIONS)[keyof typeof FORK_PERMISSIONS]
 
 export const FORK_PERMISSION_CATALOGUE: ReadonlyArray<{
   key: ForkPermissionKey
-  category: 'status_page'
+  category: 'status_page' | 'help_center'
   description: string
 }> = [
   {
@@ -29,9 +33,26 @@ export const FORK_PERMISSION_CATALOGUE: ReadonlyArray<{
     category: 'status_page',
     description: 'Create, publish and archive announcement banners, and manage their settings',
   },
+  {
+    key: FORK_PERMISSIONS.TRUST_VIEW,
+    category: 'help_center',
+    description: 'View the Trust & Security page content in admin',
+  },
+  {
+    key: FORK_PERMISSIONS.TRUST_MANAGE,
+    category: 'help_center',
+    description:
+      'Edit the Trust & Security page: compliance, documents, controls and subprocessors',
+  },
+  {
+    key: FORK_PERMISSIONS.TRUST_APPROVE,
+    category: 'help_center',
+    description: 'Approve or decline requests for restricted Trust & Security documents',
+  },
 ]
 
-/** Contributors read announcements; publishing stays with Managers and above. */
+/** Contributors read announcements and the trust page's admin side; changes stay with Managers and above. */
 export const FORK_CONTRIBUTOR_PERMISSIONS: readonly ForkPermissionKey[] = [
   FORK_PERMISSIONS.ANNOUNCEMENT_VIEW,
+  FORK_PERMISSIONS.TRUST_VIEW,
 ]

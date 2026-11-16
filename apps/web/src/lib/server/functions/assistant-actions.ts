@@ -5,7 +5,11 @@ import { requireAuth, policyActorFromAuth } from './auth-helpers'
 import type { AssistantPendingAction } from '@/lib/server/domains/assistant/pending-actions.service'
 import type { JsonValue } from '@/lib/shared/json'
 
-const PendingActionInput = z.object({ pendingActionId: z.string() })
+const PendingActionInput = z.object({
+  pendingActionId: z.string(),
+  /** The digest of the request the person was shown; the decision binds to it. */
+  contentHash: z.string().min(1).max(128),
+})
 
 // createServerFn constrains returns to provably serializable types; the row's
 // jsonb columns are typed Record<string, unknown> (unknown isn't provably
@@ -30,9 +34,14 @@ export interface AssistantPendingActionDTO {
   decidedAt: string | null
   executedAt: string | null
   result: JsonValue | null
+  /** The digest a decision on this request names. */
+  argsDigest: string
 }
 
-function toDTO(row: AssistantPendingAction): AssistantPendingActionDTO {
+function toDTO(
+  row: AssistantPendingAction,
+  decision: Pick<AssistantPendingActionDTO, 'argsDigest'>
+): AssistantPendingActionDTO {
   return {
     id: row.id,
     conversationId: row.conversationId,
@@ -50,6 +59,7 @@ function toDTO(row: AssistantPendingAction): AssistantPendingActionDTO {
     decidedAt: row.decidedAt?.toISOString() ?? null,
     executedAt: row.executedAt?.toISOString() ?? null,
     result: (row.result as JsonValue | null) ?? null,
+    ...decision,
   }
 }
 
@@ -67,9 +77,13 @@ export const approveAssistantActionFn = createServerFn({ method: 'POST' })
       data.pendingActionId as AssistantPendingActionId,
       'approved',
       auth.principal.id,
-      actor
+      actor,
+      undefined,
+      { contentHash: data.contentHash }
     )
-    return toDTO(settled)
+    const { decisionFieldsForDisplay } =
+      await import('@/lib/server/domains/assistant/pending-action-decisions')
+    return toDTO(settled, await decisionFieldsForDisplay(settled))
   })
 
 export const rejectAssistantActionFn = createServerFn({ method: 'POST' })
@@ -84,7 +98,11 @@ export const rejectAssistantActionFn = createServerFn({ method: 'POST' })
       data.pendingActionId as AssistantPendingActionId,
       'rejected',
       auth.principal.id,
-      actor
+      actor,
+      undefined,
+      { contentHash: data.contentHash }
     )
-    return toDTO(settled)
+    const { decisionFieldsForDisplay } =
+      await import('@/lib/server/domains/assistant/pending-action-decisions')
+    return toDTO(settled, await decisionFieldsForDisplay(settled))
   })

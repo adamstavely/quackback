@@ -23,6 +23,7 @@ export const KIND_PRESETS: Record<AnnouncementKind, KindPreset> = {
   warning: { label: 'Warning', rank: 2, role: 'status' },
   info: { label: 'Information', rank: 3, role: 'status' },
   success: { label: 'Resolved', rank: 4, role: 'status' },
+  tip: { label: 'Pro Tip', rank: 5, role: 'status' },
 }
 
 /** Feed order: kind rank, then priority (high first), then newest. */

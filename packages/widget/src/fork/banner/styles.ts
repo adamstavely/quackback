@@ -17,8 +17,9 @@
  * Colours: the workspace's theme tokens (`--background`, `--foreground`,
  * `--destructive`, `--warning`, `--success`, `--radius`, `--ring`), and for
  * information and maintenance the same blue and violet as the portal
- * (Tailwind's blue/violet 600, and 400 in dark mode). The values below are
- * the platform defaults, used until the theme arrives.
+ * (Tailwind's blue/violet 600, and 400 in dark mode), and for Pro Tip the
+ * portal's lightbulb gold (`kind-styles.ts`). The values below are the
+ * platform defaults, used until the theme arrives.
  */
 export const BASE_CSS = `
 :host {
@@ -40,6 +41,7 @@ export const BASE_CSS = `
   --ring: oklch(0.708 0 0);
   --qb-info: oklch(54.6% 0.245 262.881);
   --qb-maintenance: oklch(54.1% 0.281 293.009);
+  --qb-tip: oklch(0.541 0.111 87.7);
   color: var(--foreground);
   font-family: 'QuackbackInter', 'Inter Variable', 'Inter', ui-sans-serif, system-ui, sans-serif;
   font-size: 14px;
@@ -56,6 +58,7 @@ export const BASE_CSS = `
   --ring: oklch(0.556 0 0);
   --qb-info: oklch(70.7% 0.165 254.624);
   --qb-maintenance: oklch(70.2% 0.183 293.541);
+  --qb-tip: oklch(0.819 0.14 91.4);
 }
 .qb-root *, .qb-root *::before, .qb-root *::after { box-sizing: border-box; }
 
@@ -78,6 +81,7 @@ export const BASE_CSS = `
 .bar.kind-success { --qb-kind: var(--success); }
 .bar.kind-info { --qb-kind: var(--qb-info); }
 .bar.kind-maintenance { --qb-kind: var(--qb-maintenance); }
+.bar.kind-tip { --qb-kind: var(--qb-tip); }
 
 .icon { flex: none; width: 20px; height: 20px; margin-top: 1px; color: var(--qb-kind); }
 
