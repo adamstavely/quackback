@@ -73,7 +73,7 @@ export async function buildTrustPageContent(viewer: Actor): Promise<TrustPageCon
     faq: config.faqCategoryId ? await faqArticles(config.faqCategoryId, viewer) : [],
     documentGroups: await documentGroups(
       viewer.principalId ?? null,
-      viewer.permissions?.has(PERMISSIONS.TRUST_VIEW) ?? false
+      viewer.permissions?.has(PERMISSIONS.TRUST_MANAGE) ?? false
     ),
     updates: await listPublishedUpdates(),
     subscribed: viewer.principalId ? await isSubscribed(viewer.principalId) : false,
@@ -98,7 +98,7 @@ async function faqArticles(categoryId: string, viewer: Actor) {
 }
 
 /** Published documents that have a file, grouped, with what this viewer can do. */
-/** `staff` (trust.view) may always download, as the download route allows. */
+/** `staff` (trust.manage) may always download, as the download route allows. */
 async function documentGroups(
   principalId: PrincipalId | null,
   staff: boolean

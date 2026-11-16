@@ -79,6 +79,30 @@ describe.skipIf(!fixture.available)('trust hub summary (real Postgres)', () => {
   })
 })
 
+describe.skipIf(!fixture.available)('trust page documents (real Postgres)', () => {
+  // Review 2026-11-15, finding 1: only trust.manage downloads a restricted
+  // document outright; trust.view (Contributors) asks like everyone else.
+  it('offers a restricted document to trust.manage, and a request to trust.view', async () => {
+    const [docs] = await testDb.insert(forkTrustDocumentGroups).values({ name: 'R' }).returning()
+    await testDb.insert(forkTrustDocuments).values({
+      groupId: docs!.id,
+      title: 'SOC 2',
+      access: 'restricted',
+      published: true,
+      storageKey: 'fork-trust/a.pdf',
+    })
+    const actionFor = async (keys: string[]) => {
+      const content = await buildTrustPageContent({
+        principalId: null,
+        permissions: new Set(keys),
+      } as never)
+      return content.documentGroups[0]!.documents[0]!.action.kind
+    }
+    expect(await actionFor(['trust.view', 'trust.approve'])).toBe('request')
+    expect(await actionFor(['trust.manage'])).toBe('download')
+  })
+})
+
 /** Start each test from empty trust tables (inside the test's rolled-back transaction). */
 async function clearTrustTables() {
   const t = await import('@/lib/server/fork/db')
