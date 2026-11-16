@@ -1,6 +1,5 @@
 import { createServerFn } from '@tanstack/react-start'
 
-
 /** One feedback post by the caller, trimmed to what the hub row shows. */
 export interface HubFeedbackPost {
   postId: string
@@ -25,15 +24,12 @@ export const getMyHubFeedbackFn = createServerFn({ method: 'GET' }).handler(
     const empty = { posts: [] as HubFeedbackPost[] }
     // Lazy imports, like every other server fn here: the route module that
     // calls this must not pull the server graph into its own compile.
-    const { getOptionalAuth, hasAuthCredentials, policyActorFromAuth } = await import(
-      '@/lib/server/functions/auth-helpers'
-    )
+    const { getOptionalAuth, hasAuthCredentials, policyActorFromAuth } =
+      await import('@/lib/server/functions/auth-helpers')
     const ctx = hasAuthCredentials() ? await getOptionalAuth() : null
     if (!ctx?.principal || ctx.principal.type === 'anonymous') return empty
 
-    const { resolvePortalAccessForRequest } = await import(
-      '@/lib/server/functions/portal-access'
-    )
+    const { resolvePortalAccessForRequest } = await import('@/lib/server/functions/portal-access')
     const access = await resolvePortalAccessForRequest()
     if (!access.granted) return empty
 

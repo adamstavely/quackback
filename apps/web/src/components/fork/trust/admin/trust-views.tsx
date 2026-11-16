@@ -373,6 +373,13 @@ export function ControlsView({
         label: STATUS[s].label,
       })),
     },
+    {
+      name: 'externalId',
+      label: 'Integration ID',
+      kind: 'text',
+      max: 120,
+      hint: 'Optional. Set it to let a monitoring tool update the status through the API or MCP; leave it empty to manage the status here.',
+    },
   ]
   const openGroup = (id: string | null) => {
     const group = data.controlGroups.find((g) => g.id === id)
@@ -392,6 +399,7 @@ export function ControlsView({
         name: str(control?.name),
         description: str(control?.description),
         status: control?.status ?? 'in_place',
+        externalId: str(control?.externalId),
       },
     })
   }
@@ -442,7 +450,7 @@ export function ControlsView({
                     <>
                       <Badge variant="outline">{status.label}</Badge>
                       {c.source === 'integration' ? (
-                        <Badge variant="secondary">From a tool</Badge>
+                        <Badge variant="secondary">From a tool · {c.externalId}</Badge>
                       ) : null}
                     </>
                   ),
@@ -571,7 +579,8 @@ export function DocumentsView({
                 ),
                 actions: (
                   <>
-                    {d.fileName ? (
+                    {/* Downloading a restricted file is trust.manage, not view (plan 70 §5). */}
+                    {d.fileName && canManage ? (
                       <a
                         href={trustDocumentHref(d.id)}
                         className="text-xs font-medium text-foreground underline underline-offset-4 hover:no-underline"

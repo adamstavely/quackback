@@ -117,5 +117,8 @@ export function getNotificationTarget(
     return { to: '/status' }
   }
 
+  // FORK-SEAM(T-20): Trust & Security updates (plan 70, phase 4) open their tab.
+  if ((notification.type as string) === 'fork_trust_update') return { to: '/trust/updates' }
+
   return null
 }

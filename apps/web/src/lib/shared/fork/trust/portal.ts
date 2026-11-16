@@ -9,6 +9,8 @@ export interface TrustPageControl {
   name: string
   description: string | null
   status: ControlStatus
+  /** When a monitoring tool last checked it; null for controls kept by hand. */
+  checkedAt: string | null
 }
 
 export interface TrustPageControlGroup {
@@ -36,6 +38,19 @@ export interface TrustPageContent {
   }[]
   faq: { id: string; title: string; description: string | null; href: string }[]
   documentGroups: TrustPageDocumentGroup[]
+  /** Published updates, newest first (phase 4). */
+  updates: TrustPageUpdate[]
+  /** Whether this viewer hears about new updates. */
+  subscribed: boolean
+}
+
+export interface TrustPageUpdate {
+  id: string
+  title: string
+  body: string
+  linkUrl: string | null
+  linkLabel: string | null
+  publishedAt: string
 }
 
 /**
@@ -48,6 +63,8 @@ export type TrustPageDocumentAction =
   | { kind: 'request' }
   | { kind: 'pending' }
   | { kind: 'declined' }
+  /** Support tickets are off, so requests are too: ask the security contact. */
+  | { kind: 'contact'; email: string | null }
 
 export interface TrustPageDocument {
   id: string

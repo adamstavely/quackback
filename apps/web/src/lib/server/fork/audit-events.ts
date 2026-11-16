@@ -21,3 +21,5 @@ export type ForkAuditEventType =
   | 'fork_trust.access_approved'
   | 'fork_trust.access_declined'
   | 'fork_trust.access_revoked'
+  | 'fork_trust.update_published'
+  | 'fork_trust.update_unpublished'

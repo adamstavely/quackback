@@ -7,6 +7,7 @@ import {
   trustItemInputSchema,
   trustItemRefSchema,
   trustReorderSchema,
+  trustUpdateValuesSchema,
 } from '@/lib/shared/fork/trust/schema'
 import { actorFromAuth } from '@/lib/server/audit/log'
 import {
@@ -98,4 +99,46 @@ export const decideTrustAccessRequestFn = createServerFn({ method: 'POST' })
     const { decideAccessRequest } = await import('@/lib/server/fork/trust/access.service')
     const actor = await policyActorFromAuth(auth)
     await decideAccessRequest({ ...writerFrom(auth), actor }, data.id, data)
+  })
+
+/** Updates and the subscriber count (phase 4). */
+export const getTrustUpdatesFn = createServerFn({ method: 'GET' }).handler(async () => {
+  await requireAuth({ permission: PERMISSIONS.TRUST_VIEW })
+  const { getTrustUpdatesAdmin } = await import('@/lib/server/fork/trust/updates.service')
+  return getTrustUpdatesAdmin()
+})
+
+export const saveTrustUpdateFn = createServerFn({ method: 'POST' })
+  .validator(trustUpdateValuesSchema)
+  .handler(async ({ data }) => {
+    const auth = await requireAuth({ permission: PERMISSIONS.TRUST_MANAGE })
+    const { saveTrustUpdate } = await import('@/lib/server/fork/trust/updates.service')
+    return saveTrustUpdate(writerFrom(auth), data)
+  })
+
+/** Publish, unpublish, delete, or retry the notices of an update. The first publish tells subscribers. */
+export const changeTrustUpdateFn = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      id: z.string().uuid(),
+      action: z.enum(['publish', 'unpublish', 'delete', 'retry']),
+    })
+  )
+  .handler(async ({ data }) => {
+    const auth = await requireAuth({ permission: PERMISSIONS.TRUST_MANAGE })
+    const service = await import('@/lib/server/fork/trust/updates.service')
+    const writer = writerFrom(auth)
+    if (data.action === 'retry') {
+      // Failed and stalled notices go out again in the background.
+      await service.retryTrustUpdateDeliveries(data.id)
+      return { notifying: true }
+    }
+    if (data.action === 'publish') {
+      // Delivery runs on after the response; the admin sees the update live at once.
+      const { notified } = await service.publishTrustUpdate(writer, data.id)
+      return { notifying: notified !== null }
+    }
+    if (data.action === 'unpublish') await service.unpublishTrustUpdate(writer, data.id)
+    else await service.deleteTrustUpdate(writer, data.id)
+    return { notifying: false }
   })

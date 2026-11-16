@@ -44,12 +44,27 @@ export const controlGroupValuesSchema = z.object({
   description: optionalText(300),
 })
 
+/** The key a monitoring tool uses for a control (phase 5); set means the tool owns its status. */
+export const controlExternalIdSchema = z
+  .string()
+  .trim()
+  .max(120)
+  .regex(/^[A-Za-z0-9._:-]*$/, 'Use letters, numbers, dots, dashes, colons or underscores')
+
 export const controlValuesSchema = z.object({
   id,
   groupId: z.string().uuid(),
   name: z.string().trim().min(1).max(160),
   description: optionalText(1000),
   status: z.enum(CONTROL_STATUSES),
+  externalId: controlExternalIdSchema.optional().transform((value) => value || null),
+})
+
+/** What the controls feed sets (phase 5): the API route and the MCP tool share it. */
+export const controlFeedSchema = z.object({
+  status: z.enum(CONTROL_STATUSES),
+  /** When the tool checked; now if left out. */
+  checkedAt: z.string().datetime({ offset: true }).optional(),
 })
 
 export const subprocessorValuesSchema = z.object({
@@ -107,6 +122,16 @@ export const trustReorderSchema = z.object({
   entity: z.enum(TRUST_ENTITIES),
   ids: z.array(z.string().uuid()).min(1).max(500),
 })
+
+/** An update post (phase 4): plain text and an optional link, like a banner. */
+export const trustUpdateValuesSchema = z.object({
+  id,
+  title: z.string().trim().min(1).max(160),
+  body: z.string().trim().min(1).max(2000),
+  linkUrl: httpUrl,
+  linkLabel: optionalText(60),
+})
+export type TrustUpdateValues = z.output<typeof trustUpdateValuesSchema>
 
 /** Page settings (`fork_settings.trust`). */
 export const trustConfigSchema = z.object({

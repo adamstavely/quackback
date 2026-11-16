@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ApiKey } from '@/lib/server/domains/api-keys'
 import type { PrincipalId, ApiKeyId, UserId } from '@quackback/ids'
+// FORK-SEAM(T-21)
+import { FORK_MCP_TOOL_SCOPES } from '@/lib/server/fork/mcp/tool-scopes'
 
 /** DeveloperConfig for the mocked getDeveloperConfig (everything enabled). */
 const devConfig = (overrides = {}) => ({
@@ -752,7 +754,8 @@ describe('MCP HTTP Handler', () => {
       expect(toolNames).toContain('navigate_workspace')
       // Settings change directly through update_settings; no tool files a settings card.
       expect(toolNames).not.toContain('propose_settings_change')
-      expect(toolNames).toHaveLength(43)
+      // FORK-SEAM(T-21): upstream's tools plus the fork's.
+      expect(toolNames).toHaveLength(43 + Object.keys(FORK_MCP_TOOL_SCOPES).length)
     })
 
     it('should handle resources/list request', async () => {

@@ -8,6 +8,8 @@ import { HubActionCard } from './hub-action-card'
 import { HubFeedbackCard, type HubFeedbackItem } from './hub-feedback-card'
 import { HubRequestsCard, type HubRequest } from './hub-requests-card'
 import { HubStatusCard, type HubStatusComponent } from './hub-status-card'
+import { HubTrustCard } from './hub-trust-card'
+import type { TrustHubSummary } from '@/lib/server/functions/fork/trust-portal'
 
 interface HubPageProps {
   workspaceName: string
@@ -23,6 +25,8 @@ interface HubPageProps {
     maintenanceStartsAt?: string | null
     maintenanceEndsAt?: string | null
   }
+  /** Set when Trust & Security is on (plan 70): a short status card, then the trust card. */
+  trust?: { summary: TrustHubSummary | null } | null
   onRate: (conversationId: string, score: number) => Promise<void>
 }
 
@@ -41,6 +45,7 @@ export function HubPage({
   requests,
   feedback,
   status,
+  trust,
   onRate,
 }: HubPageProps): ReactElement {
   const intl = useIntl()
@@ -76,59 +81,85 @@ export function HubPage({
               defaultMessage="Get help and keep up with changes"
             />
           </h2>
-          <div className="flex flex-col gap-6 lg:col-span-2">
-            <HubActionCard
-              primary
-              icon={ChatBubbleLeftRightIcon}
-              to="/support"
-              title={intl.formatMessage({
-                id: 'portal.forkHub.chat.title',
-                defaultMessage: 'Start a chat',
-              })}
-              description={intl.formatMessage({
-                id: 'portal.forkHub.chat.description',
-                defaultMessage: 'Quick questions, answered by the support team.',
-              })}
-              cta={intl.formatMessage({
-                id: 'portal.forkHub.chat.cta',
-                defaultMessage: 'Chat now',
-              })}
-            />
-            <HubActionCard
-              icon={MegaphoneIcon}
-              to="/changelog"
-              title={intl.formatMessage({
-                id: 'portal.forkHub.changelog.title',
-                defaultMessage: 'Release notes',
-              })}
-              description={intl.formatMessage({
-                id: 'portal.forkHub.changelog.description',
-                defaultMessage: 'What shipped recently, and what changed.',
-              })}
-              cta={intl.formatMessage({
-                id: 'portal.forkHub.changelog.cta',
-                defaultMessage: 'View changelog',
-              })}
-            />
-            <HubActionCard
-              icon={MapIcon}
-              to="/roadmap"
-              title={intl.formatMessage({
-                id: 'portal.forkHub.roadmap.title',
-                defaultMessage: 'Roadmap',
-              })}
-              description={intl.formatMessage({
-                id: 'portal.forkHub.roadmap.description',
-                defaultMessage: 'What the team is working on next.',
-              })}
-              cta={intl.formatMessage({
-                id: 'portal.forkHub.roadmap.cta',
-                defaultMessage: 'View roadmap',
-              })}
-            />
-          </div>
-          {status.enabled ? (
+          {/* One grid for both columns, so card edges line up across them: the
+              status card sits beside the first action card and the Trust card
+              spans the other two. Each card fills its cell. */}
+          <HubActionCard
+            primary
+            className="lg:col-span-2 lg:col-start-1 lg:row-start-1"
+            icon={ChatBubbleLeftRightIcon}
+            to="/support"
+            title={intl.formatMessage({
+              id: 'portal.forkHub.chat.title',
+              defaultMessage: 'Start a chat',
+            })}
+            description={intl.formatMessage({
+              id: 'portal.forkHub.chat.description',
+              defaultMessage: 'Quick questions, answered by the support team.',
+            })}
+            cta={intl.formatMessage({
+              id: 'portal.forkHub.chat.cta',
+              defaultMessage: 'Chat now',
+            })}
+          />
+          <HubActionCard
+            icon={MegaphoneIcon}
+            to="/changelog"
+            className="lg:col-span-2 lg:col-start-1 lg:row-start-2"
+            title={intl.formatMessage({
+              id: 'portal.forkHub.changelog.title',
+              defaultMessage: 'Release notes',
+            })}
+            description={intl.formatMessage({
+              id: 'portal.forkHub.changelog.description',
+              defaultMessage: 'What shipped recently, and what changed.',
+            })}
+            cta={intl.formatMessage({
+              id: 'portal.forkHub.changelog.cta',
+              defaultMessage: 'View changelog',
+            })}
+          />
+          <HubActionCard
+            icon={MapIcon}
+            to="/roadmap"
+            className="lg:col-span-2 lg:col-start-1 lg:row-start-3"
+            title={intl.formatMessage({
+              id: 'portal.forkHub.roadmap.title',
+              defaultMessage: 'Roadmap',
+            })}
+            description={intl.formatMessage({
+              id: 'portal.forkHub.roadmap.description',
+              defaultMessage: 'What the team is working on next.',
+            })}
+            cta={intl.formatMessage({
+              id: 'portal.forkHub.roadmap.cta',
+              defaultMessage: 'View roadmap',
+            })}
+          />
+          {trust && status.enabled ? (
             <HubStatusCard
+              compact
+              className="lg:col-start-3 lg:row-start-1"
+              hasIssue={status.hasIssue}
+              headline={status.headline}
+              detail={status.detail}
+              components={status.components}
+              maintenanceStartsAt={status.maintenanceStartsAt}
+              maintenanceEndsAt={status.maintenanceEndsAt}
+            />
+          ) : null}
+          {trust ? (
+            <HubTrustCard
+              summary={trust.summary}
+              className={
+                status.enabled
+                  ? 'lg:col-start-3 lg:row-span-2 lg:row-start-2'
+                  : 'lg:col-start-3 lg:row-span-3 lg:row-start-1'
+              }
+            />
+          ) : status.enabled ? (
+            <HubStatusCard
+              className="lg:col-start-3 lg:row-span-3 lg:row-start-1"
               hasIssue={status.hasIssue}
               headline={status.headline}
               detail={status.detail}

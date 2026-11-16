@@ -26,6 +26,8 @@ export interface TrustControl extends Ordered {
   description: string | null
   status: ControlStatus
   source: 'manual' | 'integration'
+  /** Set when a monitoring tool feeds this control's status (phase 5). */
+  externalId: string | null
   lastCheckedAt: string | null
 }
 
@@ -61,6 +63,34 @@ export interface TrustAdminData {
   documents: TrustDocument[]
   /** Help Center categories the FAQ can come from. */
   helpCenterCategories: { id: string; name: string }[]
+}
+
+/** An update post, as the admin sees it (phase 4). */
+export interface TrustUpdate {
+  id: string
+  title: string
+  body: string
+  linkUrl: string | null
+  linkLabel: string | null
+  status: 'draft' | 'published'
+  publishedAt: string | null
+  /** Set when the first publish queued the notices; publishing again queues nothing. */
+  notifiedAt: string | null
+  updatedAt: string
+  /** Notices per subscriber per channel (bell, email), once queued; null before. */
+  delivery: {
+    total: number
+    sent: number
+    pending: number
+    failed: number
+    skipped: number
+  } | null
+}
+
+export interface TrustUpdatesAdmin {
+  updates: TrustUpdate[]
+  /** People subscribed now. */
+  subscribers: number
 }
 
 /** What one viewer may do with a restricted document (phase 3). */
