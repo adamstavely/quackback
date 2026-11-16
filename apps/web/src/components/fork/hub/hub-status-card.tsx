@@ -31,6 +31,13 @@ interface HubStatusCardProps {
   components: HubStatusComponent[]
   maintenanceStartsAt?: string | null
   maintenanceEndsAt?: string | null
+  /**
+   * The short form beside the Trust & Security card (plan 70, hub option B):
+   * the overall state and any maintenance, without the component list.
+   */
+  compact?: boolean
+  /** Grid placement on the hub; the card fills its cell. */
+  className?: string
 }
 
 /**
@@ -48,24 +55,38 @@ export function HubStatusCard({
   components,
   maintenanceStartsAt,
   maintenanceEndsAt,
+  compact = false,
+  className,
 }: HubStatusCardProps): ReactElement {
   const intl = useIntl()
   const ordered = [...components].sort((a, b) => Number(b.degraded) - Number(a.degraded))
   const StateIcon = hasIssue ? ExclamationTriangleIcon : CheckCircleIcon
 
   return (
-    <Card className="h-full">
-      <CardContent className="flex h-full flex-col gap-4 p-6 sm:p-7">
+    <Card className={cn('h-full', className)}>
+      <CardContent
+        className={cn(
+          'flex flex-1 flex-col',
+          // The short form matches the action cards beside it: same padding,
+          // content centred, so the row stays their height.
+          compact ? 'justify-center gap-3 p-6' : 'gap-4 p-6 sm:p-7'
+        )}
+      >
         <HubCardHeader
+          plain={compact}
           headingId="hub-status-heading"
           title={intl.formatMessage({
             id: 'portal.forkHub.status.title',
             defaultMessage: 'System status',
           })}
-          description={intl.formatMessage({
-            id: 'portal.forkHub.status.description',
-            defaultMessage: 'Live status of our services',
-          })}
+          description={
+            compact
+              ? undefined
+              : intl.formatMessage({
+                  id: 'portal.forkHub.status.description',
+                  defaultMessage: 'Live status of our services',
+                })
+          }
           viewAll={{
             label: intl.formatMessage({
               id: 'portal.forkHub.status.viewPage',
@@ -78,8 +99,13 @@ export function HubStatusCard({
         <div
           aria-live="polite"
           className={cn(
-            'flex items-center gap-3 rounded-[var(--radius)] border p-3.5',
-            hasIssue ? 'border-destructive/25 bg-destructive/5' : 'border-success/25 bg-success/5'
+            'flex items-center gap-3',
+            // The short form is a plain line; the full card keeps the tinted panel.
+            !compact && 'rounded-[var(--radius)] border p-3.5',
+            !compact &&
+              (hasIssue
+                ? 'border-destructive/25 bg-destructive/5'
+                : 'border-success/25 bg-success/5')
           )}
         >
           <StateIcon
@@ -92,28 +118,30 @@ export function HubStatusCard({
           </span>
         </div>
 
-        <ul className="flex flex-col gap-2.5 text-sm">
-          {ordered.map((component) => (
-            <li key={component.id} className="flex items-center gap-2.5">
-              <span
-                aria-hidden
-                className={cn(
-                  'size-2 shrink-0 rounded-full',
-                  component.degraded ? 'bg-destructive' : 'bg-success'
-                )}
-              />
-              <span className="grow truncate text-foreground">{component.name}</span>
-              <span
-                className={cn(
-                  'text-xs',
-                  component.degraded ? 'font-medium text-destructive' : 'text-muted-foreground'
-                )}
-              >
-                {component.statusLabel}
-              </span>
-            </li>
-          ))}
-        </ul>
+        {compact ? null : (
+          <ul className="flex flex-col gap-2.5 text-sm">
+            {ordered.map((component) => (
+              <li key={component.id} className="flex items-center gap-2.5">
+                <span
+                  aria-hidden
+                  className={cn(
+                    'size-2 shrink-0 rounded-full',
+                    component.degraded ? 'bg-destructive' : 'bg-success'
+                  )}
+                />
+                <span className="grow truncate text-foreground">{component.name}</span>
+                <span
+                  className={cn(
+                    'text-xs',
+                    component.degraded ? 'font-medium text-destructive' : 'text-muted-foreground'
+                  )}
+                >
+                  {component.statusLabel}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
 
         {maintenanceStartsAt ? (
           <p className="mt-auto flex gap-2.5 border-t border-border/50 pt-4 text-xs text-muted-foreground">
@@ -132,7 +160,7 @@ export function HubStatusCard({
               ) : null}
             </span>
           </p>
-        ) : (
+        ) : compact ? null : (
           <p className="mt-auto border-t border-border/50 pt-4 text-xs text-muted-foreground">
             {intl.formatMessage({
               id: 'portal.forkHub.status.noMaintenance',

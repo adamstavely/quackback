@@ -12,6 +12,7 @@ import { PORTAL_MY_CONVERSATIONS_QUERY_KEY } from '@/lib/client/queries/portal-s
 import { publicStatusPageQueries } from '@/lib/client/queries/status'
 import { getMyConversationsFn, submitCsatFn } from '@/lib/server/functions/conversation'
 import { getMyHubFeedbackFn } from '@/lib/server/functions/fork/hub'
+import { getTrustHubSummaryFn } from '@/lib/server/functions/fork/trust-portal'
 import { DEFAULT_LOCALE, loadAreaMessages } from '@/lib/shared/i18n'
 
 /** Rows shown before "View all" takes over; the full lists live on their own pages. */
@@ -27,6 +28,8 @@ export const Route = createFileRoute('/_portal/hub')({
       context.acceptLanguageLocale ?? DEFAULT_LOCALE,
       'helpCenter'
     ),
+    // Null when Trust & Security is off; the hub then keeps the full status card.
+    trust: await getTrustHubSummaryFn().catch(() => null),
   }),
   head: ({ loaderData }) =>
     loaderData ? { meta: [{ title: `Help hub - ${loaderData.workspaceName}` }] } : {},
@@ -36,7 +39,7 @@ export const Route = createFileRoute('/_portal/hub')({
 function HubRoute() {
   const intl = useIntl()
   const queryClient = useQueryClient()
-  const { workspaceName, helpCenterMessages } = Route.useLoaderData()
+  const { workspaceName, helpCenterMessages, trust } = Route.useLoaderData()
   const session = useSessionContext()
   const settings = useWorkspaceSettings()
 
@@ -117,6 +120,7 @@ function HubRoute() {
         askAiEnabled={!!settings?.featureFlags?.helpCenter}
         requests={requests}
         feedback={feedback}
+        trust={trust}
         status={{
           enabled: !!snapshot,
           hasIssue: !!activeIncident || components.some((component) => component.degraded),

@@ -70,3 +70,31 @@ export const requestTrustDocumentAccessFn = createServerFn({ method: 'POST' })
       data.reason || null
     )
   })
+
+/** The hub's Trust & Security card (plan 70; hub option B). Counts only. */
+export interface TrustHubSummary {
+  controlsInPlace: number
+  controlsTotal: number
+  documents: number
+  reviewedAt: string | null
+}
+
+/**
+ * Null while the page is off (the hub then keeps its full status card).
+ * Signed-out viewers get the card without numbers, as the page itself is for
+ * signed-in employees (D-TS2).
+ */
+export const getTrustHubSummaryFn = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<{ summary: TrustHubSummary | null } | null> => {
+    const { isForkFeatureEnabled } = await import('@/lib/server/fork/settings/features')
+    if (!(await isForkFeatureEnabled('trust'))) return null
+    const { getOptionalAuth, hasAuthCredentials } =
+      await import('@/lib/server/functions/auth-helpers')
+    const ctx = hasAuthCredentials() ? await getOptionalAuth() : null
+    if (!ctx?.principal || ctx.principal.type === 'anonymous') return { summary: null }
+    const { resolvePortalAccessForRequest } = await import('@/lib/server/functions/portal-access')
+    if (!(await resolvePortalAccessForRequest()).granted) return { summary: null }
+    const { buildTrustHubSummary } = await import('@/lib/server/fork/trust/portal')
+    return { summary: await buildTrustHubSummary() }
+  }
+)
