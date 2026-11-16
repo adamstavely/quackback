@@ -139,4 +139,38 @@ describe.skipIf(!fixture.available)('controls feed (real Postgres)', () => {
       .where(eq(forkTrustControls.id, manual.id))
     expect(row!.status).toBe('in_place')
   })
+
+  // Review 2026-11-15, finding 6: observation order, not arrival order.
+  it('ignores a report observed before the stored check, and refuses one from the future', async () => {
+    const w = await writer()
+    const { fed } = await controls(w)
+    await setIntegrationControlStatus(w, 'aws.s3.encryption', {
+      status: 'in_progress',
+      checkedAt: '2026-11-14T10:00:00Z',
+    })
+    const late = await setIntegrationControlStatus(w, 'aws.s3.encryption', {
+      status: 'in_place',
+      checkedAt: '2026-11-14T09:00:00Z',
+    })
+    expect(late).toMatchObject({ applied: false, changed: false, status: 'in_progress' })
+    const [row] = await testDb
+      .select()
+      .from(forkTrustControls)
+      .where(eq(forkTrustControls.id, fed.id))
+    expect(row).toMatchObject({ status: 'in_progress' })
+    expect(row!.lastCheckedAt?.toISOString()).toBe('2026-11-14T10:00:00.000Z')
+
+    const same = await setIntegrationControlStatus(w, 'aws.s3.encryption', {
+      status: 'in_place',
+      checkedAt: '2026-11-14T10:00:00Z',
+    })
+    expect(same).toMatchObject({ applied: true, changed: true, status: 'in_place' })
+
+    await expect(
+      setIntegrationControlStatus(w, 'aws.s3.encryption', {
+        status: 'in_place',
+        checkedAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      })
+    ).rejects.toThrow('in the future')
+  })
 })

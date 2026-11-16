@@ -1,7 +1,7 @@
 import { forkTrustControls } from '@/lib/server/fork/db'
 import { db, eq } from '@/lib/server/db'
 import { recordAuditEventInTransaction } from '@/lib/server/audit/log'
-import { ConflictError, NotFoundError } from '@/lib/shared/errors'
+import { ConflictError, NotFoundError, ValidationError } from '@/lib/shared/errors'
 import type { ControlStatus } from '@/lib/shared/fork/trust/schema'
 import type { TrustWriter } from './trust.service'
 
@@ -11,7 +11,16 @@ import type { TrustWriter } from './trust.service'
  * through the API or MCP. Controls an admin manages by hand are never touched.
  * Every check moves "last checked"; only a change of status is audited, so a
  * tool that reports every few minutes does not flood the audit log.
+ *
+ * Reports apply in observation order, not arrival order (review 2026-11-15,
+ * finding 6): one observed before the stored "last checked" is ignored
+ * (`applied: false`), so a delayed healthy report cannot undo a newer failing
+ * one. A report with the same timestamp applies (a resend; the later arrival
+ * wins). One more than `FUTURE_SKEW_MS` ahead of this server's clock is refused.
  */
+
+/** Clock skew allowed between the reporting tool and this server. */
+const FUTURE_SKEW_MS = 5 * 60 * 1000
 
 export interface ControlFeedResult {
   id: string
@@ -20,6 +29,8 @@ export interface ControlFeedResult {
   status: ControlStatus
   lastCheckedAt: string
   changed: boolean
+  /** False when the report was older than the stored check and was ignored. */
+  applied: boolean
 }
 
 export async function setIntegrationControlStatus(
@@ -28,6 +39,12 @@ export async function setIntegrationControlStatus(
   input: { status: ControlStatus; checkedAt?: string }
 ): Promise<ControlFeedResult> {
   const checkedAt = input.checkedAt ? new Date(input.checkedAt) : new Date()
+  if (checkedAt.getTime() > Date.now() + FUTURE_SKEW_MS) {
+    throw new ValidationError(
+      'TRUST_CHECK_IN_FUTURE',
+      'checkedAt is in the future; send the time the check actually ran'
+    )
+  }
   return db.transaction(async (tx) => {
     const [before] = await tx
       .select()
@@ -45,6 +62,17 @@ export async function setIntegrationControlStatus(
         'TRUST_CONTROL_MANUAL',
         'That control is managed by hand; give it an integration ID in the admin first'
       )
+    }
+    if (before.lastCheckedAt && checkedAt < before.lastCheckedAt) {
+      return {
+        id: before.id,
+        externalId,
+        name: before.name,
+        status: before.status as ControlStatus,
+        lastCheckedAt: before.lastCheckedAt.toISOString(),
+        changed: false,
+        applied: false,
+      }
     }
     const changed = before.status !== input.status
     const [after] = await tx
@@ -74,6 +102,7 @@ export async function setIntegrationControlStatus(
       status: after!.status as ControlStatus,
       lastCheckedAt: checkedAt.toISOString(),
       changed,
+      applied: true,
     }
   })
 }
