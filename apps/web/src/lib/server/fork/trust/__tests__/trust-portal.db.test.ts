@@ -8,6 +8,10 @@ import {
   forkTrustDocuments,
 } from '@/lib/server/fork/db'
 
+const support = vi.hoisted(() => ({ tickets: true }))
+vi.mock('@/lib/server/domains/settings/settings.support', () => ({
+  isSupportTicketsEnabled: async () => support.tickets,
+}))
 vi.mock('@/lib/server/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/server/db')>()),
   db: (await import('@/lib/server/__tests__/db-test-fixture')).testDb,
@@ -100,6 +104,28 @@ describe.skipIf(!fixture.available)('trust page documents (real Postgres)', () =
     }
     expect(await actionFor(['trust.view', 'trust.approve'])).toBe('request')
     expect(await actionFor(['trust.manage'])).toBe('download')
+  })
+
+  // Review 2026-11-15, finding 4: requests ride on support tickets.
+  it('points at the security contact instead of a request while support tickets are off', async () => {
+    support.tickets = false
+    try {
+      const [docs] = await testDb.insert(forkTrustDocumentGroups).values({ name: 'R' }).returning()
+      await testDb.insert(forkTrustDocuments).values({
+        groupId: docs!.id,
+        title: 'SOC 2',
+        access: 'restricted',
+        published: true,
+        storageKey: 'fork-trust/a.pdf',
+      })
+      const content = await buildTrustPageContent({ principalId: null } as never)
+      expect(content.documentGroups[0]!.documents[0]!.action).toEqual({
+        kind: 'contact',
+        email: null,
+      })
+    } finally {
+      support.tickets = true
+    }
   })
 })
 
